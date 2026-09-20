@@ -1,18 +1,23 @@
-import { NextResponse } from "next/server";
-import { createRoom, listRooms } from "@/lib/rooms/room-store.server";
-import { getWorkspace } from "@/lib/workspace/workspace-manager.server";
+import { services } from "@/bootstrap/composition-root.server";
+import { dataResponse, errorResponse } from "@/shared/protocol/api";
+import { idempotentMutation } from "@/shared/protocol/idempotency.server";
 
 export const runtime = "nodejs";
 
-export async function GET(_request: Request, { params }: { params: Promise<{ workspaceId: string }> }) {
-  const { workspaceId } = await params;
-  if (!getWorkspace(workspaceId)) return NextResponse.json({ error: "Workspace not found" }, { status: 404 });
-  return NextResponse.json({ rooms: listRooms(workspaceId) });
+type Context = { params: Promise<{ workspaceId: string }> };
+
+export async function GET(_request: Request, { params }: Context) {
+  try {
+    return dataResponse(services.rooms.list((await params).workspaceId));
+  } catch (error) {
+    return errorResponse(error);
+  }
 }
 
-export async function POST(request: Request, { params }: { params: Promise<{ workspaceId: string }> }) {
+export async function POST(request: Request, { params }: Context) {
   const { workspaceId } = await params;
-  if (!getWorkspace(workspaceId)) return NextResponse.json({ error: "Workspace not found" }, { status: 404 });
-  const body = await request.json() as { title?: string; problemStatement?: string; projectIds?: string[]; mcpIds?: string[]; agentIds?: string[]; runtimeId?: string; activeAgentId?: string };
-  return NextResponse.json({ room: createRoom({ workspaceId, ...body }) }, { status: 201 });
+  return idempotentMutation(request, `workspaces:${workspaceId}:rooms:create`, () => {
+    try { return dataResponse(services.rooms.create(workspaceId), { status: 201 }); }
+    catch (error) { return errorResponse(error); }
+  });
 }

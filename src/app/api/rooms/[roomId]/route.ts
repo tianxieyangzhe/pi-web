@@ -1,27 +1,31 @@
-import { NextResponse } from "next/server";
-import { deleteRoom, getRoom, updateRoom } from "@/lib/rooms/room-store.server";
+import { services } from "@/bootstrap/composition-root.server";
+import { dataResponse, errorResponse, jsonBody } from "@/shared/protocol/api";
+import { idempotentMutation } from "@/shared/protocol/idempotency.server";
 
 export const runtime = "nodejs";
 
-export async function GET(_request: Request, { params }: { params: Promise<{ roomId: string }> }) {
-  const { roomId } = await params;
-  const room = getRoom(roomId);
-  return room ? NextResponse.json({ room }) : NextResponse.json({ error: "Room not found" }, { status: 404 });
-}
+type Context = { params: Promise<{ roomId: string }> };
 
-export async function PATCH(request: Request, { params }: { params: Promise<{ roomId: string }> }) {
-  const { roomId } = await params;
-  const body = await request.json() as { status?: "active" | "archived" };
-  if (body.status !== "active" && body.status !== "archived") {
-    return NextResponse.json({ error: "Only active or archived status can be changed here" }, { status: 400 });
+export async function GET(_request: Request, { params }: Context) {
+  try {
+    return dataResponse(services.rooms.view((await params).roomId));
+  } catch (error) {
+    return errorResponse(error);
   }
-  const room = updateRoom(roomId, { status: body.status });
-  return room ? NextResponse.json({ room }) : NextResponse.json({ error: "Room not found" }, { status: 404 });
 }
 
-export async function DELETE(_request: Request, { params }: { params: Promise<{ roomId: string }> }) {
+export async function PATCH(request: Request, { params }: Context) {
   const { roomId } = await params;
-  return deleteRoom(roomId)
-    ? NextResponse.json({ deleted: true })
-    : NextResponse.json({ error: "Room not found" }, { status: 404 });
+  return idempotentMutation(request, `rooms:${roomId}:update`, async () => {
+    try { return dataResponse(services.rooms.update(roomId, await jsonBody(request))); }
+    catch (error) { return errorResponse(error); }
+  });
+}
+
+export async function DELETE(request: Request, { params }: Context) {
+  const { roomId } = await params;
+  return idempotentMutation(request, `rooms:${roomId}:delete`, () => {
+    try { services.rooms.delete(roomId); return dataResponse({ deleted: true }); }
+    catch (error) { return errorResponse(error); }
+  });
 }

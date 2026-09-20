@@ -1,21 +1,31 @@
-import { NextResponse } from "next/server";
-import { deleteWorkspace, getWorkspace } from "@/lib/workspace/workspace-manager.server";
-import { listSessions } from "@/lib/sessions/session-store.server";
+import { services } from "@/bootstrap/composition-root.server";
+import { dataResponse, errorResponse, jsonBody } from "@/shared/protocol/api";
+import { idempotentMutation } from "@/shared/protocol/idempotency.server";
 
-export async function GET(_request: Request, { params }: { params: Promise<{ workspaceId: string }> }) {
-  const { workspaceId } = await params;
-  const workspace = getWorkspace(workspaceId);
-  if (!workspace) return NextResponse.json({ error: "Workspace not found" }, { status: 404 });
-  return NextResponse.json({ workspace, sessions: listSessions(workspaceId) });
+export const runtime = "nodejs";
+
+type Context = { params: Promise<{ workspaceId: string }> };
+
+export async function GET(_request: Request, { params }: Context) {
+  try {
+    return dataResponse(services.workspaces.get((await params).workspaceId));
+  } catch (error) {
+    return errorResponse(error);
+  }
 }
 
-export async function DELETE(_request: Request, { params }: { params: Promise<{ workspaceId: string }> }) {
+export async function PATCH(request: Request, { params }: Context) {
   const { workspaceId } = await params;
-  try {
-    if (!deleteWorkspace(workspaceId)) return NextResponse.json({ error: "项目不存在" }, { status: 404 });
-    return NextResponse.json({ deletedWorkspaceId: workspaceId });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "项目删除失败";
-    return NextResponse.json({ error: message }, { status: 400 });
-  }
+  return idempotentMutation(request, `workspaces:${workspaceId}:update`, async () => {
+    try { return dataResponse(services.workspaces.update(workspaceId, await jsonBody(request))); }
+    catch (error) { return errorResponse(error); }
+  });
+}
+
+export async function DELETE(request: Request, { params }: Context) {
+  const { workspaceId } = await params;
+  return idempotentMutation(request, `workspaces:${workspaceId}:delete`, () => {
+    try { services.workspaces.delete(workspaceId); return dataResponse({ deleted: true }); }
+    catch (error) { return errorResponse(error); }
+  });
 }

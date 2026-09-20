@@ -1,5 +1,5 @@
-import RoomWorkspaceClient from "@/components/room-workspace-client";
+import { AppShell } from "@/features/app-shell/app-shell";
 
 export default function Page() {
-  return <RoomWorkspaceClient />;
+  return <AppShell />;
 }

@@ -4,24 +4,21 @@
   "private": true,
   "scripts": {
     "dev": "next dev --webpack",
-    "build": "next build",
+    "build": "next build --webpack",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "tsc --noEmit",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@ai-sdk/react": "latest",
     "@earendil-works/pi-coding-agent": "^0.85.1",
-    "@mcpc-tech/acp-ai-provider": "^0.3.7",
     "@radix-ui/react-collapsible": "^1.1.20",
     "@types/better-sqlite3": "^9.6.0",
-    "ai": "latest",
     "better-sqlite3": "^13.0.3",
     "lucide-react": "^1.40.0",
     "next": "latest",
     "react": "latest",
     "react-dom": "latest",
-    "react-markdown": "^10.1.0",
-    "remark-gfm": "^4.0.1"
+    "shiki": "^4.4.3"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.3.3",
