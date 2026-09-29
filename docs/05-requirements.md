@@ -1,290 +1,91 @@
 # 05｜需求文档
 
-> 状态：**产品实现基线。** 本文只定义需求、优先级和验收条件。当前为完整替换，不做旧数据迁移、兼容 API 或双写。
+> 状态：**单项目 Room 目标设计，尚未按本版实现。** 本版依据 2026-09-29 以前的产品讨论重建。跨项目会话、Router、RoomRun 和 Task 的新模型留待下一阶段设计；现有代码中的跨项目实现不能反向决定本版 Room 的含义。
 
 ## 1. 产品定义
 
-产品是本地优先的 Pi Coding Agent 工作环境：
+Project 是执行、文件和资源隔离边界。每个项目 Session 固定绑定一个项目 Room；Room 保存该 Session 历史对话提炼出的当前上下文和一份待确认草稿。Pi 原生 transcript 仍是完整对话事实来源。
 
-~~~
-Workspace
-└─ Room
-   └─ Session
-      ├─ Agent?
-      ├─ MCP*
-      ├─ working Project?
-      └─ reference Projects*
+~~~text
+Project → Session ↔ Project Room → 当前上下文 / 待确认草稿
+                     ↑
+Room 模板 ──复制并经用户确认──┘
 ~~~
 
-用户可以在一个 Room 中执行单项目独立工作，也可以并行创建多条 Session 处理多个项目，再在同一 Room 内协作、比较和协调。
+自动总结可使用固定规则或单独的 Pi/LLM 调用并消耗 Token。总结只形成草稿；用户决定草稿是否影响后续对话。项目 Room 只影响下一轮提示词，不保存或选择工具、扩展、Agent、MCP、Skill。
 
-没有目标不等于没有结构：空 Room 仍然展示工作线、项目、MCP、Agent 的结构化位置。
+## 2. 当前范围
 
-## 2. 固定范围
+- 本轮只定义单项目 Room。跨项目会话将来决定改造现有表或新增表，本版不规定其持久关系、路由和页面验收。
+- Room 相关持久数据只使用 `rooms` 一张表；`sessions` 是已有独立实体表。不存在 `room_projects`、`room_contents`、RoomItem、RoomProposal 或其他 Room 关联表作为本版目标结构。
+- Room 模板的 `projectId` 为空；项目 Room 的 `projectId` 必填。模板复制后成为独立项目 Room，不能直接绑定 Session 执行。
+- 每个项目 Session 必须绑定一个项目 Room；同一项目 Room 只绑定一个 Session，二者 Project 必须一致。
+- 工具、扩展、Agent、MCP、Skill 后续作为独立基础对象设计。资源记录可为空项目模板，实际运行使用复制到该 Project 的独立实例；Room 不保存这些对象的 ID、配置或快照。
+- Room 内容存数据库。Pi transcript、Runtime 句柄、模型上下文和工具执行记录不复制到 Room。
 
-### 2.1 核心实体与内容表
+## 3. Room 需求
 
-只允许：
+| ID | 状态 | 需求 | 验收条件 |
+| --- | --- | --- | --- |
+| SROOM-001 | 待实现 | 项目 Session 与 Room 一对一 | 创建 Session 与项目 Room 在同一事务完成；Session.roomId 必填且唯一；数据库和应用均拒绝跨 Project、模板 Room 或重复绑定 |
+| SROOM-002 | 待实现 | Room 模板复制 | 空项目 Room 仅作为模板；复制创建新 Room ID，项目副本独立；初始内容先展示给用户确认才影响 Session |
+| SROOM-003 | 待实现 | Room 单表结构 | `rooms` 保存固定结构的 `contextJson`、至多一份 `draftJson`、增量总结游标和时间；不创建 Room 子表或关联表 |
+| SROOM-004 | 待实现 | 自动形成草稿 | Session 完成一轮后由规则判断是否需总结；必要时调用固定服务端模型，经类型校验生成完整结构草稿；失败不影响本轮回答 |
+| SROOM-005 | 待实现 | 用户决定生效 | LLM、规则和模板生成的草稿在用户编辑、确认前不进入后续提示词；确认将草稿写为当前上下文，拒绝清除草稿；手动编辑保存视为用户确认 |
+| SROOM-006 | 待实现 | 当前内容实时生效 | 下一条提交的消息读取当时已确认的 Room 内容并渲染成 Markdown，注入本轮 Pi 系统提示词；正在执行的轮次保持提交时上下文 |
+| SROOM-007 | 待实现 | 一份待确认草稿 | 有待确认草稿时不得由新生成覆盖用户编辑；新对话留在 Pi transcript，处理草稿后再增量总结未审阅部分 |
+| SROOM-008 | 待实现 | Room 内容边界 | 仅保存摘要、目标、约束、重要事实、决策、下一步和产出摘要；不保存工具/扩展/Agent/MCP/Skill 配置、原始思维链或完整 transcript |
+| SROOM-009 | 待实现 | 模板与项目隔离 | 模板无项目执行上下文，复制时清除项目路径和历史内容；模板后续变动不自动更新项目 Room |
 
-~~~
-workspace
-project
-mcp
-agent
-room
-session
-room_contents
-~~~
+## 4. 项目资源与 Session
 
-前六张是核心资源表，`room_contents` 是 Room 的结构内容子表。不允许新增 Runtime、Adapter、Binding、Asset、Message、Transcript 或资源关系表。
+| ID | 状态 | 需求 | 验收条件 |
+| --- | --- | --- | --- |
+| RES-001 | 待实现 | 资源归属项目或模板 | 每条实际运行资源只归属一个 Project，项目为空的记录明确作为模板；不存在跨 Project 共用运行实例 |
+| RES-002 | 待实现 | 模板复制后独立调试 | Agent、MCP 等资源模板复制产生新 ID；凭据、项目路径和调试结果须在目标 Project 单独配置或测试 |
+| RES-003 | 待设计 | 资源基础模型独立 | 工具、扩展、Agent、MCP、Skill 的详细字段及生命周期另行设计，不借 Room JSON 实现 |
+| PSES-001 | 待实现 | 项目 Session 独立执行 | Session 固定绑定一个 Project 和 Room；项目消息直接进入 Pi Session；不创建 RoomRun/Task，不调用跨项目 Router 或 Synthesizer |
+| PSES-002 | 现有实现待复验 | Pi 原生 transcript 与活动 | 恢复当前活动分支的用户/assistant 文本、真实轮次和工具活动；公开高层摘要可展示，原始 thinking 不下发 |
+| PSES-003 | 待实现 | Room 上下文与用户输入分离 | Room 当前内容在本轮系统提示词中装配；用户消息仍原样写入 Pi transcript，Room 草稿不会被注入 |
 
-### 2.2 核心关系
+## 5. 页面需求
 
-- Workspace 只关联 Room。
-- Room 只关联 Session。
-- Session 记录 workspaceId 供查询与一致性校验。
-- Project、MCP、Agent 是独立资源，可被任何 Session 使用。
-- Agent 是可选 Pi 扩展；没有 Agent 的 Session 直接使用 Pi 基础能力。
-- 主工作线和辅助工作线只是 Session.role 的值。
+| ID | 状态 | 需求 | 验收条件 |
+| --- | --- | --- | --- |
+| UI-001 | 现有实现待复验 | 项目导航与历史会话 | Project 是顶层入口；项目下的 Session 记录独立展开，项目行可进入最近工作线并创建新会话 |
+| UI-007 | 现有实现待复验 | Session 对话和活动 | 按用户消息、Pi 真实模型轮次、最终输出排列；轮次默认收起且可展开，展示模型公开摘要与真实工具调用；回答安全渲染 Markdown，发送与流式更新后滚动到最新内容 |
+| UI-011 | 现有实现待复验 | 项目优先布局与文件 | 侧栏浅灰蓝、文字中性、选中浅绿；导航可收缩；文件树非 Git 也可用，文件预览插入主画布和文件/检查共用列之间，路径显示项目绝对根目录，代码预览不用深色背景 |
+| UI-013 | 现有实现待复验 | Next 单应用分层 | 页面、Feature、Hook、API Client、领域协议与服务端分层；页面不承载事件解析或业务编排 |
+| UI-015 | 待实现 | Room 当前内容面板 | 项目 Session 页面展示已确认上下文、作用于后续提示词的标记、最近生成状态；支持人工编辑和保存 |
+| UI-016 | 待实现 | Room 草稿审查 | 草稿生成后即时展示来源、Token 用量及与当前内容的差异；可编辑、确认、拒绝；确认前清楚标明未生效 |
+| UI-017 | 待实现 | Room 模板入口 | 新建项目 Session 时可选择空 Room 或 Room 模板，预览模板初始内容并明确确认是否用于后续对话 |
+| UI-018 | 待设计 | 项目资源页面 | 项目实例在所属 Project 下管理和调试；项目为空的模板在模板库展示；详细交互随资源基础模型确定 |
 
-### 2.3 状态
+## 6. 安全与非功能需求
 
-- 未实现：目标代码尚未完成。
-- 实现中：正在修改，尚未满足全部验收。
-- 已实现：代码完成，尚未通过完整验收。
-- 已验证：验收条件全部通过。
-- 阻塞：存在外部条件或产品决策阻塞。
-- 不做：明确排除。
+| ID | 状态 | 需求 | 验收条件 |
+| --- | --- | --- | --- |
+| SEC-001 | 待实现 | 项目隔离 | Session、项目 Room 和执行资源的 projectId 一致；跨项目资源 ID 或模板不能作为运行实例注入 |
+| SEC-002 | 待实现 | Room 输入安全 | 模型上下文不含原始 thinking、未脱敏工具结果、secret、nativeRef 或项目外路径；固定 JSON 与 Markdown 渲染均有长度预算 |
+| SEC-003 | 待实现 | 确认是唯一生效入口 | 自动生成和模板复制均不能绕过用户确认；服务端依据当前数据库内容而非 UI 临时状态组装提示词 |
+| NFR-001 | 现有实现待复验 | 类型检查与构建 | TypeScript strict 和单应用生产构建通过，服务端依赖不进入客户端 |
+| NFR-002 | 待实现 | Schema 约束与损坏诊断 | `rooms` JSON 类型、Project 归属、模板来源及 Session 一对一约束完整；非法 JSON 或引用返回明确错误 |
+| NFR-003 | 待实现 | Token 与生成预算 | 单次总结的输入、输出、时间和频率受限；规则判断可跳过无变化轮次；记录可获得的 Token 用量 |
+| NFR-004 | 待实现 | 项目 Room E2E | 创建 Session/Room → 发送 → 自动草稿 → 未确认不生效 → 人工修改确认 → 下一条消息使用当前上下文 → 刷新后一致 |
+| NFR-011 | 待实现 | 历史数据和迁移受控 | 结构变更由实现修改表定义及约束；先说明旧数据影响，由用户决定是否迁移；确认后交付独立脚本，未批准不运行、不清库 |
 
-只有已验证才算完成。
+## 7. 本轮不做
 
-## 3. 基础需求
+- 跨项目 Room、RoomProject scope、RoomRun、Task、Router 和 Synthesizer 的新设计或实现；
+- Room 子记录表、关系表、独立内容版本系统；
+- Room 内保存或启用工具、扩展、Agent、MCP、Skill；
+- 将完整 Pi transcript、原始 thinking 或工具结果写入 Room；
+- 草稿自动生效、用户未确认的模板内容自动生效；
+- Room 本地 context 文件、第二套 Runtime 或模型选择控件；
+- 旧数据库自动迁移、清空或重建。
 
-| ID | 优先级 | 状态 | 需求 | 验收条件 |
-| --- | --- | --- | --- | --- |
-| BASE-001 | P0 | 已实现 | 产品界面统一使用会话表示 Room | 用户界面不将 Session 称为会话 |
-| BASE-002 | P0 | 已验证 | 数据表边界固定 | Schema 只有六张核心表和 room_contents；rooms 不包含 content_json |
-| BASE-003 | P0 | 已验证 | Runtime 不作为产品资源 | 数据库、API、UI 无 Runtime 选择、Registry 或配置实体 |
-| BASE-004 | P0 | 已验证 | Session 是唯一运行实体 | 不存在任何第二运行实体、运行记录包装或 Runtime Session 表 |
-| BASE-005 | P0 | 已验证 | Session.role 只是属性 | primary/worker 不形成独立表、API 类型或实现分支 |
-| BASE-006 | P0 | 已实现 | 只支持固定 Pi Coding Agent Runtime | Pi runtime 是静态代码实现，不可由用户注册或替换 |
-| BASE-007 | P0 | 已实现 | 设计文档是实现事实来源 | 所有实现可映射需求 ID，且不与五份文档冲突 |
-| BASE-008 | P0 | 已验证 | 前端组件遵循 AI Elements 治理 | 新增组件先评估 AI Elements；例外写入架构文档 |
+## 8. 实现顺序与完成定义
 
-## 4. Workspace 与 Room
+先按本版同步五份文档，再改 `rooms`、`sessions` 及独立资源的表定义和约束；随后接入每轮 Room 上下文、自动草稿、审核 UI，最后完成针对空状态、失败、取消、刷新、旧库兼容诊断的测试。跨项目设计另行启动。
 
-| ID | 优先级 | 状态 | 需求 | 验收条件 |
-| --- | --- | --- | --- | --- |
-| WS-001 | P0 | 已实现 | 用户可创建、查看、编辑 Workspace | Workspace 只保存自身元数据；不预置 Agent、MCP、Project |
-| WS-002 | P0 | 已实现 | Workspace 只组织 Room | 删除 Workspace 只删除其 Room/Session，不删除独立资源或 Pi 原生文件 |
-| ROOM-001 | P0 | 已实现 | 新会话是零表单操作 | 请求只需 workspaceId；不要求目标、Agent、MCP、Project |
-| ROOM-002 | P0 | 已实现 | 空 Room 保持结构化展示 | 没有目标、消息、Session 时仍显示目标、方向、输出、工作线与资源结构 |
-| ROOM-003 | P0 | 已验证 | Room 关联 Session 和结构内容 | Room 表/API 无 Agent、MCP、Project、Runtime、默认资源字段；目标、方向、输出、总览逐行保存在 room_contents |
-| ROOM-004 | P0 | 已实现 | Room 支持多个并行 Session | Room 中可显示多个独立 Session，互不混合 transcript |
-| ROOM-005 | P0 | 已实现 | Room 支持生命周期 | active、paused、closed、archived 非法转换被拒绝 |
-| ROOM-006 | P1 | 已实现 | 用户可重命名、归档、恢复和删除 Room | 删除只删除 Room/Session 平台记录，不删除独立资源或 Pi 原生文件 |
-| ROOM-007 | P0 | 已验证 | Room 可保存可为空的目标 | 没有 active goal 行表示无目标；同一 Room 最多一个 active goal，不要求创建 Room 时填写 |
-| ROOM-008 | P1 | 已实现 | Room 可保存方向 | candidate、adopted、dismissed 方向可创建、编辑和变更状态；保留来源 Session 引用 |
-| ROOM-009 | P1 | 已实现 | Room 可保存跨 Session 输出 | note、decision、plan、delivery、summary 可保存和发布；不复制完整 transcript |
-| ROOM-010 | P1 | 已实现 | Agent 输出先作为 Room 内容候选 | AgentEvent 只产生候选；用户确认或编辑后才创建 room_contents 记录 |
-| ROOM-011 | P1 | 已实现 | RoomContent 保留来源与历史 | sourceSessionId 非空时属于当前 Room；已采用/发布内容通过 superseded 或 retracted 保留历史，不直接物理删除 |
-
-## 5. 独立资源
-
-| ID | 优先级 | 状态 | 需求 | 验收条件 |
-| --- | --- | --- | --- | --- |
-| PROJ-001 | P0 | 已实现 | Project 是独立本地资源 | 无 workspaceId；同一规范化目录只建立一个 Project |
-| PROJ-002 | P0 | 已实现 | Project 支持 code、knowledge、general 与 read/write | 字段校验完整；Session 每次操作重新检查 accessMode |
-| PROJ-003 | P0 | 已实现 | 用户可浏览与安全预览 Project 文件 | 路径、symlink、敏感文件、二进制和大小限制均被校验 |
-| PROJ-004 | P1 | 已实现 | Project 可被多 Session 复用 | Room 聚合展示哪些 Session 将其作为工作或参考项目 |
-| MCP-001 | P0 | 阻塞 | MCP 是独立能力定义 | 无 workspaceId；支持 built_in、stdio、streamable_http |
-| MCP-002 | P0 | 阻塞 | MCP 配置不保存凭据明文 | 只保存 secretRef；错误和日志不回显 |
-| MCP-003 | P0 | 阻塞 | MCP 支持 read_only、approval、allow | 每次工具调用均由 Session 权限和 MCP policy 共同校验 |
-| MCP-004 | P1 | 已实现 | MCP 可被多 Session 复用 | Inspector 显示当前 Room 哪些 Session 使用它 |
-| AGENT-001 | P0 | 已验证 | Agent 是独立 Pi 扩展模板 | 无 workspaceId、roomId、sessionId、Project ID、MCP ID |
-| AGENT-002 | P0 | 实现中 | Agent 可定义角色与扩展 | instruction、model、tools、extensions、skills、settings、通用 policy 通过校验 |
-| AGENT-003 | P0 | 已实现 | Agent 不是创建 Session 的必要条件 | Session.agentId 可为空；空值使用 Pi 基础能力 |
-| AGENT-004 | P1 | 已实现 | Agent 可被多 Session 复用 | 修改 revision 只影响之后附加或重配的 Session |
-| AGENT-005 | P1 | 已实现 | Agent 可归档 | 历史 Session 保留快照；新配置不能选择 archived Agent |
-
-## 6. Session 与 Pi Runtime
-
-| ID | 优先级 | 状态 | 需求 | 验收条件 |
-| --- | --- | --- | --- | --- |
-| SES-001 | P0 | 已实现 | 第一条普通消息懒创建默认 Session | 创建 role=primary、无 Agent/MCP/Project 的基础 Session |
-| SES-002 | P0 | 已验证 | 一个 Room 最多一个默认 Session | 并发首条消息后数据库仍只有一个 role=primary Session |
-| SES-003 | P0 | 已实现 | 辅助工作线是 role=worker Session | 用户或委派创建的辅助线都使用同一 Session 表和生命周期 |
-| SES-004 | P0 | 已实现 | Session 对应 Pi Runtime | 保存 nativeRef；Pi transcript 不复制到平台消息表 |
-| SES-005 | P0 | 已实现 | Session 可中断、恢复、结束 | 状态转换准确；恢复不重放旧消息或草稿 |
-| SES-006 | P0 | 已实现 | 同一 Session 禁止并发 turn | 第二次消息返回冲突，不重复发给 Pi |
-| SES-007 | P1 | 已实现 | 多个 Session 可并行 | 各自拥有独立执行锁、Pi nativeRef、状态与 transcript |
-| SES-008 | P1 | 已实现 | 用户可创建辅助 Session | role=worker，purpose 必填，可预选可选资源 |
-| SES-009 | P1 | 已实现 | Agent 可委派辅助 Session | 通用 Agent policy 禁止委派时拒绝；parentSessionId 正确记录 |
-
-## 6.1 模型配置
-
-| ID | 优先级 | 状态 | 需求 | 验收条件 |
-| --- | --- | --- | --- | --- |
-| MODEL-001 | P0 | 已验证 | 只兼容 OpenAI Chat Completions 格式 | Pi 只注册固定 `workspace-openai` / `openai-completions` provider，不选择其他 Provider |
-| MODEL-002 | P0 | 已验证 | 模型信息只来自 `.env.local` | 只读取项目根目录 `.env.local` 中的 `OPENAI_BASE_URL`、`OPENAI_API_KEY`、`OPENAI_MODEL_ID`；请求、UI、Agent、数据库和宿主环境不能覆盖 |
-| MODEL-003 | P0 | 已验证 | 模型凭据保持服务端私有 | API key 不进入数据库、snapshot、nativeRef、浏览器、日志或错误消息 |
-| MODEL-004 | P0 | 已验证 | 模型配置失败可诊断 | 缺失字段或非法 URL 返回 `MODEL_CONFIGURATION_ERROR`，不回退到 Pi 默认模型 |
-| MODEL-005 | P1 | 已验证 | Agent 不拥有模型选择 | Agent 只可定义可选 thinkingLevel，不保存 provider/base URL/key/model ID |
-
-## 7. Session 配置
-
-| ID | 优先级 | 状态 | 需求 | 验收条件 |
-| --- | --- | --- | --- | --- |
-| CFG-001 | P0 | 已实现 | Session 可在创建时选择 Agent、MCP、Project | 选择最终只写入 Session，不写入 Room |
-| CFG-002 | P0 | 已实现 | Session 可后附加、替换或移除 Agent | agentId 可为空；当前 turn 配置不被中途改变 |
-| CFG-003 | P0 | 阻塞 | Session 可后附加或移除 MCP | MCP 多选；变更从下一 turn 生效 |
-| CFG-004 | P0 | 已实现 | Session 记录 Agent/MCP 快照 | 配置变更后 revision 加一；恢复使用 Session 快照 |
-| CFG-005 | P0 | 已实现 | 每个 Session 最多一个工作项目 | workingProjectId 是 Pi cwd 和默认写入目标 |
-| CFG-006 | P0 | 已验证 | Session 可绑定多个参考项目 | referenceProjectIds 只用于上下文；不自动允许写入 |
-| CFG-007 | P0 | 已实现 | 配置失败保持旧配置 | 资源归档、Project 不可访问或 JSON 无效时不产生半成品更新 |
-
-## 8. 单项目与多项目
-
-| ID | 优先级 | 状态 | 需求 | 验收条件 |
-| --- | --- | --- | --- | --- |
-| COL-001 | P0 | 已实现 | 单项目独立工作清晰 | 一个 Session 绑定一个 workingProjectId，可在该项目内安全工作 |
-| COL-002 | P1 | 已实现 | 多项目协作由 Room 组织 | 一个 Room 可有多个 Session，每个可使用不同 workingProjectId |
-| COL-003 | P1 | 已实现 | 协调 Session 支持多项目参考 | 没有 workingProjectId 时可绑定多个 referenceProjectIds，但不自动获得写入目标 |
-| COL-004 | P1 | 已实现 | Room 聚合展示资源 | Projects/MCP/Agents 面板按 Session 使用关系聚合，不产生 Room 资源绑定 |
-| COL-005 | P1 | 已验证 | 跨项目操作不扩大权限 | reference Project 写入仍被拒绝，除非用户明确调整为 working Project 并通过权限检查 |
-
-## 9. 消息、事件与权限
-
-| ID | 优先级 | 状态 | 需求 | 验收条件 |
-| --- | --- | --- | --- | --- |
-| MSG-001 | P0 | 已实现 | 普通 Room 消息路由默认 Session | 只发送到 role=primary Session，不受当前辅助线视图影响 |
-| MSG-002 | P0 | 已实现 | 辅助 Session 消息显式发送 | URL 含 sessionId；服务端确认 role=worker 且属于当前 Room |
-| MSG-003 | P0 | 已实现 | Pi 文本实时流式显示 | delta 顺序正确；完成后立即回填实际 Session transcript；中文与 Markdown 不丢失、不重复 |
-| MSG-004 | P0 | 已实现 | 页面展示统一活动 | Pi 私有事件转换为平台 AgentEvent |
-| MSG-005 | P0 | 已实现 | 历史消息从 Pi 原生 Session 恢复 | 刷新后文本与顺序一致；无平台 transcript 表 |
-| MSG-006 | P0 | 阻塞 | Agent/MCP 配置变更下一 turn 生效 | active turn 使用冻结配置；下一 turn 重新装配 runtime |
-| MSG-007 | P1 | 已实现 | Agent 可提出 Room 内容候选 | 目标、方向、输出候选不自动持久化；用户可采用、编辑或忽略 |
-| PERM-001 | P0 | 阻塞 | 每次操作重新计算权限 | Session 项目绑定、Project accessMode、Agent policy、MCP policy、当前授权共同生效 |
-| PERM-002 | P0 | 已验证 | Project 访问不能越界 | 篡改路径、跨 root、symlink、敏感文件均被拒绝 |
-| PERM-003 | P0 | 阻塞 | MCP 外部写按策略审批 | approval 暂停调用；允许一次只作用于明确请求 |
-| PERM-004 | P0 | 已验证 | Pi project trust 不代替平台权限 | 平台禁止的读写仍被拒绝 |
-| PERM-005 | P0 | 阻塞 | 敏感信息不进浏览器或日志 | secret、token、认证字段被移除或脱敏 |
-
-## 10. UI
-
-| ID | 优先级 | 状态 | 需求 | 验收条件 |
-| --- | --- | --- | --- | --- |
-| UI-001 | P0 | 已实现 | 桌面使用主区加可选右侧列 | 基础布局为左 Workspace + 中央 Room；Inspector 打开形成第三列；文件内容打开时位于 Inspector 左侧并形成独立列 |
-| UI-002 | P0 | 已实现 | 空 Room 结构化展示 | 无目标/Session 时仍展示工作线、项目、MCP、Agent 位置 |
-| UI-003 | P0 | 已实现 | Session Rail 清晰表达 role | primary 显示主工作线；worker 显示辅助工作线；不是独立实体 |
-| UI-004 | P0 | 已实现 | 当前工作线内容独立 | 不混合多个 Session timeline；Composer 目标明确 |
-| UI-005 | P0 | 已实现 | Session 配置入口完整 | 可选 Agent、MCP、工作项目、参考项目；运行中显示下一轮生效 |
-| UI-006 | P0 | 已实现 | Inspector 聚合 Session 资源 | 不展示 Workspace/Room 资源所有权；按 Session 使用关系显示；内容类别使用单行横向选项卡 |
-| UI-007 | P0 | 阻塞 | AI Elements 组件治理落实 | Conversation、Message、Prompt Input、Task、Tool、Confirmation、File Tree 按架构使用 |
-| UI-008 | P1 | 已实现 | 多项目协作可扫描 | 项目聚合显示工作/参考绑定和相关 Session |
-| UI-009 | P1 | 已实现 | 窄桌面可完成主流程 | 宽度不足时 Inspector/File Content 转为右侧覆盖层或自动隐藏辅助列；Session Timeline 和 Composer 保持可用 |
-| UI-010 | P0 | 实现中 | 基础无障碍 | 图标名称、Dialog 焦点、键盘操作、非颜色状态、低干扰流式反馈完整 |
-| UI-011 | P0 | 已实现 | RoomContent 可扫描和局部编辑 | Header/Inspector 展示目标、方向、输出、总览；单项保存不覆盖其他记录；空内容有结构化空状态 |
-| UI-012 | P0 | 已实现 | Inspector 默认隐藏且可显式开关 | 首次进入 Room 不显示 Inspector；Room 右上角小型图标按钮可切换，左栏资源入口可自动打开对应 Tab |
-| UI-013 | P0 | 已实现 | 新增与修改统一使用 Dialog | 除零表单新建 Room 和文件树浏览外，Workspace/Room 标题/Project/MCP/Agent/Session 配置/RoomContent 的新增修改均为弹窗式 |
-| UI-014 | P0 | 已实现 | 文件内容使用独立列与标签 | 目录行任意位置可展开；首次展开加载该目录的直接子项且不清空其他树节点；点击文件后在 Inspector 左侧新增 File Content 列并打开或激活文件标签；可同时保留多个标签；关闭最后一个标签时关闭文件列；不使用编辑弹窗展示文件 |
-| UI-015 | P1 | 已实现 | 视觉样式统一采用 Tailwind | Feature 与 shared UI 的视觉样式均由 Tailwind utilities 表达；`globals.css` 只保留 Tailwind 入口；重复选择控件复用统一 Select 原语 |
-
-## 11. 非功能需求
-
-| ID | 优先级 | 状态 | 需求 | 验收条件 |
-| --- | --- | --- | --- | --- |
-| NFR-001 | P0 | 已验证 | TypeScript 严格类型通过 | 不用大范围 any、ignore 或关闭 strict 规避问题 |
-| NFR-002 | P0 | 已验证 | 生产构建通过 | Next build 成功；服务端原生依赖不进入客户端 |
-| NFR-003 | P0 | 已验证 | 数据库约束完整 | 六张核心表和 room_contents 的外键、唯一 primary/goal/overview、状态与 JSON 校验均覆盖 |
-| NFR-004 | P0 | 阻塞 | 主流程端到端可验证 | Workspace → 空 Room → 默认 Session → Pi 流式 → 刷新恢复 |
-| NFR-005 | P1 | 已实现 | 多 Session 并发安全 | 执行锁隔离；一个 Session 的中断不影响另一个 |
-| NFR-006 | P1 | 已实现 | 配置变更不破坏 active turn | 当前 turn 完整结束；下一 turn 使用新配置 |
-| NFR-007 | P0 | 已实现 | 数据损坏不静默吞掉 | 无效 JSON、丢失引用、非法状态返回明确诊断 |
-| NFR-008 | P0 | 已验证 | 服务端私有边界 | Pi、SQLite、fs、MCP transport、secret 不进入客户端包 |
-
-## 12. 不做
-
-- Workspace、Room 对 Agent/MCP/Project 的持久绑定。
-- Workspace 默认 Agent 或默认 MCP。
-- Agent/MCP/Project 的 Workspace 归属。
-- Runtime、Driver、Adapter、Binding、Asset、Message、Transcript 实体表。
-- 多项目 reference 自动写入。
-- 自动 Git 接受、回滚、提交、推送。
-- 多用户、组织、登录、云同步或远程多节点。
-- 在运行中的 Pi turn 中热替换生效配置。
-- 将辅助工作线当作新的实体类型。
-
-## 13. 实现顺序
-
-### Phase 1：六表与独立资源
-
-~~~
-BASE-* → NFR-001/002/003/007/008
-→ WS-001/002
-→ PROJ-001..003
-→ MCP-001..003
-→ AGENT-001..003
-~~~
-
-完成标准：六张核心表、room_contents、独立资源 CRUD、空 Workspace 和空 Room 都在目标边界内运行。
-
-### Phase 2：Room 与基础 Session
-
-~~~
-ROOM-001..005
-→ SES-001..006
-→ CFG-001/004
-→ MSG-001/003..005
-→ UI-001..007
-→ NFR-004
-~~~
-
-完成标准：用户能创建空 Room，直接发消息创建无 Agent 的 Pi 基础 Session，并在刷新后恢复历史。
-
-### Phase 3：Session 后配置与单项目工作
-
-~~~
-CFG-002/003/005/007
-→ PROJ-004
-→ MSG-006
-→ PERM-001..005
-→ COL-001
-→ NFR-006
-~~~
-
-完成标准：Session 可在创建后安全附加 Agent/MCP/工作项目，配置在下一 turn 生效。
-
-### Phase 4：多 Session 与多项目协作
-
-~~~
-SES-007..009
-→ CFG-006
-→ COL-002..005
-→ MSG-002
-→ UI-008/009
-→ NFR-005
-~~~
-
-完成标准：一个 Room 可并行组织多个项目 Session 和协调 Session，不混合权限、消息或写入目标。
-
-## 14. 完成定义
-
-一项需求变为已验证前必须：
-
-1. 满足本文验收条件。
-2. 与其余四份文档一致。
-3. 正常、空、加载、错误和无权限状态有定义。
-4. 有风险相称的自动测试。
-5. 删除被完整替换的旧模型与旧 API。
-6. 通过类型检查、构建和相关验收。
-
-## 15. 当前阻塞
-
-| 范围 | 阻塞原因 | 解除条件 |
-| --- | --- | --- |
-| MCP Runtime、MCP policy 与审批 | 官方 v2 包 `@modelcontextprotocol/client` 尚未进入依赖集；当前环境的包安装审批服务不可用 | 安装官方 MCP v2 client 后实现 stdio/streamable HTTP connector、tool 映射、secret resolver 与一次性审批 |
-| AI Elements 完整替换 | Conversation、Message、Prompt Input、Task、Tool、Confirmation 所需的 Streamdown、AI SDK 与 shadcn/Radix 依赖当前无法安装 | 依赖可用后只替换已登记的 Wrapper/基础原语，不改变平台 AgentEvent 与 Session 协议 |
-| 主流程浏览器 E2E | 当前执行环境禁止监听本地端口，审批服务不可用；无法启动开发服务或连接 localhost | 本地服务权限恢复后执行 Workspace → Room → Pi stream → refresh restore，并完成桌面/窄屏截图验收 |
-
-阻塞项对应 API 不返回假成功：配置了 MCP 的 Session 在执行前返回 `MCP_RUNTIME_UNAVAILABLE`，MCP test API 返回 503；已完成的 Project、Agent 与 Pi 基础流程不依赖 MCP 客户端。
+新需求只有在代码实现、风险相称的测试和本表验收条件全部通过后才能标为已验证。当前文档更新不代表 Schema 或运行时已经完成。历史项目 Session 的空 roomId、旧跨项目 Room/RoomContent 和项目为空的旧资源都需要影响评估；数据迁移是否执行由用户决定。

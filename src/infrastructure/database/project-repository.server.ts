@@ -9,7 +9,6 @@ function mapProject(row: DatabaseRow): Project {
     description: row.description as string | null,
     kind: row.kind as Project["kind"],
     rootPath: row.root_path as string,
-    accessMode: row.access_mode as Project["accessMode"],
     status: row.status as Project["status"],
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
@@ -36,8 +35,8 @@ export const projectRepository = {
     database
       .prepare(
         `INSERT INTO projects
-          (id, name, description, kind, root_path, access_mode, status, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          (id, name, description, kind, root_path, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -45,7 +44,6 @@ export const projectRepository = {
         input.description,
         input.kind,
         input.rootPath,
-        input.accessMode,
         input.status,
         timestamp,
         timestamp,
@@ -62,14 +60,13 @@ export const projectRepository = {
     database
       .prepare(
         `UPDATE projects SET name = ?, description = ?, kind = ?, root_path = ?,
-          access_mode = ?, status = ?, updated_at = ? WHERE id = ?`,
+          status = ?, updated_at = ? WHERE id = ?`,
       )
       .run(
         patch.name ?? current.name,
         patch.description === undefined ? current.description : patch.description,
         patch.kind ?? current.kind,
         patch.rootPath ?? current.rootPath,
-        patch.accessMode ?? current.accessMode,
         patch.status ?? current.status,
         now(),
         id,
@@ -85,12 +82,14 @@ export const projectRepository = {
     return Boolean(
       database
         .prepare(
-          `SELECT id FROM sessions WHERE state <> 'ended' AND
-            (working_project_id = ? OR EXISTS (
-              SELECT 1 FROM json_each(reference_project_ids_json) WHERE value = ?
-            )) LIMIT 1`,
+          `SELECT id FROM sessions WHERE project_id = ?
+           UNION ALL
+           SELECT id FROM tasks WHERE project_id = ?
+           UNION ALL
+           SELECT id FROM room_projects WHERE project_id = ?
+           LIMIT 1`,
         )
-        .get(id, id),
+        .get(id, id, id),
     );
   },
 };

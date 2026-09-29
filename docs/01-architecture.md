@@ -1,251 +1,111 @@
 # 01｜架构设计
 
-> 状态：**目标架构。** 当前处于完整替换设计阶段，本文不描述旧代码或迁移路径。
+> 状态：**单项目 Room 目标架构，代码尚未按本版重构。** 本版只决定一个 Project 内的 Session 与 Room。跨项目会话以后决定扩表或新增表；现有跨项目代码及旧文档不是本版 Room 的依据。历史数据处理遵循 `02-data-model.md`。
 
 ## 1. 架构结论
 
-系统有六个核心资源实体，以及一种 Room 内容子记录：
+~~~text
+Project
+├─ Project Session * ── 1 Project Room
+│                         ├─ contextJson：用户确认的当前上下文
+│                         └─ draftJson：自动形成、待确认的草稿
+└─ Project 资源实例 *       每个实例仅归属本 Project
 
-```text
-Workspace
-└─ Room *
-   ├─ Session *
-   │  ├─ Agent?               独立资源，可选扩展
-   │  ├─ MCP *                独立资源，可选能力
-   │  ├─ working Project?     当前实际工作项目
-   │  └─ reference Projects * 显式参考项目
-   └─ RoomContent *           目标、方向、输出与总览
+无项目 Room / 资源 → 模板 → 复制成独立项目实例
+~~~
 
-Project / MCP / Agent
-都是独立资源，不属于 Workspace、Room 或 Session。
-```
+Project 是文件与执行权限边界。项目 Session 绑定一个固定 Project 和一个独有项目 Room；Room 不拥有独立 Pi transcript，不负责 Router、Task 调度或跨项目协调。项目用户消息直接进入 Pi Session。Room 只向后续模型调用提供已确认的文字上下文，并在页面上展示当前内容和自动生成草稿。
 
-关系的边界不可改变：
+Room 相关持久数据只使用 `rooms` 一张表。`Session.roomId` 是唯一、必填的直接引用；不建立 RoomProject、RoomContent、RoomAgent、RoomMcp 或其他关系表。具体字段、JSON 结构和约束以 `02-data-model.md` 为准。
 
-1. `Workspace` 只直接拥有 `Room`。
-2. `Room` 直接拥有 `Session` 与 `RoomContent` 子记录；它不持有 Agent、MCP、Project 配置。
-3. Session 是唯一运行实体，对应一次 Pi Coding Agent Runtime；它保存本次使用的 Agent、MCP、Project 和 Pi 原生 Session 恢复引用。
-4. Agent 是可选的 Pi 扩展模板，不是创建 Session 的前置条件。
-5. `Session.role` 是普通属性：`primary` 是默认工作线，`worker` 是辅助工作线；两者不是独立实体、表、API 或实现分支。
-6. Adapter、Runtime Registry、Pi 进程句柄、MCP Client、事件订阅和执行锁都不是数据实体。
-7. RoomContent 必须逐条存入 `room_contents` 表；禁止把目标、方向和输出塞进 Room `content_json`。
+## 2. 资源归属
 
-## 2. 术语
+无项目的 Room、Agent、MCP 及未来工具、扩展、Skill 对象属于模板类。复制到 Project 时产生新的资源 ID，配置和调试独立；模板更新不自动同步项目副本。实际执行只能使用所属 Project 的资源实例。
 
-| 产品术语 | 代码术语 | 含义 |
+Room 不保存工具、扩展、Agent、MCP、Skill 的 ID、配置、启用列表、凭据或快照。它们的固定对象模型另行设计，不能暂存于 Room JSON 或建立 Room 资源关联表。项目 Room 的 JSON 只保存 `02-data-model.md` 所定义的已确认会话摘要与待确认草稿。
+
+## 3. Pi 执行与 Room 输入
+
+~~~text
+Project Composer
+→ Project Session Service：验证 Project、Session、Room
+→ 从数据库读取已确认 contextJson
+→ 校验并按固定顺序渲染 Markdown
+→ Pi before_agent_start：仅本轮加入 system prompt
+→ session.prompt(原样用户文本)
+→ Pi 原生 transcript 与流式 UI
+~~~
+
+Pi Agent 是唯一执行 Runtime。Project Session cwd 固定为 Project.rootPath；原生 SessionManager 保存 transcript，数据库仅持有恢复引用。Room Markdown 在内存中装配，不创建 Room context 文件，不把系统上下文伪装成用户消息。每轮开始时读当前确认内容，正在运行的轮次不随页面编辑变化。
+
+模型是固定服务端基础设施，使用项目根目录 `.env.local` 的 `OPENAI_BASE_URL`、`OPENAI_API_KEY`、`OPENAI_MODEL_ID`，只兼容 OpenAI Chat Completions。Room、Session、Agent、请求和 UI 均不覆盖模型或凭据。
+
+## 4. 自动形成 Room 草稿
+
+~~~text
+Pi 本轮结束并稳定
+→ 固定规则检查新增公开对话是否值得总结
+→ 必要时：独立、无工具的临时 Pi 总结 Session
+→ 校验固定 JSON 和项目边界
+→ 写入 Room.draftJson
+→ 用户编辑 / 确认 / 拒绝
+→ 确认后写入 Room.contextJson
+→ 下一条用户请求读取新内容
+~~~
+
+总结调用使用数据库中的已确认上下文和 Pi transcript 当前分支的新增安全投影；不使用原始 thinking、未脱敏工具结果或 secret。总结可消耗 Token，但须受输入长度、输出长度、频率和耗时限制。生成失败不阻断主会话回答。
+
+一个 Room 同时只保存一份待确认草稿；用户未处理时，新对话继续保存在 Pi transcript，自动总结不覆盖用户正在编辑的草稿。草稿决议后再增量处理积累的内容。只有用户保存当前内容或确认草稿才使其影响下一次提示词；不建立用户可见内容版本系统。
+
+## 5. 分层与文件职责
+
+~~~text
+src/app/                     Next 页面与 Route Handler 入口
+src/application/             Session/Room 创建、上下文装配、草稿生成与确认
+src/application/ports/       数据库与 Pi Runtime 能力边界
+src/domain/                  Room 固定 JSON 结构、关系和状态校验
+src/infrastructure/database/ SQLite Schema、Repository、历史库诊断
+src/infrastructure/pi/       Pi Session、逐轮 system prompt、无工具总结
+src/infrastructure/projects/ 项目文件和路径安全
+src/bootstrap/               Application/Infrastructure 装配
+web/app/                     页面装配与项目导航
+web/features/                Project Session、Room 审查与资源页面
+web/hooks/                   前端状态及流式事件
+web/api/                     同源 REST/NDJSON Client
+web/shared/ui/               AI Elements Wrapper 和基础组件
+web/styles/                  全局视觉样式
+~~~
+
+依赖方向为 `app → application → domain + ports`、`infrastructure → ports + domain` 和 `app → web/app → web/features → web/shared/ui`。只有 composition root 同时认识应用服务与基础设施。`page.tsx` 和 `route.ts` 只做入口与装配，不承载完整业务实现；页面不直接访问 Pi、SQLite 或 Node 文件系统。
+
+Next.js 同时提供页面和同源 API；不增加独立 Vite 服务或第二个浏览器端口。文件树、预览与 Git 变化仍由独立项目 API 读取；目录列表不依赖 Git 状态。
+
+## 6. AI Elements 组件治理
+
+新增或改造前端组件前，先检索官方 AI Elements 组件。语义匹配时优先经 Feature Wrapper 映射领域 DTO；组件库不能决定 Room 的字段或协议。当前选型：
+
+| 场景 | 组件语义 | 现有例外或替代 |
 | --- | --- | --- |
-| 工作空间 | `Workspace` | Room 的组织与查询边界 |
-| 项目 | `Project` | 独立的本地工作资源 |
-| MCP | `Mcp` | 独立的外部或内置能力定义 |
-| Agent | `Agent` | 独立、可复用的 Pi 扩展模板 |
-| 会话 | `Room` | 多条 Session 的结构化协作容器 |
-| 工作线 | `Session` | 一次实际 Pi Runtime；UI 按 `role` 显示主线或辅助线 |
-| 主工作线 | `Session.role = "primary"` | 普通 Room 消息的默认路由目标 |
-| 辅助工作线 | `Session.role = "worker"` | 显式创建或委派的独立 Session |
+| Session 消息与 Markdown 回复 | Conversation / Message / Response | 现有 `web/shared/ui/ai-elements/response.tsx` 提供安全 Markdown 子集；官方依赖可用后复核替换 |
+| Pi 轮次与真实工具调用 | Reasoning / Tool | 原始 thinking 不下发；`activity-groups.tsx` 用原生 disclosure 展示公开摘要和真实工具记录，默认收起；官方组件可接受公开摘要语义后复核 |
+| Room 草稿审查 | Confirmation / 编辑表单 | 草稿确认经 Room Feature Wrapper 映射；在实现前复核官方 Confirmation 能否承载整体 JSON 差异与编辑 |
+| Project 导航折叠 | 通用导航触发器 | 官方 AI Elements 无匹配通用 App Shell Sidebar Trigger；沿用原生按钮与现有图标，导航重做时复核 |
+| 项目文件树与预览 | File Tree / Code Block | 只读且受 Project Path Guard 约束；Git 只是可选状态 |
+| 项目或 Room 模板选择 | 资源选择弹窗 | 选择并复制 Project/模板不等于模型操作审批；沿用 Feature 层弹窗，官方组件有匹配语义时复核 |
 
-界面中的“会话”只表示 Room。Session 在界面中称“工作线”，不脱离限定词显示为“会话”。
+AI Elements 不承担 API、NDJSON 解析、持久状态或权限校验。Tailwind CSS 与现有项目样式系统承载视觉样式。
 
-Pi SDK 内部术语只存在于 `PiSessionRuntime` 实现内：Pi `AgentSession`、`SessionManager`、`AgentSessionRuntime`。它们不能成为平台表、DTO 或 UI 概念。
+## 7. 安全与关键不变量
 
-## 3. Pi 与 Agent
+1. 项目 Session、项目 Room 和执行资源必须属于同一 Project；模板 Room 与资源模板不可直接执行。
+2. 项目 Session 的 `roomId` 唯一且不可变；一个项目 Room 只服务一个 Session。
+3. Room `contextJson` 是唯一可进入后续系统提示词的 Room 事实；`draftJson` 只用于审核。
+4. Room 的 `outputs` 用于展示，Room 不选择或授权工具、Agent、MCP、Skill 和扩展。
+5. 用户消息属于 Pi 原生 transcript；Room 不保存完整 transcript 或原始思维链。
+6. Room 数据只存数据库，上下文组装只在内存中存在；不创建 `.data/rooms` 或本地 Room 文件。
+7. 同一 Session 同时最多一个 active turn；同一 Room 至多一个生成任务和一份待确认草稿。
+8. Room Schema 变更必须兼顾历史记录，数据迁移是否执行由用户决定。
 
-Pi Coding Agent Runtime 是固定的静态实现，不是数据库配置，也不是用户选择的 Runtime 资源。
+## 8. 跨项目与旧模型
 
-```text
-Session
-→ PiSessionRuntime              固定代码实现
-  → Pi Coding Agent SDK
-    + Agent extension?          Session 可选配置
-    + MCP tools*                Session 可选配置
-    + Project context           Session 项目绑定
-```
-
-`Agent` 只扩展 Pi：角色说明、指令、思考强度、Tools、Extensions、Skills、Settings 和通用执行策略。没有 Agent 时，Session 直接使用 Pi 基础能力。Agent 不选择模型、Provider、API 地址或凭据。
-
-### 3.1 固定模型配置
-
-平台只兼容 OpenAI Chat Completions 格式。模型是进程级基础设施配置，不是领域实体、独立资源或 Agent 配置：
-
-```text
-OPENAI_BASE_URL  → OpenAI-compatible API 根路径，通常以 /v1 结尾
-OPENAI_API_KEY   → Bearer key，仅服务端进程内可见
-OPENAI_MODEL_ID  → 请求使用的 model ID
-```
-
-`PiSessionRuntime` 首次创建或恢复工作线时，以固定 provider ID `workspace-openai` 注册一个 `openai-completions` 模型，并在创建或恢复每个 Pi Session 时显式传入该模型。禁止读取 Pi 全局默认模型、`models.json`、登录凭据或 Agent 自定义 provider/model。
-
-项目根目录 `.env.local` 由 `infrastructure/pi/openai-model-config.server.ts` 显式读取和校验。API key 不进入数据库、Session snapshot、nativeRef、API、浏览器、日志或错误消息；前端不提供模型路径、key 或模型 ID 的编辑入口。即使宿主进程提供同名环境变量，也不作为模型配置来源。
-
-固定接口由服务端代码实现：
-
-```ts
-interface PiSessionRuntime {
-  open(input: SessionRuntimeInput): Promise<NativeHandle>;
-  restore(input: SessionRuntimeInput): Promise<NativeHandle>;
-  send(input: SendMessageInput): Promise<void>;
-  interrupt(handle: NativeHandle): Promise<void>;
-  readMessages(input: SessionRuntimeInput): Promise<ConversationMessage[]>;
-  close(handle: NativeHandle): Promise<void>;
-}
-```
-
-不存在 `runtime`、`driver`、`adapter`、`binding`、`asset` 或 transcript 镜像表。
-
-## 4. Session 配置
-
-Session 是配置汇合点：
-
-```text
-Session
-├─ agentId? / agentSnapshot?
-├─ mcpIds / mcpSnapshots
-├─ workingProjectId?
-├─ referenceProjectIds
-├─ role
-├─ state
-└─ nativeRef
-```
-
-### 4.1 项目绑定
-
-每个 Session 最多一个 `workingProjectId`：Pi Runtime 的主要 `cwd`，是实际修改代码或文件的默认目标。
-
-`referenceProjectIds` 是多个显式参考项目，可用于读取、分析、比较和跨项目协作；它们不自动成为写入目标。
-
-因此：
-
-```text
-单项目独立工作
-→ 一个 Session + 一个 workingProjectId
-
-多项目协作
-→ 一个 Room + 多个 Session
-   每个执行 Session 绑定自己的 workingProjectId
-   协调 Session 可没有 workingProjectId，只引用多个 Project
-```
-
-Room 的 Projects 面板只是所有 Session 项目绑定的并集投影，不拥有项目权限。
-
-### 4.2 后附加 Agent 与 MCP
-
-Agent/MCP 可在创建 Session 时选择，也可在 Session 已存在后附加、替换或移除。Room 页面上的操作必须明确目标 Session；Room 本身不保存此配置。
-
-配置变更规则：
-
-1. 当前 turn 使用开始时冻结的配置。
-2. 变更在下一 turn 生效；如果没有 active turn，立即生效。
-3. Pi Runtime 句柄需要重建时，由固定 `PiSessionRuntime` 在下一 turn 前重建，平台 Session 和 Pi transcript 不更换。
-4. Agent/MCP/Project 不可用或校验失败时，保留旧配置，不能写入半成品配置。
-
-## 5. Room 的结构职责
-
-Room 即使没有目标、消息或 Session，也必须有稳定结构：
-
-```text
-Room
-├─ 标题与状态
-├─ 目标、方向、输出与总览
-├─ 工作线结构          当前没有工作线 / 默认工作线 / 辅助工作线
-├─ 项目聚合视图        来自 Session 项目绑定
-├─ MCP 聚合视图        来自 Session MCP 绑定
-├─ Agent 聚合视图      来自 Session Agent 绑定
-└─ 活动与消息区域
-```
-
-没有目标不等于没有结构。空 Room 可以直接创建一个没有 Agent、MCP、Project 的基础 Session，也可以先选择资源再创建 Session。
-
-Room 的目标、方向、跨 Session 输出和总览由 `RoomContent` 子记录持久化。每条内容拥有独立 ID、类型、状态、排序和来源 Session，可单独查询与更新。它不是 transcript；Session 只能提供候选和来源，写入或改变 RoomContent 必须由用户确认或编辑。
-
-## 6. 分层与目录
-
-```text
-src/
-├─ app/                 路由、页面入口、Route Handler
-├─ features/            AppShell、Room、Session、Project、MCP、Agent 的页面投影
-├─ application/         用例、事务、权限、并发、配置变更
-├─ domain/              六个核心实体、RoomContent、状态转换、校验与错误
-├─ infrastructure/
-│  ├─ database/         六张核心表、room_contents 与 Repository
-│  ├─ pi/               固定 PiSessionRuntime、事件翻译、nativeRef
-│  ├─ mcp/              固定 MCP transport 实现
-│  ├─ projects/         Path Guard、文件、Git、Diff
-│  └─ security/         secret、脱敏、安全错误
-└─ shared/              protocol、UI primitives、AI Elements 源码、纯工具
-```
-
-依赖方向：
-
-```text
-app → features → shared/protocol
-app → application
-application → domain + ports
-infrastructure → ports + domain
-shared → 无业务层依赖
-```
-
-只有 composition root 可以同时认识 Application 与 Infrastructure。Feature 不导入数据库、Pi SDK、Node 文件系统或 MCP transport。
-
-## 7. 静态实现与外部规范
-
-| 领域 | 固定实现 | 规范入口 |
-| --- | --- | --- |
-| Pi Runtime | `PiSessionRuntime` + 固定 OpenAI-compatible provider | [Pi SDK](https://pi.dev/docs/latest/sdk) |
-| MCP Client | MCP connector/transport 实现 | [MCP TypeScript Client](https://github.com/modelcontextprotocol/typescript-sdk/blob/main/packages/client/README.md) |
-| AI 交互组件 | AI Elements 源码组件 | [AI Elements](https://elements.ai-sdk.dev/) |
-
-AI Elements 是新增前端组件的第一检索来源。存在语义匹配组件时优先采用，并通过 Feature Wrapper 接入平台 ViewModel；不能采用时必须登记原因、替代位置和复核条件。
-
-消息 UI 只接受平台 `AgentEvent`，不使用 AI SDK 的 `useChat`、`UIMessage`、`ToolUIPart` 或 AI SDK transport。实时流和历史恢复统一使用同一 Markdown 渲染路径。
-
-### 7.1 布局组件登记
-
-| 需求 | AI Elements 评估 | 决策 | 位置 |
-| --- | --- | --- | --- |
-| Project 文件树 | 有 [File Tree](https://elements.ai-sdk.dev/components/file-tree) | 优先采用 AI Elements File Tree | `shared/ui/ai-elements/file-tree.tsx` |
-| 文件内容展示 | 有 [Code Block](https://elements.ai-sdk.dev/components/code-block) | 代码文件使用 Code Block；普通文本使用同一内容列的安全文本视图 | `features/project/file-content-panel.tsx` |
-| Timeline | 有 [Conversation](https://elements.ai-sdk.dev/components/conversation) | 官方源码依赖尚未进入依赖集；临时由 Room Feature 负责滚动与空状态，安装后替换为 Feature Wrapper | `features/room/room-surface.tsx` |
-| 消息与 Markdown | 有 [Message](https://elements.ai-sdk.dev/components/message) | 官方 `MessageResponse` 依赖 Streamdown；当前使用本地安全结构化 Markdown renderer，不注入 HTML，依赖可用后替换 | `shared/ui/ai-elements/markdown-response.tsx` |
-| Composer | 有 [Prompt Input](https://elements.ai-sdk.dev/components/prompt-input) | 官方源码依赖 AI SDK 与 shadcn 原语；当前保留相同键盘、状态和草稿语义，依赖可用后替换 | `features/room/room-surface.tsx` |
-| 活动与工具 | 有 [Task](https://elements.ai-sdk.dev/components/task) 与 [Tool](https://elements.ai-sdk.dev/components/tool) | 当前直接展示平台 `ActivityEvent`，不引入 AI SDK Tool 类型；依赖可用后由 Wrapper 映射 | `features/room/room-surface.tsx` |
-| MCP 审批 | 有 [Confirmation](https://elements.ai-sdk.dev/components/confirmation) | 等官方 MCP Client 与审批事件接入后采用；禁止先做无执行语义的假审批 UI | `features/room/room-surface.tsx` |
-| Inspector 横向选项卡 | AI Elements 无通用 Tabs | 使用本地 WAI-ARIA Tabs 基础原语；引入 Radix 后只替换原语内部 | `shared/ui/primitives/tabs.tsx` |
-| 新增、修改与确认弹窗 | AI Elements 无通用应用表单 Dialog | 使用本地语义 Dialog 基础原语；引入 Radix 后只替换原语内部 | `shared/ui/primitives/dialog.tsx` |
-| 表单与工作空间选择 | AI Elements 无通用应用表单 Select | 使用统一的本地 listbox 原语，集中提供当前项、点击外部关闭、Escape 与禁用状态；引入 Radix 后只替换原语内部 | `shared/ui/primitives/select.tsx` |
-
-Tabs、Dialog 和 Select 属于通用应用壳原语，不承载领域状态。当前依赖集中没有 Radix Tabs/Dialog/Select，先用具备 `role`、ARIA、Escape 和点击外部关闭行为的本地原语，避免业务组件自行重复实现；依赖可用后仅替换原语内部。Inspector、文件内容列、各类编辑 Dialog 必须由对应 Feature Wrapper 组装，不能把完整页面状态放进基础组件。
-
-### 7.2 Tailwind 样式约定
-
-Tailwind CSS 是本项目唯一的视觉样式承载方式。布局、间距、颜色、字体、边框、响应式、状态与动画均写在组件的 Tailwind utility class 中；`src/app/globals.css` 只保留 Tailwind 入口，不新增页面、Feature 或组件的手写 CSS 规则、CSS Modules、styled-components 或内联 `style` 对象。
-
-1. 保持组件的领域语义、数据流与交互职责不变；样式迁移不得趁机把 Feature 状态下沉到通用 UI 原语。
-2. 同一交互模式必须复用 shared primitive，而不是复制一套视觉实现。当前包括 Dialog、Tabs、Select；新的通用控件先评估 AI Elements，再按本节登记例外。
-3. 条件样式使用 Tailwind class 组合表达；只允许通过 `cn` 合并 utility class，不创建业务 CSS 类名作为样式入口。
-4. 响应式规则使用 Tailwind breakpoint utilities，保证窄屏下 Sidebar、Inspector 与 File Content 的既定信息架构不变。
-5. 颜色、焦点、禁用、错误和 loading 状态必须以 utility class 同时表达视觉与可访问反馈，不能只依赖颜色。
-
-验证方式：`rg` 不应发现业务组件中的旧视觉类名或原生 `select`；类型检查、生产构建以及桌面/窄屏界面验收均须通过。
-
-### 7.3 可选右侧列
-
-桌面布局最多由四列组成：Workspace Sidebar、Room Surface、File Content、Inspector。Inspector 默认隐藏，由 Room Header 按钮或左栏资源入口打开；File Content 仅在选择文件后出现，位于 Inspector 左侧，并拥有独立关闭行为。
-
-`FileContentPanel` 只显示服务端安全文件预览结果，不直接读文件系统，不提供未经需求定义的文件编辑能力。它与 Inspector 是两个独立列，不能把文件内容重新塞进 Inspector 或弹窗。一个文件预览列可保留多个已打开文件标签；标签与当前文件仅属于页面内状态，不持久化。
-
-## 8. 关键不变量
-
-1. Workspace 与 Session 的 `workspaceId` 必须等于其 Room 的 `workspaceId`；Session 冗余记录此字段仅用于查询和校验。
-2. Agent、MCP、Project 不属于 Workspace；Session 使用它们时必须检查独立资源状态与当前用户授权。
-3. 一个 Room 最多一个 `role = primary` Session。
-4. Session 可以没有 Agent、MCP、workingProject 或 referenceProject。
-5. 一个 Session 同时只有一个 active turn；多个 Session 可以并行。
-6. Pi transcript 属于 Pi，平台不复制完整消息表。
-7. 浏览器提交的所有资源 ID、路径和权限声明都不可信，服务端重新校验。
-8. 适配层只属于静态代码，不能持久化为实体或由用户动态注册。
-9. 所有 Session 使用项目根目录 `.env.local` 指定的同一个 `workspace-openai` 模型；Agent、Room 与 Session 均不能覆盖模型路径、key 或模型 ID。
-
-## 9. 架构变更
-
-以下变化必须先更新本文并同步其余四份文档：核心实体关系、RoomContent 结构、Session 配置字段、Pi Runtime 接口、MCP 接入方式、项目绑定强度、流协议、AI Elements 采用或例外。
-
-每项变更必须写明对应需求 ID、替换的决策、影响范围和验证方式。
+本版不定义跨项目 Room 的数据表、Router、RoomRun、Task、Synthesizer 或 UI；后续独立决定扩表还是新表。现有跨项目实现和 `RoomProject/RoomContent` 等旧表可能仍在代码及用户数据库中；实现本版时须先进行无破坏影响评估，不能自动删除或把旧记录解释为新的单项目 Room。

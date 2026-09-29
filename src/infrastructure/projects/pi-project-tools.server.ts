@@ -89,11 +89,7 @@ function toolAllowed(input: SessionRuntimeInput, name: string) {
 export async function createPiProjectTools(
   input: SessionRuntimeInput,
 ): Promise<ToolDefinition<any, any, any>[]> {
-  const readRoots = [
-    ...(input.hasWorkingProject ? [input.workingDirectory] : []),
-    ...input.referenceDirectories,
-  ];
-  if (readRoots.length === 0) return [];
+  const readRoots = [input.workingDirectory];
 
   const readOperations = {
     async readFile(target: string) {
@@ -123,7 +119,7 @@ export async function createPiProjectTools(
     tools.push(renameTool(
       createReadToolDefinition(input.workingDirectory, { operations: readOperations }),
       "project_read",
-      "读取当前工作线已绑定项目中的文件。支持 working Project 与只读 reference Projects。",
+      "读取当前项目工作线绑定项目中的文件。",
     ));
   }
   if (toolAllowed(input, "ls")) {
@@ -134,7 +130,7 @@ export async function createPiProjectTools(
     ));
   }
 
-  if (!input.allowProjectWrite || !input.hasWorkingProject) return tools;
+  if (!input.allowProjectWrite) return tools;
   const writeRoots = [input.workingDirectory];
   const editOperations = {
     async readFile(target: string) {
@@ -159,14 +155,14 @@ export async function createPiProjectTools(
     tools.push(renameTool(
       createEditToolDefinition(input.workingDirectory, { operations: editOperations }),
       "project_edit",
-      "精确修改 working Project 内的现有文件；不能修改 reference Project。",
+      "精确修改当前项目内的现有文件。",
     ));
   }
   if (toolAllowed(input, "write")) {
     tools.push(renameTool(
       createWriteToolDefinition(input.workingDirectory, { operations: writeOperations }),
       "project_write",
-      "在 working Project 内创建或完整重写文件；不能写入 reference Project。",
+      "在当前项目内创建或完整重写文件。",
     ));
   }
   return tools;

@@ -83,11 +83,16 @@ export const mcpRepository = {
     return Boolean(
       database
         .prepare(
-          `SELECT id FROM sessions WHERE state <> 'ended' AND EXISTS (
+          `SELECT id FROM sessions WHERE EXISTS (
             SELECT 1 FROM json_each(mcp_ids_json) WHERE value = ?
-          ) LIMIT 1`,
+          )
+           UNION ALL
+           SELECT id FROM tasks WHERE EXISTS (
+             SELECT 1 FROM json_each(mcp_ids_json) WHERE value = ?
+           )
+           LIMIT 1`,
         )
-        .get(id),
+        .get(id, id),
     );
   },
 };

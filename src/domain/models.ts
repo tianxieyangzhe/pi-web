@@ -3,25 +3,8 @@ export type ISODateTime = string;
 export type JsonObject = Record<string, unknown>;
 
 export type ResourceStatus = "active" | "disabled" | "archived";
+export type RoomKind = "cross_project";
 export type RoomStatus = "active" | "paused" | "closed" | "archived";
-export type SessionRole = "primary" | "worker";
-export type SessionState =
-  | "not_started"
-  | "starting"
-  | "idle"
-  | "running"
-  | "interrupting"
-  | "ended"
-  | "unavailable";
-
-export type Workspace = {
-  id: EntityId;
-  name: string;
-  description: string | null;
-  status: "active" | "archived";
-  createdAt: ISODateTime;
-  updatedAt: ISODateTime;
-};
 
 export type Project = {
   id: EntityId;
@@ -29,7 +12,6 @@ export type Project = {
   description: string | null;
   kind: "code" | "knowledge" | "general";
   rootPath: string;
-  accessMode: "read" | "write";
   status: ResourceStatus;
   createdAt: ISODateTime;
   updatedAt: ISODateTime;
@@ -37,17 +19,8 @@ export type Project = {
 
 export type McpConfig =
   | { kind: "built_in"; implementation: "workspace" }
-  | {
-      kind: "stdio";
-      command: string;
-      args: string[];
-      envSecretRefs: Record<string, string>;
-    }
-  | {
-      kind: "streamable_http";
-      url: string;
-      authSecretRef: string | null;
-    };
+  | { kind: "stdio"; command: string; args: string[]; envSecretRefs: Record<string, string> }
+  | { kind: "streamable_http"; url: string; authSecretRef: string | null };
 
 export type Mcp = {
   id: EntityId;
@@ -63,21 +36,12 @@ export type Mcp = {
 export type AgentPolicy = {
   allowProjectWrite: boolean;
   allowExternalWrite: boolean;
-  allowDelegation: boolean;
-  maxParallelSessions: number;
+  maxParallelTasks: number;
 };
 
 export type PiAgentExtension = {
   instruction: string | null;
-  thinkingLevel:
-    | "off"
-    | "minimal"
-    | "low"
-    | "medium"
-    | "high"
-    | "xhigh"
-    | "max"
-    | null;
+  thinkingLevel: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | null;
   tools: string[] | null;
   excludeTools: string[];
   extensionSources: string[];
@@ -99,42 +63,31 @@ export type Agent = {
 
 export type Room = {
   id: EntityId;
-  workspaceId: EntityId;
+  kind: RoomKind;
   title: string;
   status: RoomStatus;
+  contextRevision: number;
   createdAt: ISODateTime;
   updatedAt: ISODateTime;
 };
 
-export type Session = {
+export type RoomProject = {
   id: EntityId;
-  workspaceId: EntityId;
   roomId: EntityId;
-  role: SessionRole;
-  purpose: string | null;
-  parentSessionId: EntityId | null;
-  agentId: EntityId | null;
-  agentSnapshot: Agent | null;
-  mcpIds: EntityId[];
-  mcpSnapshots: Mcp[];
-  workingProjectId: EntityId | null;
-  referenceProjectIds: EntityId[];
-  configurationRevision: number;
-  state: SessionState;
-  nativeRef: JsonObject | null;
-  nativeMetadata: JsonObject;
+  projectId: EntityId;
+  position: number;
   createdAt: ISODateTime;
-  lastActivityAt: ISODateTime | null;
-  endedAt: ISODateTime | null;
 };
 
-export type RoomContentKind = "overview" | "goal" | "direction" | "output";
-export type RoomOutputKind =
-  | "note"
+export type RoomContentKind =
+  | "overview"
+  | "goal"
+  | "rule"
+  | "memory"
+  | "direction"
   | "decision"
-  | "plan"
-  | "delivery"
-  | "summary";
+  | "output";
+
 export type RoomContentStatus =
   | "candidate"
   | "active"
@@ -145,6 +98,8 @@ export type RoomContentStatus =
   | "superseded"
   | "retracted";
 
+export type RoomOutputKind = "note" | "plan" | "delivery" | "summary";
+
 export type RoomContent = {
   id: EntityId;
   roomId: EntityId;
@@ -153,10 +108,108 @@ export type RoomContent = {
   title: string;
   body: string;
   status: RoomContentStatus;
+  sourceRunId: EntityId | null;
+  sourceTaskId: EntityId | null;
   sourceSessionId: EntityId | null;
   position: number;
   createdAt: ISODateTime;
   updatedAt: ISODateTime;
+};
+
+export type RoomRunRoute = "direct" | "single_project" | "multi_project";
+export type RoomRunState =
+  | "received"
+  | "routing"
+  | "review_pending"
+  | "dispatching"
+  | "running"
+  | "synthesizing"
+  | "completed"
+  | "blocked"
+  | "failed"
+  | "cancelled";
+
+export type RoomRun = {
+  id: EntityId;
+  roomId: EntityId;
+  requestText: string;
+  projectHintId: EntityId | null;
+  route: RoomRunRoute | null;
+  state: RoomRunState;
+  routerSummary: string | null;
+  finalResponse: string | null;
+  errorCode: string | null;
+  contextRevision: number;
+  createdAt: ISODateTime;
+  startedAt: ISODateTime | null;
+  completedAt: ISODateTime | null;
+};
+
+export type TaskState =
+  | "proposed"
+  | "review_pending"
+  | "approved"
+  | "queued"
+  | "running"
+  | "completed"
+  | "blocked"
+  | "failed"
+  | "cancelled";
+export type TaskRisk = "low" | "medium" | "high";
+export type TaskOperation = "read" | "project_write" | "external_write";
+
+export type TaskResult = {
+  status: "completed" | "blocked" | "failed";
+  summary: string;
+  artifacts: Array<{ projectId: EntityId; path: string; description: string }>;
+  risks: string[];
+  nextActions: string[];
+};
+
+export type Task = {
+  id: EntityId;
+  roomId: EntityId;
+  runId: EntityId;
+  retryOfTaskId: EntityId | null;
+  projectId: EntityId;
+  sessionId: EntityId | null;
+  agentId: EntityId | null;
+  mcpIds: EntityId[];
+  instruction: string;
+  acceptance: string[];
+  operation: TaskOperation;
+  risk: TaskRisk;
+  state: TaskState;
+  result: TaskResult | null;
+  createdAt: ISODateTime;
+  startedAt: ISODateTime | null;
+  completedAt: ISODateTime | null;
+};
+
+export type SessionState =
+  | "not_started"
+  | "starting"
+  | "idle"
+  | "running"
+  | "interrupting"
+  | "ended"
+  | "unavailable";
+
+export type Session = {
+  id: EntityId;
+  roomId: EntityId | null;
+  projectId: EntityId;
+  purpose: string;
+  agentId: EntityId | null;
+  agentSnapshot: Agent | null;
+  mcpIds: EntityId[];
+  mcpSnapshots: Mcp[];
+  state: SessionState;
+  nativeRef: JsonObject | null;
+  nativeMetadata: JsonObject;
+  createdAt: ISODateTime;
+  lastActivityAt: ISODateTime | null;
+  endedAt: ISODateTime | null;
 };
 
 export type ConversationMessage = {
@@ -164,14 +217,13 @@ export type ConversationMessage = {
   sessionId: EntityId;
   role: "user" | "assistant";
   content: string;
-  thinking?: string;
-  toolResults?: string;
   createdAt: ISODateTime;
 };
 
 export type ActivityEvent = {
   type: "activity";
   id: string;
+  round?: number;
   kind: "thinking" | "tool" | "context";
   state: "running" | "completed" | "error";
   summary: string;
@@ -180,31 +232,18 @@ export type ActivityEvent = {
 
 export type AgentEvent =
   | { type: "message_delta"; text: string }
+  | { type: "response_reset" }
   | ActivityEvent
-  | { type: "tool_result"; toolName: string; result: unknown }
   | { type: "session_state"; state: SessionState }
-  | {
-      type: "project_changes";
-      projectId: EntityId;
-      summary: string;
-      patch: string;
-    }
-  | {
-      type: "room_content_candidate";
-      candidate: {
-        kind: "goal" | "direction" | "output";
-        outputKind?: RoomOutputKind;
-        title: string;
-        body: string;
-      };
-    }
+  | { type: "project_changes"; projectId: EntityId; summary: string; patch: string }
+  | { type: "task_result"; result: TaskResult }
   | { type: "complete" }
   | { type: "error"; code: string; message: string; recoverable: boolean };
 
 export type AgentEventEnvelope = {
   eventId: string;
   turnId: string;
-  roomId: string;
+  roomId: string | null;
   sessionId: string;
   sequence: number;
   emittedAt: string;

@@ -81,6 +81,15 @@ export const agentRepository = {
   },
 
   isInUse(id: string): boolean {
-    return Boolean(database.prepare("SELECT id FROM sessions WHERE agent_id = ? LIMIT 1").get(id));
+    return Boolean(
+      database
+        .prepare(
+          `SELECT id FROM sessions WHERE agent_id = ?
+           UNION ALL
+           SELECT id FROM tasks WHERE agent_id = ?
+           LIMIT 1`,
+        )
+        .get(id, id),
+    );
   },
 };

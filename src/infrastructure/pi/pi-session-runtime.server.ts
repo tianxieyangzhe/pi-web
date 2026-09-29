@@ -1,9 +1,11 @@
 import type {
+  ActivityEvent,
   AgentEvent,
   Agent,
   JsonObject,
   Session,
 } from "@/domain/models";
+import { isAbsolute, relative, resolve, sep } from "node:path";
 import {
   createAgentSession,
   DefaultResourceLoader,
@@ -13,15 +15,14 @@ import {
 import type { AgentSession as PiAgentSession } from "@earendil-works/pi-coding-agent";
 import type { PiRuntimePort, SessionRuntimeInput } from "@/application/ports/pi-runtime";
 import { createPiProjectTools } from "@/infrastructure/projects/pi-project-tools.server";
-import { createDelegateSessionTool, proposeRoomContentTool } from "@/infrastructure/pi/pi-room-content-tool.server";
+import { submitTaskResultTool } from "@/infrastructure/pi/pi-task-result-tool.server";
 import { createOpenAIModelRuntime } from "@/infrastructure/pi/openai-model-config.server";
-import { redactForDisplay } from "@/infrastructure/security/redaction.server";
 
 type Handle = {
   session: PiAgentSession;
   manager: SessionManager;
   cwd: string;
-  configurationRevision: number;
+  isProjectSession: boolean;
 };
 
 type PiEvent = {
@@ -35,11 +36,26 @@ type PiEvent = {
     contentIndex?: number;
     delta?: string;
     content?: unknown;
+    toolCall?: { id?: string; name?: string; arguments?: unknown };
   };
   delta?: string;
   result?: unknown;
   args?: unknown;
   partialResult?: unknown;
+};
+
+const PUBLIC_SUMMARY_OPEN = "[[PI_PUBLIC_SUMMARY]]";
+const PUBLIC_SUMMARY_CLOSE = "[[/PI_PUBLIC_SUMMARY]]";
+
+type TurnState = {
+  round: number;
+  publicText: string;
+  analysisDetails: string[];
+  toolDetails: Map<string, string | undefined>;
+  showActionSummary: boolean;
+  textMode: "prefix" | "summary" | "response";
+  pendingText: string;
+  summaryText: string;
 };
 
 function textContent(value: unknown): string {
@@ -54,18 +70,6 @@ function textContent(value: unknown): string {
     .join("");
 }
 
-function thinkingContent(value: unknown): string | undefined {
-  if (!Array.isArray(value)) return undefined;
-  const parts = value
-    .map((part) => {
-      if (!part || typeof part !== "object") return "";
-      const item = part as { type?: string; text?: string; thinking?: string };
-      return item.type === "thinking" ? item.thinking ?? "" : "";
-    })
-    .filter((t) => t);
-  return parts.length > 0 ? parts.join("") : undefined;
-}
-
 function nativeRef(session: PiAgentSession, manager: SessionManager, cwd: string): JsonObject {
   const sessionFile = session.sessionFile ?? manager.getSessionFile();
   if (!sessionFile) throw new Error("Pi 没有返回可恢复的原生 Session 文件");
@@ -74,6 +78,64 @@ function nativeRef(session: PiAgentSession, manager: SessionManager, cwd: string
     sessionFile,
     sessionId: session.sessionId,
     cwd,
+  };
+}
+
+function visibleToolLabel(toolName: string): string {
+  const labels: Record<string, string> = {
+    bash: "执行命令",
+    edit: "编辑文件",
+    find: "查找文件",
+    grep: "搜索内容",
+    ls: "浏览目录",
+    project_edit: "修改项目文件",
+    project_list: "浏览项目目录",
+    project_read: "读取项目文件",
+    project_write: "写入项目文件",
+    read: "读取文件",
+    submit_task_result: "汇报任务结果",
+    write: "写入文件",
+  };
+  const safeName = toolName.replace(/[^\p{L}\p{N}_.:-]/gu, "").slice(0, 80);
+  const label = Object.prototype.hasOwnProperty.call(labels, toolName) ? labels[toolName] : "";
+  if (label && safeName) return `${label}（${safeName}）`;
+  return safeName || "执行已授权工具";
+}
+
+function safeToolDetail(toolName: string, args: unknown, workingDirectory: string): string | undefined {
+  if (!["project_read", "project_list", "project_edit", "project_write"].includes(toolName)) return undefined;
+  if (!args || typeof args !== "object") return undefined;
+  if (!("path" in args) || typeof args.path !== "string") {
+    return toolName === "project_list" ? "目标：项目根目录" : undefined;
+  }
+
+  const target = resolve(workingDirectory, args.path);
+  const relativePath = relative(workingDirectory, target);
+  if (isAbsolute(relativePath) || relativePath === ".." || relativePath.startsWith(`..${sep}`)) return undefined;
+  const segments = relativePath.split(sep).filter(Boolean);
+  const sensitiveSegment = /^(?:\.env(?:\.|$)|\.git$|\.ssh$|\.aws$|\.codex$|\.npmrc$|\.pypirc$|credentials?\.|id_(?:rsa|dsa|ecdsa|ed25519)|node_modules$)/i;
+  if (segments.some((segment) => sensitiveSegment.test(segment))) return undefined;
+  return `目标：${segments.join("/") || "项目根目录"}`;
+}
+
+function safePublicSummary(value: string, workingDirectory: string): string {
+  return value
+    .replaceAll(workingDirectory, "项目根目录")
+    .replace(/\b(?:sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9]{20,}|Bearer\s+[A-Za-z0-9._~+/-]+=*)\b/gi, "[已隐藏敏感信息]")
+    .replace(/\b((?:OPENAI|API|ACCESS|SECRET|TOKEN|PASSWORD)[A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD)?\s*[:=]\s*)[^\s,;]+/gi, "$1[已隐藏]")
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, " ")
+    .trim()
+    .slice(0, 600);
+}
+
+function extractPublicSummary(value: string): { summary?: string; text: string } {
+  const openIndex = value.indexOf(PUBLIC_SUMMARY_OPEN);
+  if (openIndex < 0) return { text: value };
+  const closeIndex = value.indexOf(PUBLIC_SUMMARY_CLOSE, openIndex + PUBLIC_SUMMARY_OPEN.length);
+  if (closeIndex < 0) return { text: value.slice(0, openIndex) };
+  return {
+    summary: value.slice(openIndex + PUBLIC_SUMMARY_OPEN.length, closeIndex),
+    text: value.slice(0, openIndex) + value.slice(closeIndex + PUBLIC_SUMMARY_CLOSE.length),
   };
 }
 
@@ -86,11 +148,10 @@ function loaderFor(input: SessionRuntimeInput): DefaultResourceLoader {
     additionalSkillPaths: extension?.skillPaths ?? [],
     appendSystemPrompt: [
       ...(extension?.instruction ? [extension.instruction] : []),
-      ...(input.referenceDirectories.length
-        ? [
-            `可参考但默认不可写的其他项目目录：\n${input.referenceDirectories.join("\n")}`,
-          ]
-        : []),
+      ...(input.session.roomId === null ? [
+        `At the start of every model turn, emit exactly one concise, high-level, user-facing summary inside ${PUBLIC_SUMMARY_OPEN}...${PUBLIC_SUMMARY_CLOSE}, before any answer text or tool call. Describe the request objective and your high-level approach or next action in 1-3 short sentences. This is an explicitly public summary, not private chain-of-thought. Never reveal hidden reasoning, detailed deliberation, speculative internal notes, secrets, raw tool arguments or results, or absolute paths. After the closing marker, continue with the normal answer.`,
+        "Before each tool call, provide one concise user-facing execution note stating the operation, the concrete project-relative target when known, and why or what result you expect. Keep it factual and specific. This is progress text, not private chain-of-thought; never reveal hidden reasoning, detailed deliberation, tool arguments, secrets, or absolute paths.",
+      ] : []),
     ],
   });
   return loader;
@@ -99,50 +160,171 @@ function loaderFor(input: SessionRuntimeInput): DefaultResourceLoader {
 function mapEvent(
   event: PiEvent,
   emit: (event: AgentEvent) => void,
-  thinkingAccumulator: Map<string, string>,
+  turn: TurnState,
+  workingDirectory: string,
 ): void {
   const modelEvent = event.assistantMessageEvent;
-  if (event.type === "message_update" && modelEvent?.type === "text_delta") {
-    emit({ type: "message_delta", text: modelEvent.delta ?? "" });
-    return;
-  }
-  if (event.type === "message_update" && modelEvent?.type === "thinking_delta") {
-    const thinkingId = `thinking-${modelEvent.contentIndex ?? 0}`;
-    const previous = thinkingAccumulator.get(thinkingId) ?? "";
-    thinkingAccumulator.set(thinkingId, previous + (modelEvent.delta ?? ""));
+  const recordSummary = (value: string) => {
+    const detail = safePublicSummary(value, workingDirectory);
+    if (!detail || turn.analysisDetails.includes(detail) || turn.analysisDetails.length >= 8) return;
+    turn.analysisDetails.push(detail);
     emit({
       type: "activity",
-      id: thinkingId,
+      id: `model-round-${turn.round}`,
+      round: turn.round,
+      kind: "thinking",
+      state: "completed",
+      summary: `Pi 第 ${turn.round} 轮模型公开摘要`,
+      detail: turn.analysisDetails.join("\n"),
+    });
+  };
+  const emitResponseText = (text: string) => {
+    if (!text) return;
+    turn.publicText += text;
+    emit({ type: "message_delta", text });
+  };
+  const consumeText = (text: string) => {
+    if (!text) return;
+    if (!turn.showActionSummary) {
+      emitResponseText(text);
+      return;
+    }
+    if (turn.textMode === "response") {
+      emitResponseText(text);
+      return;
+    }
+    if (turn.textMode === "prefix") {
+      turn.pendingText += text;
+      const trimmed = turn.pendingText.trimStart();
+      if (trimmed.startsWith(PUBLIC_SUMMARY_OPEN)) {
+        turn.pendingText = "";
+        turn.textMode = "summary";
+        const remainder = trimmed.slice(PUBLIC_SUMMARY_OPEN.length);
+        consumeText(remainder);
+        return;
+      }
+      if (trimmed.length < PUBLIC_SUMMARY_OPEN.length && PUBLIC_SUMMARY_OPEN.startsWith(trimmed)) return;
+      turn.textMode = "response";
+      const pendingText = turn.pendingText;
+      turn.pendingText = "";
+      emitResponseText(pendingText);
+      return;
+    }
+
+    turn.summaryText += text;
+    const closeIndex = turn.summaryText.indexOf(PUBLIC_SUMMARY_CLOSE);
+    if (closeIndex < 0) return;
+    const summary = turn.summaryText.slice(0, closeIndex);
+    const response = turn.summaryText.slice(closeIndex + PUBLIC_SUMMARY_CLOSE.length);
+    turn.summaryText = "";
+    turn.textMode = "response";
+    recordSummary(summary);
+    emitResponseText(response);
+  };
+  const finishText = () => {
+    if (turn.textMode === "prefix" && turn.pendingText) {
+      emitResponseText(turn.pendingText);
+      turn.pendingText = "";
+      turn.textMode = "response";
+      return;
+    }
+    if (turn.textMode === "summary") {
+      recordSummary(turn.summaryText);
+      turn.summaryText = "";
+      turn.textMode = "response";
+    }
+  };
+  if (event.type === "turn_start") {
+    turn.round += 1;
+    turn.publicText = "";
+    turn.analysisDetails = [];
+    turn.toolDetails.clear();
+    turn.textMode = "prefix";
+    turn.pendingText = "";
+    turn.summaryText = "";
+    emit({
+      type: "activity",
+      id: `model-round-${turn.round}`,
+      round: turn.round,
       kind: "thinking",
       state: "running",
-      summary: "思考过程",
-      detail: redactForDisplay(thinkingAccumulator.get(thinkingId)!),
+      summary: `Pi 第 ${turn.round} 轮模型调用已开始`,
     });
     return;
   }
+  if (event.type === "message_update" && modelEvent?.type === "thinking_start") {
+    emit({ type: "activity", id: `model-round-${turn.round}`, round: turn.round, kind: "thinking", state: "running", summary: `Pi 第 ${turn.round} 轮正在生成分析阶段` });
+    return;
+  }
+  if (event.type === "message_update" && modelEvent?.type === "thinking_end") {
+    emit({ type: "activity", id: `model-round-${turn.round}`, round: turn.round, kind: "thinking", state: "completed", summary: `Pi 第 ${turn.round} 轮分析阶段已完成` });
+    return;
+  }
+  if (event.type === "message_update" && modelEvent?.type === "text_delta") {
+    consumeText(modelEvent.delta ?? "");
+    return;
+  }
+  if (event.type === "message_update" && modelEvent?.type === "thinking_delta") {
+    emit({ type: "activity", id: `model-round-${turn.round}`, round: turn.round, kind: "thinking", state: "running", summary: `Pi 第 ${turn.round} 轮正在生成分析阶段` });
+    return;
+  }
+  if (event.type === "message_update" && modelEvent?.type === "toolcall_end") {
+    finishText();
+    const toolCall = modelEvent.toolCall;
+    if (toolCall?.id) {
+      if (turn.showActionSummary) recordSummary(turn.publicText);
+      turn.toolDetails.set(toolCall.id, safeToolDetail(toolCall.name ?? "", toolCall.arguments, workingDirectory));
+      if (turn.showActionSummary) {
+        emit({
+          type: "activity",
+          id: `model-round-${turn.round}`,
+          round: turn.round,
+          kind: "thinking",
+          state: "completed",
+          summary: `Pi 第 ${turn.round} 轮模型公开摘要`,
+          ...(turn.analysisDetails.length ? { detail: turn.analysisDetails.join("\n") } : {}),
+        });
+        if (turn.publicText) emit({ type: "response_reset" });
+      }
+      turn.publicText = "";
+      emit({
+        type: "activity",
+        id: `tool-${toolCall.id}`,
+        round: turn.round,
+        kind: "tool",
+        state: "running",
+        summary: `准备执行：${visibleToolLabel(toolCall.name ?? "")}`,
+        ...(turn.toolDetails.get(toolCall.id) ? { detail: turn.toolDetails.get(toolCall.id) } : {}),
+      });
+    }
+    return;
+  }
   if (event.type === "tool_execution_start") {
-    if (event.toolName === "propose_room_content" && event.args && typeof event.args === "object") {
-      const candidate = event.args as {
-        kind?: string;
-        outputKind?: string;
-        title?: string;
-        body?: string;
+    if (event.toolName === "submit_task_result" && event.args && typeof event.args === "object") {
+      const result = event.args as {
+        status?: "completed" | "blocked" | "failed";
+        summary?: string;
+        artifacts?: Array<{ path?: string; description?: string }>;
+        risks?: string[];
+        nextActions?: string[];
       };
       if (
-        (candidate.kind === "goal" || candidate.kind === "direction" || candidate.kind === "output") &&
-        typeof candidate.title === "string" &&
-        typeof candidate.body === "string" &&
-        (candidate.kind !== "output" || ["note", "decision", "plan", "delivery", "summary"].includes(candidate.outputKind ?? ""))
+        (result.status === "completed" || result.status === "blocked" || result.status === "failed") &&
+        typeof result.summary === "string" &&
+        Array.isArray(result.artifacts) &&
+        Array.isArray(result.risks) &&
+        Array.isArray(result.nextActions)
       ) {
         emit({
-          type: "room_content_candidate",
-          candidate: {
-            kind: candidate.kind,
-            ...(candidate.kind === "output" && candidate.outputKind
-              ? { outputKind: candidate.outputKind as "note" | "decision" | "plan" | "delivery" | "summary" }
-              : {}),
-            title: candidate.title,
-            body: candidate.body,
+          type: "task_result",
+          result: {
+            status: result.status,
+            summary: result.summary,
+            artifacts: result.artifacts
+              .filter((artifact) => typeof artifact.path === "string" && typeof artifact.description === "string")
+              .map((artifact) => ({ projectId: "", path: artifact.path!, description: artifact.description! })),
+            risks: result.risks.filter((risk): risk is string => typeof risk === "string"),
+            nextActions: result.nextActions.filter((action): action is string => typeof action === "string"),
           },
         });
       }
@@ -150,52 +332,43 @@ function mapEvent(
     emit({
       type: "activity",
       id: `tool-${event.toolCallId ?? event.toolName ?? "unknown"}`,
+      round: turn.round,
       kind: "tool",
       state: "running",
-      summary: `正在执行 ${event.toolName ?? "工具"}`,
-      detail: redactForDisplay(event.args),
+      summary: `正在执行：${visibleToolLabel(event.toolName ?? "")}`,
+      ...(turn.toolDetails.get(event.toolCallId ?? "") ? { detail: turn.toolDetails.get(event.toolCallId ?? "") } : {}),
     });
     return;
   }
   if (event.type === "tool_execution_update") {
-    const updateDetail = event.partialResult ?? event.result ?? event.delta;
     emit({
       type: "activity",
       id: `tool-${event.toolCallId ?? event.toolName ?? "unknown"}`,
+      round: turn.round,
       kind: "tool",
-      state: updateDetail ? "completed" : "running",
-      summary: updateDetail ? `已完成：${event.toolName ?? "工具"}` : `正在执行 ${event.toolName ?? "工具"}`,
-      detail: updateDetail ? redactForDisplay(updateDetail) : undefined,
+      state: "running",
+      summary: `正在执行：${visibleToolLabel(event.toolName ?? "")}`,
+      ...(turn.toolDetails.get(event.toolCallId ?? "") ? { detail: turn.toolDetails.get(event.toolCallId ?? "") } : {}),
     });
-    if (updateDetail) {
-      emit({
-        type: "tool_result",
-        toolName: event.toolName ?? "工具",
-        result: updateDetail,
-      });
-    }
     return;
   }
   if (event.type === "tool_execution_end") {
     emit({
       type: "activity",
       id: `tool-${event.toolCallId ?? event.toolName ?? "unknown"}`,
+      round: turn.round,
       kind: "tool",
       state: event.isError ? "error" : "completed",
-      summary: `${event.isError ? "执行失败" : "已完成"}：${event.toolName ?? "工具"}`,
-      detail: redactForDisplay(event.result),
-    });
-    emit({
-      type: "tool_result",
-      toolName: event.toolName ?? "工具",
-      result: redactForDisplay(event.result),
+      summary: `${event.isError ? "执行失败" : "已完成"}：${visibleToolLabel(event.toolName ?? "")}`,
+      ...(turn.toolDetails.get(event.toolCallId ?? "") ? { detail: turn.toolDetails.get(event.toolCallId ?? "") } : {}),
     });
     return;
   }
   if (event.type === "compaction_start") {
     emit({
       type: "activity",
-      id: "context-compaction",
+      id: `context-compaction-${turn.round}`,
+      round: turn.round,
       kind: "context",
       state: "running",
       summary: "正在整理上下文",
@@ -205,11 +378,28 @@ function mapEvent(
   if (event.type === "compaction_end") {
     emit({
       type: "activity",
-      id: "context-compaction",
+      id: `context-compaction-${turn.round}`,
+      round: turn.round,
       kind: "context",
       state: "completed",
       summary: "上下文整理完成",
     });
+  }
+  if (event.type === "turn_end" || event.type === "agent_end") {
+    finishText();
+    if (turn.round > 0) {
+      emit({
+        type: "activity",
+        id: `model-round-${turn.round}`,
+        round: turn.round,
+        kind: "thinking",
+        state: "completed",
+        summary: turn.analysisDetails.length
+          ? `Pi 第 ${turn.round} 轮模型公开摘要`
+          : `Pi 第 ${turn.round} 轮未提供模型公开摘要`,
+        ...(turn.analysisDetails.length ? { detail: turn.analysisDetails.join("\n") } : {}),
+      });
+    }
   }
 }
 
@@ -228,8 +418,7 @@ class PiSessionRuntime implements PiRuntimePort {
     const { runtime: modelRuntime, model } = await this.configuredModel();
     const agent = input.session.agentSnapshot?.extension;
     const customTools = [
-      proposeRoomContentTool,
-      ...(input.delegateSession ? [createDelegateSessionTool(input.delegateSession)] : []),
+      ...(input.session.roomId ? [submitTaskResultTool] : []),
       ...(await createPiProjectTools(input)),
     ];
     const result = await createAgentSession({
@@ -248,7 +437,7 @@ class PiSessionRuntime implements PiRuntimePort {
       session: result.session,
       manager,
       cwd: input.workingDirectory,
-      configurationRevision: input.session.configurationRevision,
+      isProjectSession: input.session.roomId === null,
     };
   }
 
@@ -271,9 +460,18 @@ class PiSessionRuntime implements PiRuntimePort {
 
   async send(handle: object, message: string, emit: (event: AgentEvent) => void) {
     const piHandle = handle as Handle;
-    const thinkingAccumulator = new Map<string, string>();
+    const turn: TurnState = {
+      round: 0,
+      publicText: "",
+      analysisDetails: [],
+      toolDetails: new Map(),
+      showActionSummary: piHandle.isProjectSession,
+      textMode: "prefix",
+      pendingText: "",
+      summaryText: "",
+    };
     const unsubscribe = piHandle.session.subscribe((event) =>
-      mapEvent(event as PiEvent, emit, thinkingAccumulator),
+      mapEvent(event as PiEvent, emit, turn, piHandle.cwd),
     );
     try {
       await piHandle.session.prompt(message);
@@ -293,54 +491,112 @@ class PiSessionRuntime implements PiRuntimePort {
     } else {
       manager = SessionManager.create(input.workingDirectory);
     }
-    const entries = manager.getEntries();
-    const toolBuffer: Array<{ tool: string; detail: string }> = [];
+    const entries = manager.getBranch();
+    const toolResults = new Map<string, boolean>();
+    for (const entry of entries) {
+      if (entry.type !== "message") continue;
+      const message = entry.message as { role?: string; toolCallId?: unknown; isError?: unknown };
+      if (message.role === "toolResult" && typeof message.toolCallId === "string") {
+        toolResults.set(message.toolCallId, message.isError === true);
+      }
+    }
     const result: Array<{
       id: string;
       sessionId: string;
       role: "user" | "assistant";
       content: string;
-      thinking?: string;
-      toolResults?: string;
       createdAt: string;
+      activities?: ActivityEvent[];
     }> = [];
-    let assistantIndex = 0;
+    let pendingActivities: ActivityEvent[] = [];
+    let round = 0;
+    const appendPendingActivities = (id: string, createdAt: string) => {
+      if (!pendingActivities.length) return;
+      result.push({
+        id,
+        sessionId: input.session.id,
+        role: "assistant",
+        content: "",
+        createdAt,
+        activities: pendingActivities,
+      });
+      pendingActivities = [];
+    };
     for (const entry of entries) {
       if (entry.type !== "message") continue;
-      const msg = entry.message as { role?: string; content?: unknown; tool_calls?: unknown };
-      if (msg.role === "user" || msg.role === "assistant") {
+      const msg = entry.message as { role?: string; content?: unknown };
+      if (msg.role === "user") {
         const text = textContent(msg.content);
-        const thinking = thinkingContent(msg.content);
         if (!text) continue;
-        const role = msg.role as "user" | "assistant";
-        const toolResults = toolBuffer.length > 0
-          ? JSON.stringify(toolBuffer)
-          : undefined;
-        toolBuffer.length = 0;
-        if (role === "assistant") assistantIndex = result.length;
+        appendPendingActivities(`${entry.id}:unfinished-activity`, entry.timestamp);
+        round = 0;
         result.push({
           id: entry.id || `${input.session.id}-${result.length}`,
           sessionId: input.session.id,
-          role,
+          role: "user",
           content: text,
-          ...(thinking ? { thinking } : {}),
-          ...(toolResults ? { toolResults } : {}),
           createdAt: entry.timestamp,
         });
-      } else if (msg.role === "bash_execution") {
-        const bashContent = (Array.isArray(msg.content) ? msg.content : [])
-          .filter((p: unknown): p is { type?: string; cmd?: string; output?: string; exitCode?: number } =>
-            typeof p === "object" && p !== null
-          );
-        const cmd = bashContent.map((p: { cmd?: string }) => p.cmd ?? "").filter(Boolean).join("\n");
-        const output = bashContent.map((p: { output?: string }) => p.output ?? "").filter(Boolean).join("\n");
-        const detail = cmd ? `$ ${cmd}\n${output ? output : ""}` : output || textContent(msg.content);
-        if (detail) toolBuffer.push({ tool: "bash", detail });
-      } else if (msg.role === "tool" || msg.role === "toolResult") {
-        const text = textContent(msg.content);
-        if (text) toolBuffer.push({ tool: "工具", detail: text });
+        continue;
       }
+      if (msg.role !== "assistant") continue;
+      round += 1;
+      const blocks = Array.isArray(msg.content)
+        ? msg.content.filter((block): block is Record<string, unknown> => Boolean(block) && typeof block === "object")
+        : [];
+      const toolCalls = blocks.filter((block) => block.type === "toolCall");
+      const parsedText = input.session.roomId === null
+        ? extractPublicSummary(textContent(msg.content))
+        : { text: textContent(msg.content) };
+      const summaryDetails = input.session.roomId === null && parsedText.summary
+        ? [safePublicSummary(parsedText.summary, input.workingDirectory)]
+        : [];
+      const executionNote = input.session.roomId === null && toolCalls.length
+        ? safePublicSummary(parsedText.text, input.workingDirectory)
+        : "";
+      if (executionNote && !summaryDetails.includes(executionNote)) summaryDetails.push(executionNote);
+      pendingActivities.push({
+        type: "activity",
+        id: `history:${entry.id}:analysis`,
+        round,
+        kind: "thinking",
+        state: "completed",
+        summary: summaryDetails.some(Boolean)
+          ? `Pi 第 ${round} 轮模型公开摘要`
+          : `Pi 第 ${round} 轮未提供模型公开摘要`,
+        ...(summaryDetails.some(Boolean) ? { detail: summaryDetails.filter(Boolean).join("\n") } : {}),
+      });
+      for (const block of toolCalls) {
+        if (block.type !== "toolCall" || typeof block.id !== "string") continue;
+        const toolName = typeof block.name === "string" ? block.name : "";
+        const hasResult = toolResults.has(block.id);
+        const failed = toolResults.get(block.id) === true;
+        pendingActivities.push({
+          type: "activity",
+          id: `history:${entry.id}:${block.id}`,
+          round,
+          kind: "tool",
+          state: !hasResult || failed ? "error" : "completed",
+          summary: `${!hasResult ? "执行未完成" : failed ? "执行失败" : "已完成"}：${visibleToolLabel(toolName)}`,
+          ...(() => {
+            const detail = safeToolDetail(toolName, block.arguments, input.workingDirectory);
+            return detail ? { detail } : {};
+          })(),
+        });
+      }
+      const text = parsedText.text;
+      if (!text || toolCalls.length) continue;
+      result.push({
+        id: entry.id || `${input.session.id}-${result.length}`,
+        sessionId: input.session.id,
+        role: "assistant",
+        content: text,
+        createdAt: entry.timestamp,
+        ...(pendingActivities.length ? { activities: pendingActivities } : {}),
+      });
+      pendingActivities = [];
     }
+    appendPendingActivities(`${input.session.id}-unfinished-activity`, entries.at(-1)?.timestamp ?? new Date().toISOString());
     return result;
   }
 
@@ -356,9 +612,7 @@ class PiSessionRuntime implements PiRuntimePort {
     const handle = this.handles.get(sessionId);
     if (!input) return handle;
     if (
-      handle &&
-      handle.cwd === input.workingDirectory &&
-      handle.configurationRevision === input.session.configurationRevision
+      handle && handle.cwd === input.workingDirectory
     ) {
       return handle;
     }

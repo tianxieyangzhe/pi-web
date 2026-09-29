@@ -17,7 +17,6 @@ import type { CatalogDependencies } from "@/application/ports/catalog";
 
 const resourceStatuses = ["active", "disabled", "archived"] as const;
 const projectKinds = ["code", "knowledge", "general"] as const;
-const accessModes = ["read", "write"] as const;
 const mcpPolicies = ["read_only", "approval", "allow"] as const;
 const thinkingLevels = [
   "off",
@@ -134,11 +133,11 @@ function parseAgentPolicy(value: unknown): AgentPolicy {
   const source = value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
-  const max = source.maxParallelSessions ?? 4;
+  const max = source.maxParallelTasks ?? 4;
   if (!Number.isInteger(max) || (max as number) < 1 || (max as number) > 32) {
     throw new DomainError(
       "INVALID_INPUT",
-      "maxParallelSessions 必须是 1 到 32 的整数",
+      "maxParallelTasks 必须是 1 到 32 的整数",
       400,
       true,
     );
@@ -146,8 +145,7 @@ function parseAgentPolicy(value: unknown): AgentPolicy {
   return {
     allowProjectWrite: source.allowProjectWrite === true,
     allowExternalWrite: source.allowExternalWrite === true,
-    allowDelegation: source.allowDelegation === true,
-    maxParallelSessions: max as number,
+    maxParallelTasks: max as number,
   };
 }
 
@@ -166,7 +164,6 @@ export function createCatalogService({
       description: optionalText(body.description),
       kind: enumValue(body.kind, projectKinds, "kind", "code"),
       rootPath: normalizeProjectRoot(body.rootPath),
-      accessMode: enumValue(body.accessMode, accessModes, "accessMode", "read"),
       status: "active",
     });
   },
@@ -178,9 +175,6 @@ export function createCatalogService({
       ...(body.description !== undefined ? { description: optionalText(body.description) } : {}),
       ...(body.kind !== undefined ? { kind: enumValue(body.kind, projectKinds, "kind") } : {}),
       ...(body.rootPath !== undefined ? { rootPath: normalizeProjectRoot(body.rootPath) } : {}),
-      ...(body.accessMode !== undefined
-        ? { accessMode: enumValue(body.accessMode, accessModes, "accessMode") }
-        : {}),
       ...(body.status !== undefined
         ? { status: enumValue(body.status, resourceStatuses, "status") }
         : {}),

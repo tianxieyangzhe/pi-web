@@ -20,6 +20,13 @@ export type ProjectFileEntry = {
   gitStatus?: GitFileStatus;
 };
 
+export type ProjectChanges = {
+  isGitRepository: boolean;
+  status: string;
+  workingPatch: string;
+  stagedPatch: string;
+};
+
 const ignoredDirectories = new Set([
   ".git",
   ".next",
@@ -183,7 +190,7 @@ export const projectFiles = {
   changes(projectId: string) {
     const root = projectRoot(projectId);
     if (!fs.existsSync(path.join(root, ".git"))) {
-      throw new DomainError("NOT_GIT_REPOSITORY", "该项目不是 Git 仓库", 409, true);
+      return { isGitRepository: false, status: "", workingPatch: "", stagedPatch: "" } satisfies ProjectChanges;
     }
     try {
       const status = execFileSync(
@@ -201,7 +208,7 @@ export const projectFiles = {
         ["-C", root, "diff", "--cached", "--no-ext-diff", "--no-color"],
         { encoding: "utf8", maxBuffer: maxDiffBytes, stdio: ["ignore", "pipe", "ignore"] },
       );
-      return { status, workingPatch: working, stagedPatch: staged };
+      return { isGitRepository: true, status, workingPatch: working, stagedPatch: staged } satisfies ProjectChanges;
     } catch {
       throw new DomainError("GIT_READ_FAILED", "无法读取项目变更，或变更内容超过 1 MiB", 422, true);
     }

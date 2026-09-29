@@ -3,7 +3,7 @@ import "server-only";
 import type { AgentEvent } from "@/domain/models";
 
 export function agentEventStreamResponse(
-  roomId: string,
+  roomId: string | null,
   sessionId: string,
   source: AsyncGenerator<AgentEvent>,
 ) {
