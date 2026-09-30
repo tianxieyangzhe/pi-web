@@ -1,9 +1,9 @@
 import { Pencil, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
-import type { Room } from "../../domain/models";
-import { RoomRunTimeline } from "../../shared/ui/ai-elements/room-run-timeline";
-import { PromptInput } from "../../components/prompt-input";
-import { useRoom } from "../../hooks/use-room";
+import type { Room } from "../../../domain/models";
+import { RoomRunTimeline } from "../ai-elements/room-run-timeline";
+import { PromptInput } from "../prompt-input";
+import { useRoom } from "./use-room";
 
 export function RoomView({ room, onUpdate, onDelete }: { room: Room; onUpdate: (body: Record<string, unknown>) => void; onDelete: () => void }) {
   const state = useRoom(room.id);

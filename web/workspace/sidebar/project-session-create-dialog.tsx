@@ -1,7 +1,7 @@
 import { ArrowRight, FolderKanban, Plus, X } from "lucide-react";
 import type { Project } from "../../domain/models";
 
-export function ProjectSessionCreatePanel({
+export function ProjectSessionCreateDialog({
   projects,
   creatingProjectId,
   onClose,

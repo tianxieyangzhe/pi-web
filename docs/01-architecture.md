@@ -68,15 +68,22 @@ src/infrastructure/database/ SQLite Schema、Repository、历史库诊断
 src/infrastructure/pi/       Pi Session、逐轮 system prompt、无工具总结
 src/infrastructure/projects/ 项目文件和路径安全
 src/bootstrap/               Application/Infrastructure 装配
-web/app/                     页面装配与项目导航
-web/features/                Project Session、Room 审查与资源页面
-web/hooks/                   前端状态及流式事件
+web/workspace/workspace.tsx  页面壳与区域装配
+web/workspace/use-workspace-state.ts 跨区域选择状态
+web/workspace/sidebar/       左侧项目导航、弹窗、表单与导航状态
+web/workspace/conversation/  中间画布、输入与消息 UI
+  project-session/           项目会话及流式状态
+  room/                      现有 Room 视图及状态
+web/workspace/files/         文件浏览和预览
+web/workspace/inspector/     右侧面板、诊断与资源表单
 web/api/                     同源 REST/NDJSON Client
-web/shared/ui/               AI Elements Wrapper 和基础组件
+web/domain/                  浏览器端 DTO 与事件类型
 web/styles/                  全局视觉样式
 ~~~
 
-依赖方向为 `app → application → domain + ports`、`infrastructure → ports + domain` 和 `app → web/app → web/features → web/shared/ui`。只有 composition root 同时认识应用服务与基础设施。`page.tsx` 和 `route.ts` 只做入口与装配，不承载完整业务实现；页面不直接访问 Pi、SQLite 或 Node 文件系统。
+`web/workspace/` 按页面可见区域组织，区域内再按功能分子目录；看左侧功能先进入 `sidebar/`，看中间对话进入 `conversation/`，看文件与右侧检查分别进入 `files/` 和 `inspector/`。区域专用组件、表单与 Hook 同目录。`workspace.tsx` 维护区域装配，`use-workspace-state.ts` 维护跨区域选择；通用 API Client、DTO 和全局视觉样式保留在公共层。
+
+依赖方向为 `app → application → domain + ports`、`infrastructure → ports + domain` 和 `app → web/workspace → web/api + web/domain`。只有 composition root 同时认识应用服务与基础设施。`page.tsx` 和 `route.ts` 只做入口与装配，不承载完整业务实现；页面不直接访问 Pi、SQLite 或 Node 文件系统。
 
 Next.js 同时提供页面和同源 API；不增加独立 Vite 服务或第二个浏览器端口。文件树、预览与 Git 变化仍由独立项目 API 读取；目录列表不依赖 Git 状态。
 
@@ -86,12 +93,14 @@ Next.js 同时提供页面和同源 API；不增加独立 Vite 服务或第二�
 
 | 场景 | 组件语义 | 现有例外或替代 |
 | --- | --- | --- |
-| Session 消息与 Markdown 回复 | Conversation / Message / Response | 现有 `web/shared/ui/ai-elements/response.tsx` 提供安全 Markdown 子集；官方依赖可用后复核替换 |
+| Session 消息与 Markdown 回复 | Conversation / Message / Response | 现有 `web/workspace/conversation/ai-elements/response.tsx` 提供安全 Markdown 子集；官方依赖可用后复核替换 |
 | Pi 轮次与真实工具调用 | Reasoning / Tool | 原始 thinking 不下发；`activity-groups.tsx` 用原生 disclosure 展示公开摘要和真实工具记录，默认收起；官方组件可接受公开摘要语义后复核 |
 | Room 草稿审查 | Confirmation / 编辑表单 | 草稿确认经 Room Feature Wrapper 映射；在实现前复核官方 Confirmation 能否承载整体 JSON 差异与编辑 |
 | Project 导航折叠 | 通用导航触发器 | 官方 AI Elements 无匹配通用 App Shell Sidebar Trigger；沿用原生按钮与现有图标，导航重做时复核 |
 | 项目文件树与预览 | File Tree / Code Block | 只读且受 Project Path Guard 约束；Git 只是可选状态 |
 | 项目或 Room 模板选择 | 资源选择弹窗 | 选择并复制 Project/模板不等于模型操作审批；沿用 Feature 层弹窗，官方组件有匹配语义时复核 |
+| Project 新建/编辑/删除弹窗 | 普通表单 / 确认弹窗 | 本轮检索现有 AI Elements 组件与依赖，未发现适合项目资料编辑的组件；沿用 `web/workspace/sidebar/project-dialog.tsx` 与同目录项目表单。官方出现匹配的通用表单弹窗时复核 |
+| 项目导航与检查区域容器 | 通用应用布局 | AI Elements 不提供应用列容器语义；沿用 `web/workspace/sidebar/project-navigation.tsx` 和 `web/workspace/inspector/context-panel.tsx`。引入统一 App Shell 组件时复核 |
 
 AI Elements 不承担 API、NDJSON 解析、持久状态或权限校验。Tailwind CSS 与现有项目样式系统承载视觉样式。
 

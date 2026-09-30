@@ -1,7 +1,7 @@
 "use client";
 
-import { App } from "../../web/app/app";
+import { Workspace } from "../../web/workspace/workspace";
 
 export default function Page() {
-  return <App />;
+  return <Workspace />;
 }

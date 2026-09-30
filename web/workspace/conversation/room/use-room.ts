@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
-import { api } from "../api/client";
-import type { RoomContent, RoomEvent, RoomView } from "../domain/models";
+import { api } from "../../../api/client";
+import type { RoomContent, RoomEvent, RoomView } from "../../../domain/models";
 
 type Activity = Extract<RoomEvent, { type: "activity" }>;
 

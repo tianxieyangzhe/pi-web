@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api } from "../api/client";
-import type { ActivityEvent, ConversationMessage, Project, Session } from "../domain/models";
+import { api } from "../../../api/client";
+import type { ActivityEvent, ConversationMessage, Project, Session } from "../../../domain/models";
 
 export function useProjectSession(project: Project | null, preferredSessionId?: string) {
   const [sessions, setSessions] = useState<Session[]>([]);

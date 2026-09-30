@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from "react";
-import { api } from "../api/client";
-import type { Session } from "../domain/models";
+import { api } from "../../api/client";
+import type { Session } from "../../domain/models";
 
 export function useProjectSessionNavigation() {
   const [expandedProjectIds, setExpandedProjectIds] = useState<Set<string>>(() => new Set());

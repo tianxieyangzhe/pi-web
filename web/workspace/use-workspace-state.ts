@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api } from "../api/client";
 import type { Agent, Mcp, Project, Room, RoomEntry } from "../domain/models";
 
-export function useAppState() {
+export function useWorkspaceState() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [mcps, setMcps] = useState<Mcp[]>([]);
