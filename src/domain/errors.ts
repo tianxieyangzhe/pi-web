@@ -58,3 +58,15 @@ export function enumValue<const T extends readonly string[]>(
   }
   return value as T[number];
 }
+
+// Next route bundles and development reloads can hold separate class identities.
+// Accept only the explicit DomainError shape, never arbitrary runtime errors.
+export function isDomainError(value: unknown): value is DomainError {
+  if (value instanceof DomainError) return true;
+  if (!value || typeof value !== "object") return false;
+  const error = value as Record<string, unknown>;
+  return error.name === "DomainError" && typeof error.code === "string" &&
+    typeof error.message === "string" && Number.isInteger(error.status) &&
+    Number(error.status) >= 400 && Number(error.status) <= 599 &&
+    typeof error.recoverable === "boolean";
+}

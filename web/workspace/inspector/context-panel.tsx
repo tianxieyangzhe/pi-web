@@ -1,3 +1,6 @@
+import {useState} from "react";
+import {api} from "../../api/client";
+import {SessionMemoryPanel} from "./session-memory-panel";
 import { Plus, X } from "lucide-react";
 import type { Agent, FilePreview, Mcp, Project } from "../../domain/models";
 import { useProjectSession } from "../conversation/project-session/use-project-session";
@@ -7,10 +10,10 @@ import { ProjectSessionInspector } from "./project-session-inspector";
 
 type ResourceKind = "project" | "agent" | "mcp";
 
-export function ContextPanel({ fileBrowserOpen, selectedProject, selectedRoomOpen, session, resourceKind, resourceId, selectedResource, projects, agents, mcps, onClose, onOpenFile, onOpenResource, onSaveResource, onDeleteResource }: {
-  fileBrowserOpen: boolean;
+export function ContextPanel({ visible, panelView, selectedProject, session, resourceKind, resourceId, selectedResource, projects, agents, mcps, onClose, onOpenFile, onOpenResource, onSaveResource, onDeleteResource }: {
+  visible:boolean;
+  panelView: "memory" | "files" | "check";
   selectedProject: Project | null;
-  selectedRoomOpen: boolean;
   session: ReturnType<typeof useProjectSession>;
   resourceKind: ResourceKind | null;
   resourceId: string | null;
@@ -24,12 +27,17 @@ export function ContextPanel({ fileBrowserOpen, selectedProject, selectedRoomOpe
   onSaveResource: (kind: "agent" | "mcp", id: string | null, body: Record<string, unknown>) => void;
   onDeleteResource: (kind: "agent" | "mcp", id: string) => void;
 }) {
-  return <aside className="context-panel" aria-label={fileBrowserOpen ? "项目文件面板" : "检查面板"}>
+  const [headerActionsTarget,setHeaderActionsTarget]=useState<HTMLDivElement|null>(null);
+  const fileBrowserOpen = panelView === "files";
+  const memoryOpen = panelView === "memory" && !resourceKind;
+  const panelTitle = fileBrowserOpen ? "文件" : memoryOpen ? "记忆" : "检查";
+  return <aside hidden={!visible} className="context-panel" aria-label={`${panelTitle}面板`}>
     <header className="context-panel__header">
-      <b>{fileBrowserOpen ? "项目文件" : "检查"}</b>
-      <button className="context-panel__close" aria-label={`关闭${fileBrowserOpen ? "文件" : "检查"}面板`} onClick={onClose}><X size={15} /></button>
+      <b>{panelTitle}</b>
+      <div className="context-panel__header-actions"><div ref={setHeaderActionsTarget}/><button className="context-panel__close" aria-label={`关闭${panelTitle}面板`} onClick={onClose}><X size={15} /></button></div>
     </header>
-    {fileBrowserOpen && selectedProject && !selectedRoomOpen ? (
+    {selectedProject&&<SessionMemoryPanel memory={session.memory} headerActionsTarget={headerActionsTarget} key={session.sessionId??selectedProject.id} projectId={selectedProject.id} sessionId={session.sessionId} running={session.running} visible={visible&&!fileBrowserOpen&&memoryOpen&&!resourceKind} onOpenOutput={(path)=>{void api.readFile(selectedProject.id,path).then(onOpenFile).catch(cause=>session.setError(cause instanceof Error?cause.message:"无法预览产出"));}}/>}
+    {!fileBrowserOpen&&memoryOpen&&!resourceKind&&selectedProject ? null : fileBrowserOpen && selectedProject ? (
       <FileBrowser key={selectedProject.id} projectId={selectedProject.id} projectName={selectedProject.name} rootPath={selectedProject.rootPath} onOpenFile={onOpenFile} />
     ) : resourceKind && resourceKind !== "project" ? (
       <AgentMcpForm
@@ -37,7 +45,7 @@ export function ContextPanel({ fileBrowserOpen, selectedProject, selectedRoomOpe
         onSave={(body) => onSaveResource(resourceKind, resourceId, body)}
         onDelete={resourceId ? () => onDeleteResource(resourceKind, resourceId) : undefined}
       />
-    ) : !selectedRoomOpen && selectedProject ? (
+    ) : visible && selectedProject ? (
       <ProjectSessionInspector project={selectedProject} session={session} />
     ) : (
       <ResourceIndex projects={projects} agents={agents} mcps={mcps} onOpen={onOpenResource} />

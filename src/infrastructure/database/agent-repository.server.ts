@@ -1,5 +1,5 @@
 import type { Agent, AgentPolicy, PiAgentExtension } from "@/domain/models";
-import { database } from "./database.server";
+import { database, assertSchemaCompatible } from "./database.server";
 import { entityId, now, type DatabaseRow } from "./common";
 import { parseJson, stringifyJson } from "./json";
 
@@ -32,6 +32,7 @@ export const agentRepository = {
   },
 
   create(input: Omit<Agent, "id" | "revision" | "createdAt" | "updatedAt">): Agent {
+    assertSchemaCompatible();
     const id = entityId("agent");
     const timestamp = now();
     database
@@ -57,6 +58,7 @@ export const agentRepository = {
     id: string,
     patch: Partial<Omit<Agent, "id" | "revision" | "createdAt" | "updatedAt">>,
   ): Agent | null {
+    assertSchemaCompatible();
     const current = this.get(id);
     if (!current) return null;
     database
@@ -77,6 +79,7 @@ export const agentRepository = {
   },
 
   delete(id: string): boolean {
+    assertSchemaCompatible();
     return database.prepare("DELETE FROM agents WHERE id = ?").run(id).changes > 0;
   },
 

@@ -7,8 +7,6 @@ import { ProjectSessionView } from "./conversation/project-session/project-sessi
 import { ProjectDialog } from "./sidebar/project-dialog";
 import { ProjectNavigation } from "./sidebar/project-navigation";
 import { ContextPanel } from "./inspector/context-panel";
-import { RoomCreateDialog } from "./sidebar/room-create-dialog";
-import { RoomView } from "./conversation/room/room-view";
 import { useWorkspaceState } from "./use-workspace-state";
 import { useProjectSession } from "./conversation/project-session/use-project-session";
 import { useProjectSessionNavigation } from "./sidebar/use-project-session-navigation";
@@ -19,30 +17,51 @@ export function Workspace() {
   const state = useWorkspaceState();
   const [resourceKind, setResourceKind] = useState<ResourceKind | null>(null);
   const [resourceId, setResourceId] = useState<string | null>(null);
+  const [templateLibraryOpen,setTemplateLibraryOpen]=useState(false);
   const [projectSessionCreateOpen, setProjectSessionCreateOpen] = useState(false);
   const [creatingSessionProjectId, setCreatingSessionProjectId] = useState<string | null>(null);
   const creatingSessionProjectIdRef = useRef<string | null>(null);
-  const [roomCreateOpen, setRoomCreateOpen] = useState(false);
+  const [crossProjectOpen,setCrossProjectOpen]=useState(false);
   const [panelOpen, setPanelOpen] = useState(false);
   const [projectNavCollapsed, setProjectNavCollapsed] = useState(false);
-  const [fileBrowserOpen, setFileBrowserOpen] = useState(false);
+  const [panelView, setPanelView] = useState<"memory" | "files" | "check">("check");
+  const fileBrowserOpen = panelView === "files";
   const [filePreview, setFilePreview] = useState<FilePreview | null>(null);
   const [sessionSelectionByProject, setSessionSelectionByProject] = useState<Record<string, string>>({});
   const selectedProject = state.projects.find((item) => item.id === state.selectedProjectId) ?? null;
-  const selectedRoom = state.rooms.find((item) => item.room.id === state.selectedRoomId)?.room ?? null;
   const sessionNavigation = useProjectSessionNavigation();
   const preferredSessionId = selectedProject ? sessionSelectionByProject[selectedProject.id] : undefined;
-  const projectSession = useProjectSession(selectedRoom ? null : selectedProject, preferredSessionId);
+  const projectSession = useProjectSession(crossProjectOpen ? null : selectedProject, preferredSessionId, panelOpen && panelView==="memory" && !resourceKind);
   useEffect(() => {
     if (selectedProject && projectSession.loadedProjectId === selectedProject.id && projectSession.sessions.length > 0) {
       sessionNavigation.updateProjectSessions(selectedProject.id, projectSession.sessions);
     }
   }, [projectSession.loadedProjectId, projectSession.sessions, selectedProject, sessionNavigation.updateProjectSessions]);
 
+  function cancelMemoryEditing(){return window.dispatchEvent(new Event("memory-before-leave",{cancelable:true}));}
+
+  function closeSessionDisplays() {
+    window.dispatchEvent(new Event("memory-before-leave"));
+    setPanelOpen(false);
+    setFilePreview(null);
+    setResourceKind(null);
+    setResourceId(null);
+    setTemplateLibraryOpen(false);
+    setProjectSessionCreateOpen(false);
+    setCrossProjectOpen(false);
+  }
+
+  const displayedSession = useRef<string | null>(null);
+  useEffect(() => {
+    const next = selectedProject && projectSession.sessionId ? `${selectedProject.id}:${projectSession.sessionId}` : null;
+    if (next && displayedSession.current && next !== displayedSession.current) closeSessionDisplays();
+    displayedSession.current = next;
+  }, [selectedProject?.id, projectSession.sessionId]);
+
   function openResource(kind: ResourceKind, id?: string) {
     setResourceKind(kind);
     setResourceId(id ?? null);
-    setFileBrowserOpen(false);
+    setPanelView("check");
     setFilePreview(null);
     setPanelOpen(kind !== "project");
   }
@@ -52,29 +71,25 @@ export function Workspace() {
     setResourceId(null);
   }
 
-  function openPanel() {
+  function openPanel(view: "memory" | "files" | "check") {
     setResourceKind(null);
     setResourceId(null);
-    setFileBrowserOpen(false);
+    setPanelView(view);
     setPanelOpen(true);
   }
 
-  function openFilePanel() {
-    setResourceKind(null);
-    setResourceId(null);
-    setFileBrowserOpen(true);
-    setPanelOpen(true);
-  }
+  function openFilePanel() { openPanel("files"); }
 
-  async function createProjectSession(projectId: string) {
+  async function createProjectSession(projectId: string, body: Record<string,unknown> = {}) {
+    if(!cancelMemoryEditing())return;
     const project = state.projects.find((item) => item.id === projectId && item.status === "active");
     if (!project || creatingSessionProjectIdRef.current) return;
     creatingSessionProjectIdRef.current = projectId;
     setCreatingSessionProjectId(projectId);
     try {
-      const session = await sessionNavigation.createProjectSession(projectId);
+      const session = await sessionNavigation.createProjectSession(projectId,body);
       setSessionSelectionByProject((current) => ({ ...current, [projectId]: session.id }));
-      setFileBrowserOpen(false);
+      setPanelView("check");
       setFilePreview(null);
       setPanelOpen(false);
       setResourceKind(null);
@@ -95,19 +110,17 @@ export function Workspace() {
     <div className={`app-shell${panelOpen ? " app-shell--panel-open" : ""}${filePreview ? " app-shell--file-preview-open" : ""}${projectNavCollapsed ? " app-shell--project-nav-collapsed" : ""}`}>
       <ProjectNavigation
         projects={state.projects}
-        rooms={state.rooms}
         selectedProjectId={state.selectedProjectId}
-        selectedRoomId={state.selectedRoomId}
         activeSessionId={projectSession.sessionId}
         navigation={sessionNavigation}
         creatingSessionProjectId={creatingSessionProjectId}
         onNewProject={() => openResource("project")}
+        onOpenTemplates={()=>setTemplateLibraryOpen(true)}
         onNewProjectSession={() => setProjectSessionCreateOpen(true)}
-        onNewRoom={() => setRoomCreateOpen(true)}
+        onOpenCrossProject={()=>{closeSessionDisplays();setCrossProjectOpen(true);}}
         onCreateSession={(projectId) => void createProjectSession(projectId)}
         onProjectSelect={(projectId) => {
-          setFileBrowserOpen(false);
-          setFilePreview(null);
+          closeSessionDisplays();
           setSessionSelectionByProject((current) => {
             if (!current[projectId]) return current;
             const next = { ...current };
@@ -117,12 +130,10 @@ export function Workspace() {
           state.selectProject(projectId);
         }}
         onSessionSelect={(projectId, sessionId) => {
-          setFileBrowserOpen(false);
-          setFilePreview(null);
+          closeSessionDisplays();
           setSessionSelectionByProject((current) => ({ ...current, [projectId]: sessionId }));
           state.selectProject(projectId);
         }}
-        onRoomSelect={(roomId) => { setFileBrowserOpen(false); setFilePreview(null); state.selectRoom(roomId); }}
         onEditProject={(projectId) => openResource("project", projectId)}
         onOpenResource={(kind) => openResource(kind)}
       />
@@ -141,25 +152,20 @@ export function Workspace() {
             >
               {projectNavCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
             </button>
-            <span>{selectedRoom?.title ?? selectedProject?.name ?? "项目工作台"}</span>
+            <span>{crossProjectOpen ? "跨项目会话" : selectedProject?.name ?? "项目工作台"}</span>
           </div>
           <div className="main-toolbar__actions">
-            <button
-              aria-pressed={panelOpen && fileBrowserOpen}
-              disabled={!selectedProject}
-              onClick={openFilePanel}
-            >文件</button>
-            <button aria-pressed={panelOpen && !fileBrowserOpen} onClick={openPanel}>检查</button>
-            {panelOpen && <button className="main-toolbar__close" aria-label={`关闭${fileBrowserOpen ? "文件" : "检查"}面板`} onClick={() => setPanelOpen(false)}><X size={15} /></button>}
+            <nav className="main-toolbar__panel-switcher" aria-label="右侧面板">
+              <button type="button" aria-pressed={panelOpen && !resourceKind && panelView === "memory"} disabled={!selectedProject || crossProjectOpen} onClick={() => openPanel("memory")}>记忆</button>
+              <button type="button" aria-pressed={panelOpen && !resourceKind && panelView === "files"} disabled={!selectedProject} onClick={openFilePanel}>文件</button>
+              <button type="button" aria-pressed={panelOpen && !resourceKind && panelView === "check"} onClick={() => openPanel("check")}>检查</button>
+            </nav>
+            {panelOpen && <button className="main-toolbar__close" aria-label="关闭右侧面板" onClick={() => setPanelOpen(false)}><X size={15} /></button>}
           </div>
         </div>
         <div className="main-canvas">
-          {selectedRoom ? (
-            <RoomView
-              room={selectedRoom}
-              onUpdate={(body) => void state.updateRoom(selectedRoom.id, body)}
-              onDelete={() => void state.deleteRoom(selectedRoom.id)}
-            />
+          {crossProjectOpen ? (
+            <main className="surface"><div className="empty-state"><h1>跨项目会话</h1><p>待设计。执行流程将在后续定义。</p></div></main>
           ) : selectedProject ? (
             <ProjectSessionView project={selectedProject} session={projectSession} />
           ) : (
@@ -173,7 +179,7 @@ export function Workspace() {
         </div>
       </section>
 
-      {filePreview && selectedProject && !selectedRoom && (
+      {filePreview && selectedProject && !crossProjectOpen && (
         <FilePreviewPane
           projectName={selectedProject.name}
           rootPath={selectedProject.rootPath}
@@ -192,10 +198,10 @@ export function Workspace() {
       />
 
       {panelOpen && <ContextPanel
-        fileBrowserOpen={fileBrowserOpen}
+        visible={panelOpen}
+        panelView={panelView}
         selectedProject={selectedProject}
-        selectedRoomOpen={Boolean(selectedRoom)}
-        session={projectSession}
+                session={projectSession}
         resourceKind={resourceKind}
         resourceId={resourceId}
         selectedResource={resourceKind === "agent" ? state.agents.find((item) => item.id === resourceId) ?? null : resourceKind === "mcp" ? state.mcps.find((item) => item.id === resourceId) ?? null : null}
@@ -209,24 +215,13 @@ export function Workspace() {
         onDeleteResource={(kind, id) => void state.deleteResource(kind, id)}
       />}
 
-      {roomCreateOpen && (
-        <RoomCreateDialog
-          projects={state.projects}
-          onClose={() => setRoomCreateOpen(false)}
-          onCreate={(ids, title) => {
-            setRoomCreateOpen(false);
-            setFileBrowserOpen(false);
-            setFilePreview(null);
-            void state.createRoom(ids, title);
-          }}
-        />
-      )}
+      {templateLibraryOpen&&<ProjectSessionCreateDialog libraryOnly projects={activeProjects} creatingProjectId={null} onClose={()=>setTemplateLibraryOpen(false)} onSelectProject={()=>{}} onCreateProject={()=>{}}/>}
       {projectSessionCreateOpen && (
         <ProjectSessionCreateDialog
           projects={activeProjects}
           creatingProjectId={creatingSessionProjectId}
           onClose={() => setProjectSessionCreateOpen(false)}
-          onSelectProject={(projectId) => void createProjectSession(projectId)}
+          onSelectProject={(projectId,template) => void createProjectSession(projectId,template)}
           onCreateProject={() => {
             setProjectSessionCreateOpen(false);
             openResource("project");

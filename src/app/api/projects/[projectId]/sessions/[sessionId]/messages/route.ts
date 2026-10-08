@@ -32,6 +32,6 @@ export async function POST(request: Request, { params }: Context) {
     if (!claimStreamingMutation(request, `projects:${projectId}:sessions:${sessionId}:messages`)) {
       throw new DomainError("TURN_ALREADY_ACCEPTED", "消息已经被项目工作线接收", 409, true);
     }
-    return agentEventStreamResponse(null, sessionId, services.execution.send(sessionId, content, operationFor(content)));
+    return agentEventStreamResponse(sessionId, services.execution.send(sessionId, content, operationFor(content)));
   } catch (error) { return errorResponse(error); }
 }

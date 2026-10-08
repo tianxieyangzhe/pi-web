@@ -1,3 +1,4 @@
+import {NativeContextSection} from "./native-context-section";
 import { RotateCcw } from "lucide-react";
 import type { Project, Session } from "../../domain/models";
 import { useProjectSession } from "../conversation/project-session/use-project-session";
@@ -12,6 +13,7 @@ export function ProjectSessionInspector({ project, session }: { project: Project
     : active?.state === "unavailable" ? "需要恢复" : active?.state === "ended" ? "已结束" : active ? "空闲" : "未启动";
 
   return <div className="inspector__body session-inspector">
+    <NativeContextSection projectId={project.id} sessionId={session.sessionId} onBusy={session.setCompacting} onRestore={session.restore} running={session.running} />
     <section className="session-inspector__section"><h2>Session</h2>
       <DetailRow label="项目" value={project.name} />
       <DetailRow label="状态" value={active ? sessionStateLabel(active.state) : "尚未创建"} />

@@ -1,5 +1,5 @@
 import type { Project } from "@/domain/models";
-import { database } from "./database.server";
+import { database, schemaCompatible, assertSchemaCompatible } from "./database.server";
 import { entityId, now, type DatabaseRow } from "./common";
 
 function mapProject(row: DatabaseRow): Project {
@@ -30,6 +30,7 @@ export const projectRepository = {
   },
 
   create(input: Omit<Project, "id" | "createdAt" | "updatedAt">): Project {
+    assertSchemaCompatible();
     const id = entityId("project");
     const timestamp = now();
     database
@@ -55,6 +56,7 @@ export const projectRepository = {
     id: string,
     patch: Partial<Omit<Project, "id" | "createdAt" | "updatedAt">>,
   ): Project | null {
+    assertSchemaCompatible();
     const current = this.get(id);
     if (!current) return null;
     database
@@ -75,21 +77,12 @@ export const projectRepository = {
   },
 
   delete(id: string): boolean {
+    assertSchemaCompatible();
     return database.prepare("DELETE FROM projects WHERE id = ?").run(id).changes > 0;
   },
 
   isInUse(id: string): boolean {
-    return Boolean(
-      database
-        .prepare(
-          `SELECT id FROM sessions WHERE project_id = ?
-           UNION ALL
-           SELECT id FROM tasks WHERE project_id = ?
-           UNION ALL
-           SELECT id FROM room_projects WHERE project_id = ?
-           LIMIT 1`,
-        )
-        .get(id, id, id),
-    );
+    assertSchemaCompatible();
+    return Boolean(database.prepare("SELECT id FROM sessions WHERE project_id=? UNION ALL SELECT id FROM session_memories WHERE project_id=? LIMIT 1").get(id,id));
   },
 };

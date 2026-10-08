@@ -7,6 +7,8 @@ type ResponseSnapshot = {
   expiresAt: number;
 };
 
+import { createHash } from "node:crypto";
+const signatures=new Map<string,string>();
 const records = new Map<string, Promise<ResponseSnapshot>>();
 const streamingClaims = new Map<string, number>();
 const ttlMs = 10 * 60 * 1000;
@@ -36,13 +38,13 @@ function prune() {
   const now = Date.now();
   for (const [key, promise] of records) {
     void promise.then((snapshot) => {
-      if (snapshot.expiresAt <= now) records.delete(key);
+      if (snapshot.expiresAt <= now) {records.delete(key);signatures.delete(key);}
     });
   }
   while (records.size >= maxRecords) {
     const oldest = records.keys().next().value as string | undefined;
     if (!oldest) break;
-    records.delete(oldest);
+    records.delete(oldest);signatures.delete(oldest);
   }
 }
 
@@ -65,6 +67,9 @@ export async function idempotentMutation(
 
   prune();
   const recordKey = `${scope}:${key}`;
+  const signature=createHash("sha256").update(await request.clone().text()).digest("hex");
+  if(signatures.has(recordKey)&&signatures.get(recordKey)!==signature)return Response.json({error:{code:"IDEMPOTENCY_CONFLICT",message:"相同幂等键不能用于不同请求内容",recoverable:true}},{status:409});
+  signatures.set(recordKey,signature);
   let pending = records.get(recordKey);
   if (!pending) {
     pending = Promise.resolve(operation()).then(async (response) => {
@@ -74,7 +79,7 @@ export async function idempotentMutation(
         body: await response.arrayBuffer(),
         expiresAt: Date.now() + ttlMs,
       } satisfies ResponseSnapshot;
-      if (response.status >= 500) records.delete(recordKey);
+      if (response.status >= 500) {records.delete(recordKey);signatures.delete(recordKey);}
       return snapshot;
     }).catch((error) => {
       records.delete(recordKey);

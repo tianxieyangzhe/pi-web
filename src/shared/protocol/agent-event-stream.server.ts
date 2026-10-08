@@ -3,7 +3,6 @@ import "server-only";
 import type { AgentEvent } from "@/domain/models";
 
 export function agentEventStreamResponse(
-  roomId: string | null,
   sessionId: string,
   source: AsyncGenerator<AgentEvent>,
 ) {
@@ -16,7 +15,6 @@ export function agentEventStreamResponse(
         controller.enqueue(encoder.encode(`${JSON.stringify({
           eventId: crypto.randomUUID(),
           turnId,
-          roomId,
           sessionId,
           sequence: ++sequence,
           emittedAt: new Date().toISOString(),

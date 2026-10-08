@@ -1,5 +1,5 @@
 import type { Mcp, McpConfig } from "@/domain/models";
-import { database } from "./database.server";
+import { database, assertSchemaCompatible } from "./database.server";
 import { entityId, now, type DatabaseRow } from "./common";
 import { parseJson, stringifyJson } from "./json";
 
@@ -31,6 +31,7 @@ export const mcpRepository = {
   },
 
   create(input: Omit<Mcp, "id" | "createdAt" | "updatedAt">): Mcp {
+    assertSchemaCompatible();
     const id = entityId("mcp");
     const timestamp = now();
     database
@@ -56,6 +57,7 @@ export const mcpRepository = {
     id: string,
     patch: Partial<Omit<Mcp, "id" | "createdAt" | "updatedAt">>,
   ): Mcp | null {
+    assertSchemaCompatible();
     const current = this.get(id);
     if (!current) return null;
     database
@@ -76,6 +78,7 @@ export const mcpRepository = {
   },
 
   delete(id: string): boolean {
+    assertSchemaCompatible();
     return database.prepare("DELETE FROM mcps WHERE id = ?").run(id).changes > 0;
   },
 

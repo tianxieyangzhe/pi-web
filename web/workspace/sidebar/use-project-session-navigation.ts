@@ -63,8 +63,8 @@ export function useProjectSessionNavigation() {
     });
   }, []);
 
-  const createProjectSession = useCallback(async (projectId: string) => {
-    const session = await api.createSession(projectId);
+  const createProjectSession = useCallback(async (projectId: string, body: Record<string,unknown> = {}) => {
+    const session = await api.createSession(projectId,body);
     requestVersions.current.set(projectId, (requestVersions.current.get(projectId) ?? 0) + 1);
     loadingRequests.current.delete(projectId);
     loadedProjectIds.current.add(projectId);

@@ -93,6 +93,8 @@ export async function createOpenAIModelRuntime() {
     allowModelNetwork: false,
     refreshOnCreate: false,
   });
+  const capacities=[...new Set(runtime.getModels().filter(item=>item.id===environment.modelId&&item.contextWindow>0).map(item=>item.contextWindow))];
+  const knownContextWindow=capacities.length===1?capacities[0]:null;
   runtime.registerProvider(workspaceModelProviderId, {
     name: "Workspace OpenAI Compatible",
     baseUrl: environment.baseUrl,
@@ -107,7 +109,7 @@ export async function createOpenAIModelRuntime() {
       reasoning: false,
       input: ["text"],
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-      contextWindow: 128_000,
+      contextWindow: knownContextWindow ?? 128_000,
       maxTokens: 16_384,
     }],
   });
@@ -120,5 +122,5 @@ export async function createOpenAIModelRuntime() {
       true,
     );
   }
-  return { runtime, model };
+  return { runtime, model, knownContextWindow };
 }

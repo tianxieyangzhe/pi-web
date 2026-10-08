@@ -1,18 +1,23 @@
+import {createAdaptivePoller} from "./session-memory-polling";
+import {useSessionMemory} from "./use-session-memory";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../../../api/client";
 import type { ActivityEvent, ConversationMessage, Project, Session } from "../../../domain/models";
 
-export function useProjectSession(project: Project | null, preferredSessionId?: string) {
+export function useProjectSession(project: Project | null, preferredSessionId?: string, memoryVisible=false) {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
   const [activities, setActivities] = useState<ActivityEvent[]>([]);
   const [streamingText, setStreamingText] = useState("");
   const [pendingText, setPendingText] = useState("");
+  const [compacting,setCompacting]=useState(false);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState("");
   const [loadedProjectId, setLoadedProjectId] = useState<string | null>(null);
   const loadVersion = useRef(0);
+  const memory=useSessionMemory(project?.id??null,sessionId,memoryVisible,running);
+  useEffect(()=>{if(!memory.view||!sessionId)return;const summary=memory.view.sessionMemory.contextJson.summary;setSessions(current=>current.map(item=>item.id===sessionId&&item.memorySummary!==summary?{...item,memorySummary:summary}:item));},[memory.view,sessionId]);
 
   const load = useCallback(async (nextProject: Project, preferredSessionId?: string | null) => {
     const version = ++loadVersion.current;
@@ -36,6 +41,13 @@ export function useProjectSession(project: Project | null, preferredSessionId?: 
     void load(project, preferredSessionId).catch((cause) => setError(cause instanceof Error ? cause.message : "无法加载项目会话"));
   }, [load, preferredSessionId, project]);
 
+  useEffect(()=>{
+    if(!project||!sessionId||!compacting)return;
+    const loop=createAdaptivePoller({request:()=>api.getNativeContext(project.id,sessionId),receive:value=>setCompacting(value.compactionState==="running"),error:()=>{},delay:()=>2000,visible:()=>!document.hidden});
+    void loop.refresh();const visible=()=>{if(document.hidden)loop.pause();else void loop.refresh();};document.addEventListener("visibilitychange",visible);
+    return()=>{loop.dispose();document.removeEventListener("visibilitychange",visible);};
+  },[project?.id,sessionId,compacting]);
+
   async function selectSession(nextId: string) {
     if (!project) return;
     setActivities([]);
@@ -44,7 +56,7 @@ export function useProjectSession(project: Project | null, preferredSessionId?: 
   }
 
   async function send(content: string) {
-    if (!project || running) return;
+    if (!project || running || compacting) return;
     let activeSessionId = sessionId;
     if (!activeSessionId) {
       const created = await api.createSession(project.id);
@@ -97,5 +109,5 @@ export function useProjectSession(project: Project | null, preferredSessionId?: 
     try { await api.endProjectSession(project.id, sessionId); await load(project, null); } catch (cause) { setError(cause instanceof Error ? cause.message : "无法结束项目工作线"); }
   }
 
-  return { sessions, sessionId, messages, activities, streamingText, pendingText, running, error, setError, loadedProjectId, selectSession, send, interrupt, restore, end };
+  return { sessions, sessionId, messages, activities, streamingText, pendingText, running, compacting, setCompacting, error, setError, loadedProjectId, memory, selectSession, send, interrupt, restore, end };
 }

@@ -1,0 +1,10 @@
+require('./register.cjs');const {test}=require('node:test'),assert=require('node:assert/strict'),D=require('better-sqlite3');const {mkdtempSync}=require('node:fs'),{join}=require('node:path'),{tmpdir}=require('node:os'),{spawnSync}=require('node:child_process');const {targetSchema}=require('../src/infrastructure/database/schema.server.ts');
+test('explicit storage rename preserves confirmed and draft memory and exclusive binding',()=>{
+ const file=join(mkdtempSync(join(tmpdir(),'memory-rename-')),'test.sqlite'),db=new D(file);db.exec(targetSchema);
+ const empty=JSON.stringify({summary:'keep this',goal:'',constraints:[],facts:[],decisions:[],nextActions:[],outputs:[]});
+ db.prepare("INSERT INTO projects VALUES('p','test',NULL,'code','/tmp','active','now','now')").run();
+ db.prepare("INSERT INTO session_memories VALUES('m','p',NULL,'memory',?,NULL,NULL,'now','now')").run(empty);
+ db.prepare("INSERT INTO sessions(id,session_memory_id,project_id,purpose,state,created_at) VALUES('s','m','p','test','idle','now')").run();
+ const oldTable=['ro','oms'].join(''),oldColumn=['ro','om_id'].join('');db.exec(`ALTER TABLE session_memories RENAME TO ${oldTable}`);db.exec(`ALTER TABLE sessions RENAME COLUMN session_memory_id TO ${oldColumn}`);db.exec('DROP INDEX session_memories_project_idx; DROP TRIGGER session_memories_owner_immutable;DROP TRIGGER memory_template_insert;DROP TRIGGER memory_template_update;');db.close();
+ const result=spawnSync(process.execPath,['scripts/rename-session-memory-storage.cjs',file,'--apply'],{encoding:'utf8'});assert.equal(result.status,0,result.stderr);const after=new D(file,{readonly:true});assert.equal(after.prepare('SELECT context_json FROM session_memories').get().context_json,empty);assert.equal(after.prepare('SELECT session_memory_id FROM sessions').get().session_memory_id,'m');assert.deepEqual(after.pragma('foreign_key_check'),[]);after.close();
+});

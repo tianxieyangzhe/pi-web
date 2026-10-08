@@ -1,36 +1,33 @@
 import { ChevronDown, ChevronRight, FolderKanban, Plus, Settings2, Sparkles } from "lucide-react";
-import type { Project, RoomEntry } from "../../domain/models";
+import type { Project } from "../../domain/models";
 import { useProjectSessionNavigation } from "./use-project-session-navigation";
 
 type ResourceKind = "agent" | "mcp";
 
-export function ProjectNavigation({ projects, rooms, selectedProjectId, selectedRoomId, activeSessionId, navigation, creatingSessionProjectId, onNewProject, onNewProjectSession, onNewRoom, onCreateSession, onProjectSelect, onSessionSelect, onRoomSelect, onEditProject, onOpenResource }: {
+export function ProjectNavigation({ projects, selectedProjectId, activeSessionId, navigation, creatingSessionProjectId, onNewProject, onOpenTemplates, onNewProjectSession, onOpenCrossProject, onCreateSession, onProjectSelect, onSessionSelect, onEditProject, onOpenResource }: {
   projects: Project[];
-  rooms: RoomEntry[];
   selectedProjectId: string | null;
-  selectedRoomId: string | null;
   activeSessionId: string | null;
   navigation: ReturnType<typeof useProjectSessionNavigation>;
   creatingSessionProjectId: string | null;
   onNewProject: () => void;
+  onOpenTemplates:()=>void;
   onNewProjectSession: () => void;
-  onNewRoom: () => void;
+  onOpenCrossProject: () => void;
   onCreateSession: (projectId: string) => void;
   onProjectSelect: (projectId: string) => void;
   onSessionSelect: (projectId: string, sessionId: string) => void;
-  onRoomSelect: (roomId: string) => void;
   onEditProject: (projectId: string) => void;
   onOpenResource: (kind: ResourceKind) => void;
 }) {
-  const activeProjectCount = projects.filter((project) => project.status === "active").length;
   const selectedProject = projects.find((project) => project.id === selectedProjectId) ?? null;
-  const selectedRoom = rooms.find((entry) => entry.room.id === selectedRoomId)?.room ?? null;
   return (
       <aside className="sidebar" id="project-navigation">
         <div className="sidebar__actions">
           <button onClick={() => onNewProject()}><Plus size={14} />新建项目</button>
           <button onClick={() => onNewProjectSession()}><Plus size={14} />新建项目会话</button>
-          <button disabled={activeProjectCount < 2} onClick={() => onNewRoom()}><Plus size={14} />新建跨项目会话</button>
+          <button onClick={onOpenCrossProject}><Plus size={14}/>跨项目会话</button>
+          <button onClick={onOpenTemplates}><Sparkles size={14}/>记忆模板库</button>
         </div>
         <nav className="sidebar__nav" aria-label="项目导航">
           <div className="sidebar__label">项目</div>
@@ -38,7 +35,7 @@ export function ProjectNavigation({ projects, rooms, selectedProjectId, selected
             <div className="project-nav-entry" key={project.id}>
               <div className="nav-row">
                 <button
-                  className={`project-link${selectedProjectId === project.id && !selectedRoom ? " active" : ""}`}
+                  className={`project-link${selectedProjectId === project.id ? " active" : ""}`}
                   aria-expanded={navigation.expandedProjectIds.has(project.id)}
                   onClick={() => {
                     navigation.toggleProject(project.id);
@@ -74,8 +71,8 @@ export function ProjectNavigation({ projects, rooms, selectedProjectId, selected
                   {navigation.errorsByProject[project.id] && <button className="project-sessions__message project-sessions__message--error" onClick={() => void navigation.loadProjectSessions(project.id, true)}>加载失败，点击重试</button>}
                   {!navigation.loadingProjectIds.has(project.id) && !navigation.errorsByProject[project.id] && (navigation.sessionsByProject[project.id] ?? []).length === 0 && <div className="project-sessions__message">暂无会话记录</div>}
                   {[...(navigation.sessionsByProject[project.id] ?? [])].reverse().map((session, index, sessions) => {
-                    const label = session.purpose.trim() || `工作线 ${sessions.length - index}`;
-                    const active = !selectedRoom && selectedProject?.id === project.id && activeSessionId === session.id;
+                    const label = session.memorySummary?.trim().replace(/\s+/g, " ") || "新会话";
+                    const active = selectedProject?.id === project.id && activeSessionId === session.id;
                     return (
                       <button
                         className={`project-session-link${active ? " active" : ""}`}
@@ -95,19 +92,6 @@ export function ProjectNavigation({ projects, rooms, selectedProjectId, selected
               )}
             </div>
           ))}
-          {rooms.length > 0 && (
-            <>
-              <div className="sidebar__label sidebar__label--rooms">跨项目会话</div>
-              {rooms.map((entry) => (
-                <RoomLink
-                  key={entry.room.id}
-                  entry={entry}
-                  active={selectedRoomId === entry.room.id}
-                  onClick={() => onRoomSelect(entry.room.id)}
-                />
-              ))}
-            </>
-          )}
         </nav>
         <footer className="sidebar__footer">
           <button onClick={() => onOpenResource("agent")}><Settings2 size={14} />Agent</button>
@@ -115,10 +99,4 @@ export function ProjectNavigation({ projects, rooms, selectedProjectId, selected
         </footer>
       </aside>
   );
-}
-
-function RoomLink({ entry, active, onClick }: { entry: RoomEntry; active: boolean; onClick: () => void }) {
-  return <button className={`project-link${active ? " active" : ""}`} onClick={onClick}>
-    <Sparkles size={15} /><span>{entry.room.title}</span>
-  </button>;
 }

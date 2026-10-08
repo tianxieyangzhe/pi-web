@@ -1,4 +1,6 @@
-import type { Agent, AgentEvent, ConversationMessage, FilePreview, Mcp, Project, ProjectChanges, ProjectFileListing, Room, RoomContent, RoomEntry, RoomEvent, RoomRun, RoomView, Session, Task } from "../domain/models";
+import type {NativeContextInspection} from "../domain/native-context";
+import type { SessionMemoryView, SessionMemory } from "../domain/session-memory";
+import type { Agent, AgentEvent, ConversationMessage, FilePreview, Mcp, Project, ProjectChanges, ProjectFileListing, Session } from "../domain/models";
 
 type ApiEnvelope<T> = { data?: T; error?: { message?: string; code?: string } };
 const jsonHeaders = { "content-type": "application/json" };
@@ -36,7 +38,22 @@ function mutation(method: string, body?: unknown): RequestInit {
   return { method, headers: jsonHeaders, ...(body === undefined ? {} : { body: JSON.stringify(body) }) };
 }
 
+const contextRequests=new Map<string,Promise<NativeContextInspection>>();
+function readNativeContext(projectId:string,sessionId:string){
+  const url=`/api/projects/${projectId}/sessions/${sessionId}/context`;
+  const current=contextRequests.get(url);if(current)return current;
+  const pending=request<NativeContextInspection>(url).finally(()=>{if(contextRequests.get(url)===pending)contextRequests.delete(url);});
+  contextRequests.set(url,pending);return pending;
+}
+
 export const api = {
+  getSessionMemory: (projectId:string,sessionId:string) => request<SessionMemoryView>(`/api/projects/${projectId}/sessions/${sessionId}/memory`),
+  changeSessionMemory: (projectId:string,sessionId:string,action:string,etag:string,body:unknown,signal?:AbortSignal) => request<SessionMemoryView>(`/api/projects/${projectId}/sessions/${sessionId}/memory/${action}`, {...mutation(action === "context" || action === "draft" ? "PATCH" : "POST",body), signal, headers:{...jsonHeaders,"if-match":etag}}),
+  getNativeContext: readNativeContext,
+  compactNativeContext: (projectId:string,sessionId:string) => request<NativeContextInspection>(`/api/projects/${projectId}/sessions/${sessionId}/compact`,mutation("POST")),
+  cancelNativeCompaction: (projectId:string,sessionId:string) => request<NativeContextInspection>(`/api/projects/${projectId}/sessions/${sessionId}/compact/cancel`,mutation("POST")),
+  listSessionMemoryTemplates: () => request<Array<{sessionMemory:SessionMemory;writeETag:string}>>("/api/session-memory-templates"),
+  saveSessionMemoryTemplate: (id:string|null,etag:string|null,body:unknown) => request<SessionMemory>(id ? `/api/session-memory-templates/${id}` : "/api/session-memory-templates", {...mutation(id ? "PATCH" : "POST",body),headers:{...jsonHeaders,...(etag ? {"if-match":etag}:{})}}),
   listProjects: () => request<Project[]>("/api/projects"),
   getProject: (id: string) => request<Project>(`/api/projects/${id}`),
   createProject: (body: Record<string, unknown>) => request<Project>("/api/projects", mutation("POST", body)),
@@ -53,24 +70,6 @@ export const api = {
   updateMcp: (id: string, body: Record<string, unknown>) => request<Mcp>(`/api/mcps/${id}`, mutation("PATCH", body)),
   deleteMcp: (id: string) => request<{ deleted: boolean }>(`/api/mcps/${id}`, mutation("DELETE")),
   testMcp: (id: string) => request<never>(`/api/mcps/${id}/test`, mutation("POST")),
-  listRooms: async (projectId?: string) => {
-    const query = projectId ? `?projectId=${encodeURIComponent(projectId)}` : "";
-    return request<Room[]>(`/api/rooms${query}`);
-  },
-  getRoom: (id: string) => request<RoomView>(`/api/rooms/${id}`),
-  createRoom: (body: Record<string, unknown>) => request<Room>("/api/rooms", mutation("POST", body)),
-  updateRoom: (id: string, body: Record<string, unknown>) => request<Room>(`/api/rooms/${id}`, mutation("PATCH", body)),
-  deleteRoom: (id: string) => request<{ deleted: boolean }>(`/api/rooms/${id}`, mutation("DELETE")),
-  listRoomEntries: async () => {
-    const rooms = await api.listRooms();
-    return Promise.all(rooms.map(async (room): Promise<RoomEntry> => ({ room: { id: room.id, title: room.title, status: room.status, kind: "cross_project" }, projectIds: (await api.getRoom(room.id)).scope.map((item) => item.projectId) })));
-  },
-  listRoomRuns: (roomId: string) => request<RoomRun[]>(`/api/rooms/${roomId}/runs`),
-  listRoomContents: (roomId: string) => request<RoomContent[]>(`/api/rooms/${roomId}/contents`),
-  createRoomContent: (roomId: string, body: Record<string, unknown>) => request<RoomContent>(`/api/rooms/${roomId}/contents`, mutation("POST", body)),
-  updateRoomContent: (roomId: string, contentId: string, body: Record<string, unknown>) => request<RoomContent>(`/api/rooms/${roomId}/contents/${contentId}`, mutation("PATCH", body)),
-  deleteRoomContent: (roomId: string, contentId: string) => request<{ deleted: boolean }>(`/api/rooms/${roomId}/contents/${contentId}`, mutation("DELETE")),
-  listProjectRooms: (projectId: string) => request<Room[]>(`/api/projects/${projectId}/rooms`),
   listSessions: (projectId: string) => request<Session[]>(`/api/projects/${projectId}/sessions`),
   createSession: (projectId: string, body: Record<string, unknown> = {}) => request<Session>(`/api/projects/${projectId}/sessions`, mutation("POST", body)),
   listMessages: (projectId: string, sessionId: string) => request<ConversationMessage[]>(`/api/projects/${projectId}/sessions/${sessionId}/messages`),
@@ -78,13 +77,7 @@ export const api = {
   interruptProjectSession: (projectId: string, sessionId: string) => request<Session>(`/api/projects/${projectId}/sessions/${sessionId}/interrupt`, mutation("POST")),
   restoreProjectSession: (projectId: string, sessionId: string) => request<Session>(`/api/projects/${projectId}/sessions/${sessionId}/restore`, mutation("POST")),
   endProjectSession: (projectId: string, sessionId: string) => request<Session>(`/api/projects/${projectId}/sessions/${sessionId}/end`, mutation("POST")),
-  interruptRoomSession: (roomId: string, sessionId: string) => request<Session>(`/api/rooms/${roomId}/sessions/${sessionId}/interrupt`, mutation("POST")),
-  restoreRoomSession: (roomId: string, sessionId: string) => request<Session>(`/api/rooms/${roomId}/sessions/${sessionId}/restore`, mutation("POST")),
-  endRoomSession: (roomId: string, sessionId: string) => request<Session>(`/api/rooms/${roomId}/sessions/${sessionId}/end`, mutation("POST")),
   listFiles: (projectId: string, path = "") => request<ProjectFileListing>(`/api/projects/${projectId}/files?path=${encodeURIComponent(path)}`),
   readFile: (projectId: string, path: string) => request<FilePreview>(`/api/projects/${projectId}/files/content?path=${encodeURIComponent(path)}`),
   listChanges: (projectId: string) => request<ProjectChanges>(`/api/projects/${projectId}/changes`),
-  submitRoomRun: (roomId: string, requestText: string, projectHintId: string | null = null) => stream<RoomEvent>(`/api/rooms/${roomId}/cross-project-runs`, { ...mutation("POST", { request: requestText, projectHintId }), headers: { ...jsonHeaders, "idempotency-key": crypto.randomUUID() } }, "无法提交跨项目请求"),
-  approveRoomRun: (roomId: string, runId: string) => stream<RoomEvent>(`/api/rooms/${roomId}/cross-project-runs/${runId}/approve`, { ...mutation("POST"), headers: { "idempotency-key": crypto.randomUUID() } }, "无法批准计划"),
-  cancelRoomRun: (roomId: string, runId: string) => request<RoomRun>(`/api/rooms/${roomId}/cross-project-runs/${runId}/cancel`, mutation("POST")),
 };

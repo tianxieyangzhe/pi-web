@@ -6,6 +6,7 @@ export type SessionRuntimeInput = {
   session: Session;
   workingDirectory: string;
   allowProjectWrite: boolean;
+  projectSession?: boolean;
 };
 
 export interface PiRuntimePort {

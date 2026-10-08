@@ -1,10 +1,11 @@
 import { DomainError } from "@/domain/errors";
-import type { AgentEvent, Session, TaskResult } from "@/domain/models";
-import type { RoomRepositoryPort, SessionCatalogPort, SessionRepositoryPort } from "@/application/ports/core";
+import type { AgentEvent, Session } from "@/domain/models";
+import type { SessionCatalogPort, SessionRepositoryPort } from "@/application/ports/core";
 import type { ProjectRepositoryPort } from "@/application/ports/catalog";
 import type { PiRuntimePort, SessionRuntimeInput } from "@/application/ports/pi-runtime";
 
-const locks = new Set<string>();
+import { sessionLocks as locks, acquireSession } from "./session-lock";
+import type { SessionMemoryRepositoryPort } from "./ports/session-memory";
 
 class EventQueue {
   private values: AgentEvent[] = [];
@@ -32,12 +33,13 @@ class EventQueue {
 
 export function createSessionExecutionService(dependencies: {
   sessions: SessionRepositoryPort;
-  rooms: RoomRepositoryPort;
   catalog: SessionCatalogPort;
   projects: ProjectRepositoryPort;
   runtime: PiRuntimePort;
+  sessionMemories: SessionMemoryRepositoryPort;
+  onCompleted?: (sessionId: string) => void;
 }) {
-  const { sessions, rooms, catalog, projects, runtime } = dependencies;
+  const { sessions, catalog, projects, runtime } = dependencies;
 
   function session(id: string): Session {
     const value = sessions.get(id);
@@ -74,9 +76,9 @@ export function createSessionExecutionService(dependencies: {
   return {
     send(sessionId: string, instruction: string, operation: "read" | "project_write" | "external_write" = "read"): AsyncGenerator<AgentEvent> {
       const value = session(sessionId);
-      const room = value.roomId ? rooms.get(value.roomId) : null;
-      if (value.roomId && (!room || room.status !== "active")) {
-        throw new DomainError("ROOM_NOT_ACTIVE", "当前会话不能执行项目任务", 409, true);
+      const memory = value.sessionMemoryId ? dependencies.sessionMemories.get(value.sessionMemoryId) : null;
+      if (!memory || memory.projectId !== value.projectId) {
+        throw new DomainError("MEMORY_NOT_ACTIVE", "当前会话不能执行项目任务", 409, true);
       }
       if (locks.has(sessionId) || ["starting", "running", "interrupting"].includes(value.state)) {
         throw new DomainError("SESSION_BUSY", "项目工作线正在运行", 409, true);
@@ -84,11 +86,11 @@ export function createSessionExecutionService(dependencies: {
       if (value.state === "ended") throw new DomainError("SESSION_ENDED", "项目工作线已结束", 409, true);
       if (value.state === "unavailable") throw new DomainError("SESSION_RESTORE_REQUIRED", "项目工作线需要先恢复", 409, true);
 
-      locks.add(sessionId);
+      acquireSession(sessionId);
       return (async function* (): AsyncGenerator<AgentEvent> {
         let runtimeStarted = false;
         try {
-          const input = runtimeInput(value, operation === "project_write");
+          const input = { ...runtimeInput(value, operation === "project_write"), projectSession: true };
           sessions.updateRuntime(sessionId, { state: "starting" });
           runtimeStarted = true;
           yield { type: "session_state", state: "starting" };
@@ -106,24 +108,17 @@ export function createSessionExecutionService(dependencies: {
           const queue = new EventQueue();
           void runtime
             .send(handle, instruction, (event) => {
-              if (event.type === "task_result") {
-                queue.push({
-                  type: "task_result",
-                  result: {
-                    ...event.result,
-                    artifacts: event.result.artifacts.map((artifact) => ({ ...artifact, projectId: value.projectId })),
-                  } satisfies TaskResult,
-                });
-              } else queue.push(event);
+              queue.push(event);
             })
             .then(() => {
               sessions.updateRuntime(sessionId, { state: "idle" });
               queue.push({ type: "session_state", state: "idle" });
               queue.push({ type: "complete" });
+              setTimeout(() => dependencies.onCompleted?.(sessionId), 0);
             })
-            .catch(() => {
+            .catch((error) => {
               sessions.updateRuntime(sessionId, { state: "unavailable" });
-              queue.push({ type: "error", code: "RUNTIME_ERROR", message: "Pi Runtime 执行失败", recoverable: true });
+              queue.push({ type: "error", code: error instanceof DomainError ? error.code : "RUNTIME_ERROR", message: error instanceof DomainError ? error.message : "Pi Runtime 执行失败", recoverable: true });
             })
             .finally(() => queue.end());
           while (true) {
@@ -159,6 +154,7 @@ export function createSessionExecutionService(dependencies: {
       sessions.updateRuntime(sessionId, { state: "idle" });
     },
     async restore(sessionId: string) {
+      if(locks.has(sessionId))throw new DomainError("SESSION_BUSY","Session 正在回答或压缩",409,true);
       const value = session(sessionId);
       if (value.state !== "unavailable") throw new DomainError("SESSION_NOT_UNAVAILABLE", "只有不可用的项目工作线需要恢复", 409, true);
       if (!value.nativeRef) throw new DomainError("NO_NATIVE_REF", "项目工作线没有可恢复的 Pi Session", 409, true);
@@ -170,6 +166,7 @@ export function createSessionExecutionService(dependencies: {
       return value.nativeRef ? runtime.readMessages(runtimeInput(value)) : [];
     },
     async close(sessionId: string) {
+      if(locks.has(sessionId))throw new DomainError("SESSION_BUSY","Session 正在回答或压缩",409,true);
       const handle = runtime.getHandle(sessionId);
       if (handle) await runtime.close(handle);
     },

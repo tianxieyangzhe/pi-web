@@ -1,12 +1,13 @@
+import {DomainError} from "@/domain/errors";
 import type { Agent, JsonObject, Mcp, Session } from "@/domain/models";
-import { database } from "./database.server";
+import { database, assertSchemaCompatible } from "./database.server";
 import { entityId, now, type DatabaseRow } from "./common";
 import { parseJson, stringifyJson } from "./json";
 
 function mapSession(row: DatabaseRow): Session {
   return {
     id: row.id as string,
-    roomId: row.room_id as string | null,
+    sessionMemoryId: row.session_memory_id as string,
     projectId: row.project_id as string,
     purpose: row.purpose as string,
     agentId: row.agent_id as string | null,
@@ -28,23 +29,19 @@ function mapSession(row: DatabaseRow): Session {
 
 export type CreateSessionRecord = Pick<
   Session,
-  "roomId" | "projectId" | "purpose" | "agentId" | "agentSnapshot" | "mcpIds" | "mcpSnapshots"
->;
+  "projectId" | "purpose" | "agentId" | "agentSnapshot" | "mcpIds" | "mcpSnapshots"
+> & { sessionMemoryId: string };
 
 export const sessionRepository = {
-  listForRoom(roomId: string): Session[] {
-    return (database
-      .prepare("SELECT * FROM sessions WHERE room_id = ? ORDER BY created_at, id")
-      .all(roomId) as DatabaseRow[]).map(mapSession);
-  },
-
   listForProject(projectId: string): Session[] {
+    assertSchemaCompatible();
     return (database
-      .prepare("SELECT * FROM sessions WHERE project_id = ? AND room_id IS NULL ORDER BY created_at, id")
+      .prepare("SELECT * FROM sessions WHERE project_id = ? ORDER BY created_at, id")
       .all(projectId) as DatabaseRow[]).map(mapSession);
   },
 
   get(id: string): Session | null {
+    assertSchemaCompatible();
     const row = database.prepare("SELECT * FROM sessions WHERE id = ?").get(id) as
       | DatabaseRow
       | undefined;
@@ -52,19 +49,22 @@ export const sessionRepository = {
   },
 
   create(input: CreateSessionRecord): Session {
+    assertSchemaCompatible();
+    const memoryId = input.sessionMemoryId;
+    if (!memoryId) throw new DomainError("INVALID_SESSION_MEMORY", "每个 Session 必须绑定一份独有记忆", 422, true);
     const id = entityId("session");
     const timestamp = now();
     database
       .prepare(
         `INSERT INTO sessions (
-          id, room_id, project_id, purpose, agent_id, agent_snapshot_json,
+          id, session_memory_id, project_id, purpose, agent_id, agent_snapshot_json,
           mcp_ids_json, mcp_snapshots_json, state, native_ref_json,
           native_metadata_json, created_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'not_started', NULL, '{}', ?)`,
       )
       .run(
         id,
-        input.roomId,
+        memoryId,
         input.projectId,
         input.purpose,
         input.agentId,
@@ -85,6 +85,7 @@ export const sessionRepository = {
       endedAt?: string | null;
     },
   ): Session | null {
+    assertSchemaCompatible();
     const current = this.get(id);
     if (!current) return null;
     database
@@ -110,6 +111,7 @@ export const sessionRepository = {
   },
 
   markInterruptedAfterRestart(): number {
+    assertSchemaCompatible();
     return database
       .prepare("UPDATE sessions SET state = 'unavailable' WHERE state IN ('starting','running','interrupting')")
       .run().changes;

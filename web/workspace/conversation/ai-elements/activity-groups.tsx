@@ -1,9 +1,9 @@
+import {summarizeActivities} from "./activity-summary";
 import { BrainCircuit, CheckCircle2, ChevronDown, CircleAlert, LoaderCircle, Wrench } from "lucide-react";
 
 export type VisibleActivity = {
   id: string;
   round?: number;
-  source?: "router" | "session" | "direct" | "synthesizer";
   kind: "thinking" | "tool" | "context" | "execution";
   state: "running" | "completed" | "error";
   summary: string;
@@ -32,29 +32,7 @@ function ActivityRows({ activities }: { activities: VisibleActivity[] }) {
   </div>;
 }
 
-export function ActivityGroups({ activities, running = false, progress = "", history = false, roomTimeline = false }: { activities: VisibleActivity[]; running?: boolean; progress?: string; history?: boolean; roomTimeline?: boolean }) {
-  if (roomTimeline) {
-    const sources = [
-      { id: "router", title: "路由过程", activities: activities.filter((activity) => activity.source === "router"), icon: <BrainCircuit size={14} aria-hidden="true" /> },
-      { id: "session-thinking", title: "项目 Session 分析阶段", activities: activities.filter((activity) => activity.source === "session" && activity.kind === "thinking"), icon: <BrainCircuit size={14} aria-hidden="true" /> },
-      { id: "session-execution", title: "项目 Session 执行过程", activities: activities.filter((activity) => activity.source === "session" && activity.kind !== "thinking"), icon: <Wrench size={14} aria-hidden="true" /> },
-      { id: "direct", title: "直接回复过程", activities: activities.filter((activity) => activity.source === "direct"), icon: <BrainCircuit size={14} aria-hidden="true" /> },
-      { id: "synthesizer", title: "汇总过程", activities: activities.filter((activity) => activity.source === "synthesizer"), icon: <Wrench size={14} aria-hidden="true" /> },
-    ];
-    const visibleSources = sources.filter((source) => source.activities.length > 0);
-
-    return <div className="activity-groups grid gap-2" aria-live="polite">
-      {visibleSources.map((source) => <section className="activity" key={source.id}>
-        <div className="activity__heading">{source.icon}{source.title}</div>
-        <ActivityRows activities={source.activities} />
-      </section>)}
-      {!visibleSources.length && (progress || running) && <section className="activity">
-        <div className="activity__heading"><LoaderCircle size={14} aria-hidden="true" />请求进度</div>
-        <div className="activity-row"><LoaderCircle className="spin" size={14} aria-hidden="true" /><span className="min-w-0 flex-1">{progress || "正在处理请求"}</span><span className="shrink-0 rounded-full border border-[#cfddf4] bg-[#f1f6ff] px-2 py-0.5 text-[10px] text-[#315d9f]">进行中</span></div>
-      </section>}
-    </div>;
-  }
-
+function RoundDetails({ activities, running = false, progress = "", history = false }: { activities: VisibleActivity[]; running?: boolean; progress?: string; history?: boolean }) {
   const rounds = new Map<number, VisibleActivity[]>();
   for (const activity of activities) {
     const round = activity.round ?? 1;
@@ -71,7 +49,7 @@ export function ActivityGroups({ activities, running = false, progress = "", his
       const summaryLines = analysisLines.length
         ? analysisLines
         : [roundRunning && running ? "等待 Pi 提供本轮公开思考摘要。" : "Pi 未提供可展示的公开思考摘要。"];
-      const analysisState = latestThinking?.state ?? (roundRunning ? "running" : "completed");
+      const analysisState = roundActivities.some(activity=>activity.state==="error")?"error":roundRunning?"running":latestThinking?.state??"completed";
       const analysisStateLabel = analysisState === "running" ? "分析中" : analysisState === "error" ? "异常" : "已完成";
       const analysisStateStyle = analysisState === "running"
         ? "border-[#cfddf4] bg-[#f1f6ff] text-[#315d9f]"
@@ -103,4 +81,18 @@ export function ActivityGroups({ activities, running = false, progress = "", his
       <div className="activity-row">{history ? "Pi transcript 未提供可恢复的模型轮次记录。" : progress || "等待 Pi 模型轮次事件。"}</div>
     </section>}
   </div>;
+}
+
+export function ActivityGroups(props:{activities:VisibleActivity[];running?:boolean;progress?:string;history?:boolean}) {
+  const summary=summarizeActivities(props.activities,props.running);
+  if(!summary.roundCount&&!props.running&&!props.progress)return null;
+  const label=summary.state==="error"?"异常":summary.state==="running"?"运行中":"已完成";
+  const Icon=summary.state==="running"?LoaderCircle:summary.state==="error"?CircleAlert:BrainCircuit;
+  return <details className="activity activity-request">
+    <summary className="activity__heading activity-round__summary">
+      <span className="activity-round__title"><Icon className={summary.state==="running"?"spin":""} size={14} aria-hidden="true"/>执行过程</span>
+      <span className="activity-round__meta"><span>{label}</span><span>{summary.roundCount} 轮 · {summary.toolCount} 次工具调用{summary.state==="running"&&summary.currentRound?` · 当前第 ${summary.currentRound} 轮`:""}</span><ChevronDown className="activity-round__chevron" size={15} aria-hidden="true"/></span>
+    </summary>
+    <div className="activity-request__rounds"><RoundDetails {...props}/></div>
+  </details>;
 }
