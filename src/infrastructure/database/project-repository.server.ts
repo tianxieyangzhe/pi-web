@@ -17,12 +17,14 @@ function mapProject(row: DatabaseRow): Project {
 
 export const projectRepository = {
   list(): Project[] {
+    assertSchemaCompatible();
     return (database
       .prepare("SELECT * FROM projects ORDER BY status, name, id")
       .all() as DatabaseRow[]).map(mapProject);
   },
 
   get(id: string): Project | null {
+    assertSchemaCompatible();
     const row = database.prepare("SELECT * FROM projects WHERE id = ?").get(id) as
       | DatabaseRow
       | undefined;

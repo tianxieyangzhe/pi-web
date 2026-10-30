@@ -1,13 +1,18 @@
+import {requestScopeInstructions} from "@/domain/execution-operation";
+import { appendMessageReferences } from "./message-references.server";
+import { createMessageReferenceScope } from "./message-reference-scope.server";
+import {sameRuntimeConfiguration} from "@/domain/runtime-configuration";
+import {isRoleSnapshot} from "@/domain/agent-definition";
 import {sessionMemorySummaryPrompt,prepareSessionMemorySummaryInput} from "./session-memory-summary-prompt";
 import type {PiContextPort} from "@/application/ports/pi-context";
 import type {
-  ActivityEvent,
   AgentEvent,
   Agent,
   JsonObject,
   Session,
 } from "@/domain/models";
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import {existsSync,statSync} from "node:fs";
+import { safeToolTarget } from "./tool-target";
 import {
   createAgentSession,
   DefaultResourceLoader,
@@ -25,9 +30,12 @@ import { DomainError } from "@/domain/errors";
 import { emptyInspection, type NativeContextInspection } from "@/domain/native-context";
 import type { SessionMemoryHistory, SummaryRequest } from "@/application/ports/session-memory-runtime";
 import { validateContext, type SessionMemoryContext } from "@/domain/session-memory";
+import {toPiBotTools} from "./pi-bot-tools.server";
+import {projectTranscriptEntries} from "./transcript-projection";
 
 type Handle = {
   session: PiAgentSession;
+  referenceScope: ReturnType<typeof createMessageReferenceScope>;
   manager: SessionManager;
   cwd: string;
   isProjectSession: boolean;
@@ -57,14 +65,8 @@ const PUBLIC_SUMMARY_OPEN = "[[PI_PUBLIC_SUMMARY]]";
 const PUBLIC_SUMMARY_CLOSE = "[[/PI_PUBLIC_SUMMARY]]";
 
 type TurnState = {
-  round: number;
   publicText: string;
-  analysisDetails: string[];
   toolDetails: Map<string, string | undefined>;
-  showActionSummary: boolean;
-  textMode: "prefix" | "summary" | "response";
-  pendingText: string;
-  summaryText: string;
 };
 
 function textContent(value: unknown): string {
@@ -90,7 +92,7 @@ function nativeRef(session: PiAgentSession, manager: SessionManager, cwd: string
   };
 }
 
-function visibleToolLabel(toolName: string): string {
+export function visibleToolLabel(toolName: string): string {
   const labels: Record<string, string> = {
     bash: "执行命令",
     edit: "编辑文件",
@@ -110,23 +112,7 @@ function visibleToolLabel(toolName: string): string {
   return safeName || "执行已授权工具";
 }
 
-function safeToolDetail(toolName: string, args: unknown, workingDirectory: string): string | undefined {
-  if (!["project_read", "project_list", "project_edit", "project_write"].includes(toolName)) return undefined;
-  if (!args || typeof args !== "object") return undefined;
-  if (!("path" in args) || typeof args.path !== "string") {
-    return toolName === "project_list" ? "目标：项目根目录" : undefined;
-  }
-
-  const target = resolve(workingDirectory, args.path);
-  const relativePath = relative(workingDirectory, target);
-  if (isAbsolute(relativePath) || relativePath === ".." || relativePath.startsWith(`..${sep}`)) return undefined;
-  const segments = relativePath.split(sep).filter(Boolean);
-  const sensitiveSegment = /^(?:\.env(?:\.|$)|\.git$|\.ssh$|\.aws$|\.codex$|\.npmrc$|\.pypirc$|credentials?\.|id_(?:rsa|dsa|ecdsa|ed25519)|node_modules$)/i;
-  if (segments.some((segment) => sensitiveSegment.test(segment))) return undefined;
-  return `目标：${segments.join("/") || "项目根目录"}`;
-}
-
-function safePublicSummary(value: string, workingDirectory: string): string {
+export function safePublicSummary(value: string, workingDirectory: string): string {
   return value
     .replaceAll(workingDirectory, "项目根目录")
     .replace(/\b(?:sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9]{20,}|Bearer\s+[A-Za-z0-9._~+/-]+=*)\b/gi, "[已隐藏敏感信息]")
@@ -136,7 +122,7 @@ function safePublicSummary(value: string, workingDirectory: string): string {
     .slice(0, 600);
 }
 
-function extractPublicSummary(value: string): { summary?: string; text: string } {
+export function extractPublicSummary(value: string): { summary?: string; text: string } {
   const openIndex = value.indexOf(PUBLIC_SUMMARY_OPEN);
   if (openIndex < 0) return { text: value };
   const closeIndex = value.indexOf(PUBLIC_SUMMARY_CLOSE, openIndex + PUBLIC_SUMMARY_OPEN.length);
@@ -147,20 +133,20 @@ function extractPublicSummary(value: string): { summary?: string; text: string }
   };
 }
 
-function loaderFor(input: SessionRuntimeInput): DefaultResourceLoader {
-  const agent = input.session.agentSnapshot as Agent | null;
-  const extension = agent?.extension;
+function loaderFor(input: SessionRuntimeInput, referenceScope: ReturnType<typeof createMessageReferenceScope>): DefaultResourceLoader {
+  const agent = input.session.agentSnapshot;
   const loader = new DefaultResourceLoader({
     noExtensions: true,
+    extensionFactories: [referenceScope.extension],
+    noSkills:true,noContextFiles:true,noPromptTemplates:true,
     cwd: input.workingDirectory,
     agentDir: getAgentDir(),
-    additionalSkillPaths: extension?.skillPaths ?? [],
+    additionalSkillPaths: [],
     appendSystemPrompt: [
-      ...(extension?.instruction ? [extension.instruction] : []),
-      ...(input.projectSession !== false ? [
-        `At the start of every model turn, emit exactly one concise, high-level, user-facing summary inside ${PUBLIC_SUMMARY_OPEN}...${PUBLIC_SUMMARY_CLOSE}, before any answer text or tool call. Describe the request objective and your high-level approach or next action in 1-3 short sentences. This is an explicitly public summary, not private chain-of-thought. Never reveal hidden reasoning, detailed deliberation, speculative internal notes, secrets, raw tool arguments or results, or absolute paths. After the closing marker, continue with the normal answer.`,
-        "Before each tool call, provide one concise user-facing execution note stating the operation, the concrete project-relative target when known, and why or what result you expect. Keep it factual and specific. This is progress text, not private chain-of-thought; never reveal hidden reasoning, detailed deliberation, tool arguments, secrets, or absolute paths.",
-      ] : []),
+      requestScopeInstructions,
+      ...(input.roleInstructions ? [input.roleInstructions] : []),
+      ...(isRoleSnapshot(agent)&&!input.roleInstructions?[agent.definition.instructions]:[]),
+      
     ],
   });
   return loader;
@@ -173,149 +159,35 @@ function mapEvent(
   workingDirectory: string,
 ): void {
   const modelEvent = event.assistantMessageEvent;
-  const recordSummary = (value: string) => {
-    const detail = safePublicSummary(value, workingDirectory);
-    if (!detail || turn.analysisDetails.includes(detail) || turn.analysisDetails.length >= 8) return;
-    turn.analysisDetails.push(detail);
-    emit({
-      type: "activity",
-      id: `model-round-${turn.round}`,
-      round: turn.round,
-      kind: "thinking",
-      state: "completed",
-      summary: `Pi 第 ${turn.round} 轮模型公开摘要`,
-      detail: turn.analysisDetails.join("\n"),
-    });
-  };
   const emitResponseText = (text: string) => {
     if (!text) return;
     turn.publicText += text;
     emit({ type: "message_delta", text });
   };
-  const consumeText = (text: string) => {
-    if (!text) return;
-    if (!turn.showActionSummary) {
-      emitResponseText(text);
-      return;
-    }
-    if (turn.textMode === "response") {
-      emitResponseText(text);
-      return;
-    }
-    if (turn.textMode === "prefix") {
-      turn.pendingText += text;
-      const trimmed = turn.pendingText.trimStart();
-      if (trimmed.startsWith(PUBLIC_SUMMARY_OPEN)) {
-        turn.pendingText = "";
-        turn.textMode = "summary";
-        const remainder = trimmed.slice(PUBLIC_SUMMARY_OPEN.length);
-        consumeText(remainder);
-        return;
-      }
-      if (trimmed.length < PUBLIC_SUMMARY_OPEN.length && PUBLIC_SUMMARY_OPEN.startsWith(trimmed)) return;
-      turn.textMode = "response";
-      const pendingText = turn.pendingText;
-      turn.pendingText = "";
-      emitResponseText(pendingText);
-      return;
-    }
-
-    turn.summaryText += text;
-    const closeIndex = turn.summaryText.indexOf(PUBLIC_SUMMARY_CLOSE);
-    if (closeIndex < 0) return;
-    const summary = turn.summaryText.slice(0, closeIndex);
-    const response = turn.summaryText.slice(closeIndex + PUBLIC_SUMMARY_CLOSE.length);
-    turn.summaryText = "";
-    turn.textMode = "response";
-    recordSummary(summary);
-    emitResponseText(response);
-  };
-  const finishText = () => {
-    if (turn.textMode === "prefix" && turn.pendingText) {
-      emitResponseText(turn.pendingText);
-      turn.pendingText = "";
-      turn.textMode = "response";
-      return;
-    }
-    if (turn.textMode === "summary") {
-      recordSummary(turn.summaryText);
-      turn.summaryText = "";
-      turn.textMode = "response";
-    }
-  };
   if (event.type === "turn_start") {
-    turn.round += 1;
     turn.publicText = "";
-    turn.analysisDetails = [];
     turn.toolDetails.clear();
-    turn.textMode = "prefix";
-    turn.pendingText = "";
-    turn.summaryText = "";
-    emit({
-      type: "activity",
-      id: `model-round-${turn.round}`,
-      round: turn.round,
-      kind: "thinking",
-      state: "running",
-      summary: `Pi 第 ${turn.round} 轮模型调用已开始`,
-    });
     return;
   }
-  if (event.type === "message_update" && modelEvent?.type === "thinking_start") {
-    emit({ type: "activity", id: `model-round-${turn.round}`, round: turn.round, kind: "thinking", state: "running", summary: `Pi 第 ${turn.round} 轮正在生成分析阶段` });
-    return;
-  }
-  if (event.type === "message_update" && modelEvent?.type === "thinking_end") {
-    emit({ type: "activity", id: `model-round-${turn.round}`, round: turn.round, kind: "thinking", state: "completed", summary: `Pi 第 ${turn.round} 轮分析阶段已完成` });
+  if (event.type === "message_update" && (modelEvent?.type === "thinking_start" || modelEvent?.type === "thinking_delta" || modelEvent?.type === "thinking_end")) {
     return;
   }
   if (event.type === "message_update" && modelEvent?.type === "text_delta") {
-    consumeText(modelEvent.delta ?? "");
-    return;
-  }
-  if (event.type === "message_update" && modelEvent?.type === "thinking_delta") {
-    emit({ type: "activity", id: `model-round-${turn.round}`, round: turn.round, kind: "thinking", state: "running", summary: `Pi 第 ${turn.round} 轮正在生成分析阶段` });
+    emitResponseText(modelEvent.delta ?? "");
     return;
   }
   if (event.type === "message_update" && modelEvent?.type === "toolcall_end") {
-    finishText();
     const toolCall = modelEvent.toolCall;
-    if (toolCall?.id) {
-      if (turn.showActionSummary) recordSummary(turn.publicText);
-      turn.toolDetails.set(toolCall.id, safeToolDetail(toolCall.name ?? "", toolCall.arguments, workingDirectory));
-      if (turn.showActionSummary) {
-        emit({
-          type: "activity",
-          id: `model-round-${turn.round}`,
-          round: turn.round,
-          kind: "thinking",
-          state: "completed",
-          summary: `Pi 第 ${turn.round} 轮模型公开摘要`,
-          ...(turn.analysisDetails.length ? { detail: turn.analysisDetails.join("\n") } : {}),
-        });
-        if (turn.publicText) emit({ type: "response_reset" });
-      }
-      turn.publicText = "";
-      emit({
-        type: "activity",
-        id: `tool-${toolCall.id}`,
-        round: turn.round,
-        kind: "tool",
-        state: "running",
-        summary: `准备执行：${visibleToolLabel(toolCall.name ?? "")}`,
-        ...(turn.toolDetails.get(toolCall.id) ? { detail: turn.toolDetails.get(toolCall.id) } : {}),
-      });
-    }
+    if (toolCall?.id) turn.toolDetails.set(toolCall.id, safeToolTarget(toolCall.name ?? "", toolCall.arguments, workingDirectory));
     return;
   }
   if (event.type === "tool_execution_start") {
     emit({
       type: "activity",
       id: `tool-${event.toolCallId ?? event.toolName ?? "unknown"}`,
-      round: turn.round,
       kind: "tool",
       state: "running",
-      summary: `正在执行：${visibleToolLabel(event.toolName ?? "")}`,
+      summary: event.toolName || "tool",
       ...(turn.toolDetails.get(event.toolCallId ?? "") ? { detail: turn.toolDetails.get(event.toolCallId ?? "") } : {}),
     });
     return;
@@ -324,10 +196,9 @@ function mapEvent(
     emit({
       type: "activity",
       id: `tool-${event.toolCallId ?? event.toolName ?? "unknown"}`,
-      round: turn.round,
       kind: "tool",
       state: "running",
-      summary: `正在执行：${visibleToolLabel(event.toolName ?? "")}`,
+      summary: event.toolName || "tool",
       ...(turn.toolDetails.get(event.toolCallId ?? "") ? { detail: turn.toolDetails.get(event.toolCallId ?? "") } : {}),
     });
     return;
@@ -336,51 +207,22 @@ function mapEvent(
     emit({
       type: "activity",
       id: `tool-${event.toolCallId ?? event.toolName ?? "unknown"}`,
-      round: turn.round,
       kind: "tool",
       state: event.isError ? "error" : "completed",
-      summary: `${event.isError ? "执行失败" : "已完成"}：${visibleToolLabel(event.toolName ?? "")}`,
+      summary: `${event.isError ? "失败：" : ""}${event.toolName || "tool"}`,
       ...(turn.toolDetails.get(event.toolCallId ?? "") ? { detail: turn.toolDetails.get(event.toolCallId ?? "") } : {}),
     });
     return;
   }
-  if (event.type === "compaction_start") {
-    emit({
-      type: "activity",
-      id: `context-compaction-${turn.round}`,
-      round: turn.round,
-      kind: "context",
-      state: "running",
-      summary: "正在整理上下文",
-    });
-    return;
-  }
-  if (event.type === "compaction_end") {
-    emit({
-      type: "activity",
-      id: `context-compaction-${turn.round}`,
-      round: turn.round,
-      kind: "context",
-      state: "completed",
-      summary: "上下文整理完成",
-    });
-  }
-  if (event.type === "turn_end" || event.type === "agent_end") {
-    finishText();
-    if (turn.round > 0) {
-      emit({
-        type: "activity",
-        id: `model-round-${turn.round}`,
-        round: turn.round,
-        kind: "thinking",
-        state: "completed",
-        summary: turn.analysisDetails.length
-          ? `Pi 第 ${turn.round} 轮模型公开摘要`
-          : `Pi 第 ${turn.round} 轮未提供模型公开摘要`,
-        ...(turn.analysisDetails.length ? { detail: turn.analysisDetails.join("\n") } : {}),
-      });
-    }
-  }
+  
+}
+
+export function createPiEventMapper(showActionSummary: boolean, workingDirectory: string, emit: (event: AgentEvent) => void) {
+  const turn: TurnState = {
+    publicText: "",
+    toolDetails: new Map(),
+  };
+  return (event: unknown) => mapEvent(event as PiEvent, emit, turn, workingDirectory);
 }
 
 class PiSessionRuntime implements PiRuntimePort, PiContextPort {
@@ -393,12 +235,13 @@ class PiSessionRuntime implements PiRuntimePort, PiContextPort {
   }
 
   private async create(input: SessionRuntimeInput, manager: SessionManager): Promise<Handle> {
-    const loader = loaderFor(input);
+    const referenceScope = createMessageReferenceScope();
+    const loader = loaderFor(input, referenceScope);
     await loader.reload();
     const { runtime: modelRuntime, model } = await this.configuredModel();
-    const agent = input.session.agentSnapshot?.extension;
     const customTools = [
       ...(await createPiProjectTools(input)),
+      ...toPiBotTools(input.collaborationTools ?? []),
     ];
     const result = await createAgentSession({
       cwd: input.workingDirectory,
@@ -406,15 +249,14 @@ class PiSessionRuntime implements PiRuntimePort, PiContextPort {
       modelRuntime,
       resourceLoader: loader,
       settingsManager: SettingsManager.inMemory({ compaction: { enabled: false } }),
-      model: agent?.thinkingLevel && agent.thinkingLevel !== "off"
-        ? { ...model, reasoning: true }
-        : model,
+      model,
       noTools: customTools.length ? "builtin" : "all",
       ...(customTools.length ? { customTools } : {}),
-      ...(agent?.thinkingLevel ? { thinkingLevel: agent.thinkingLevel } : {}),
+
     });
     return {
       session: result.session,
+      referenceScope,
       manager,
       cwd: input.workingDirectory,
       isProjectSession: input.projectSession !== false,
@@ -433,34 +275,38 @@ class PiSessionRuntime implements PiRuntimePort, PiContextPort {
     const reference = input.session.nativeRef;
     const sessionFile = reference?.sessionFile;
     if (typeof sessionFile !== "string" || !sessionFile) throw new Error("Pi 原生 Session 引用无效");
+    if(!existsSync(sessionFile)||statSync(sessionFile).size===0)throw new DomainError("NO_NATIVE_REF","Pi 原生历史缺失，未新建替代",409,true);
     const manager = SessionManager.open(sessionFile, undefined, input.workingDirectory);
+    if(manager.getSessionId()!==reference?.sessionId||manager.getHeader()?.cwd!==input.workingDirectory)throw new DomainError("NO_NATIVE_REF","Pi 原生历史归属不一致",409,true);
     const handle = await this.create(input, manager);
     this.handles.set(input.session.id, handle);
     return handle;
   }
 
-  async send(handle: object, message: string, emit: (event: AgentEvent) => void) {
+  async send(handle: object, message: string, emit: (event: AgentEvent) => void, onAssistantStream?: () => void, references?: import("@/domain/message-references").ReferenceContent) {
     const piHandle = handle as Handle;
     const turn: TurnState = {
-      round: 0,
       publicText: "",
-      analysisDetails: [],
       toolDetails: new Map(),
-      showActionSummary: piHandle.isProjectSession,
-      textMode: "prefix",
-      pendingText: "",
-      summaryText: "",
     };
-    const unsubscribe = piHandle.session.subscribe((event) =>
-      mapEvent(event as PiEvent, emit, turn, piHandle.cwd),
-    );
+    let assistantStreamSeen = false;
+    const unsubscribe = piHandle.session.subscribe((event) => {
+      if (!assistantStreamSeen && event.type === "message_update") {
+        assistantStreamSeen = true;
+        onAssistantStream?.();
+      }
+      mapEvent(event as PiEvent, emit, turn, piHandle.cwd);
+    });
     try {
       piHandle.session.setAutoCompactionEnabled(false);
+      const referenceTurnId = piHandle.referenceScope.begin();
+      await appendMessageReferences(piHandle.session, references, referenceTurnId);
       await piHandle.session.prompt(message, { expandPromptTemplates: false });
       const last=piHandle.session.messages.filter(item=>item.role==="assistant").at(-1) as {stopReason?:string;errorMessage?:string} | undefined;
-      if(last?.stopReason==="error") { if(/context|token.*limit|maximum.*length/i.test(last.errorMessage??""))throw new DomainError("CONTEXT_LIMIT_REACHED","原生上下文已满，请在检查中手动压缩后重新发送",409,true);throw new DomainError("RUNTIME_ERROR","模型请求失败，请检查配置或恢复状态",503,true); }
+      if(last?.stopReason==="error") { if(/context|token.*limit|maximum.*length/i.test(last.errorMessage??""))throw new DomainError("CONTEXT_LIMIT_REACHED","原生上下文已满，请在检查中手动压缩后重新发送",409,true);throw new DomainError("RUNTIME_ERROR", references?.some(item => item.type === "image") ? "模型请求失败；模型或服务可能不支持图片输入" : "模型请求失败，请检查配置或恢复状态",503,true); }
       if(last?.stopReason==="aborted")throw new DomainError("REQUEST_ABORTED","请求已停止",409,true);
     } finally {
+      piHandle.referenceScope.end();
       unsubscribe();
     }
   }
@@ -469,120 +315,44 @@ class PiSessionRuntime implements PiRuntimePort, PiContextPort {
     await (handle as Handle).session.abort();
   }
 
+  async projectHandle(input: SessionRuntimeInput) {
+    const existing = this.handles.get(input.session.id) ?? (input.session.nativeRef ? await this.restore(input) : (await this.open(input)).handle) as Handle;
+    const textOf = (content: unknown) => typeof content === "string" ? content : Array.isArray(content) ? content.map(part => part && typeof part === "object" && "text" in part ? String(part.text ?? "") : "").join("") : "";
+    return {
+      sessionId: input.session.id,
+      subscribe: (listener: (event: { type: "agent_settled"; aborted: boolean; endEntryId: string | null }) => void) => existing.session.subscribe(event => {
+        if (event.type !== "agent_end") return;
+        const end = [...existing.manager.getBranch()].reverse().find(entry => entry.type === "message" && (entry.message as { role?: string }).role === "assistant");
+        listener({ type: "agent_settled", aborted: event.willRetry !== true && !end, endEntryId: end?.id ?? null });
+      }),
+      prompt: async (content: string) => {
+        const before = new Set(existing.manager.getBranch().map(entry => entry.id));
+        await existing.session.prompt(content, { expandPromptTemplates: false });
+        const start = existing.manager.getBranch().find(entry => !before.has(entry.id) && entry.type === "message" && (entry.message as { role?: string }).role === "user");
+        if (!start) throw new DomainError("RUNTIME_ERROR", "项目调用未写入 Pi transcript", 503, true);
+        return { startEntryId: start.id };
+      },
+      steer: async (content: string) => { await existing.session.steer(content); },
+      readAssistant: async (startEntryId: string, endEntryId: string) => {
+        const branch = existing.manager.getBranch();
+        const start = branch.findIndex(entry => entry.id === startEntryId), end = branch.findIndex(entry => entry.id === endEntryId);
+        if (start < 0 || end < start) throw new DomainError("INVALID_STATE", "项目调用 transcript 边界无效", 409, true);
+        return branch.slice(start, end + 1).flatMap(entry => entry.type === "message" && (entry.message as { role?: string }).role === "assistant" ? [textOf((entry.message as { content?: unknown }).content)] : []).join("\n");
+      },
+    };
+  }
+
   async readMessages(input: SessionRuntimeInput) {
     let manager: SessionManager;
-    if (input.session.nativeRef?.sessionFile && typeof input.session.nativeRef.sessionFile === "string") {
+    const live=this.handles.get(input.session.id);
+    if(live)manager=live.manager;
+    else if (input.session.nativeRef?.sessionFile && typeof input.session.nativeRef.sessionFile === "string") {
+      if(!existsSync(input.session.nativeRef.sessionFile)||statSync(input.session.nativeRef.sessionFile).size===0)throw new DomainError("NO_NATIVE_REF","Pi 原生历史缺失",409,true);
       manager = SessionManager.open(input.session.nativeRef.sessionFile, undefined, input.workingDirectory);
     } else {
       manager = SessionManager.create(input.workingDirectory);
     }
-    const entries = manager.getBranch();
-    const toolResults = new Map<string, boolean>();
-    for (const entry of entries) {
-      if (entry.type !== "message") continue;
-      const message = entry.message as { role?: string; toolCallId?: unknown; isError?: unknown };
-      if (message.role === "toolResult" && typeof message.toolCallId === "string") {
-        toolResults.set(message.toolCallId, message.isError === true);
-      }
-    }
-    const result: Array<{
-      id: string;
-      sessionId: string;
-      role: "user" | "assistant";
-      content: string;
-      createdAt: string;
-      activities?: ActivityEvent[];
-    }> = [];
-    let pendingActivities: ActivityEvent[] = [];
-    let round = 0;
-    const appendPendingActivities = (id: string, createdAt: string) => {
-      if (!pendingActivities.length) return;
-      result.push({
-        id,
-        sessionId: input.session.id,
-        role: "assistant",
-        content: "",
-        createdAt,
-        activities: pendingActivities,
-      });
-      pendingActivities = [];
-    };
-    for (const entry of entries) {
-      if (entry.type !== "message") continue;
-      const msg = entry.message as { role?: string; content?: unknown };
-      if (msg.role === "user") {
-        const text = textContent(msg.content);
-        if (!text) continue;
-        appendPendingActivities(`${entry.id}:unfinished-activity`, entry.timestamp);
-        round = 0;
-        result.push({
-          id: entry.id || `${input.session.id}-${result.length}`,
-          sessionId: input.session.id,
-          role: "user",
-          content: text,
-          createdAt: entry.timestamp,
-        });
-        continue;
-      }
-      if (msg.role !== "assistant") continue;
-      round += 1;
-      const blocks = Array.isArray(msg.content)
-        ? msg.content.filter((block): block is Record<string, unknown> => Boolean(block) && typeof block === "object")
-        : [];
-      const toolCalls = blocks.filter((block) => block.type === "toolCall");
-      const parsedText = input.projectSession !== false
-        ? extractPublicSummary(textContent(msg.content))
-        : { text: textContent(msg.content) };
-      const summaryDetails = input.projectSession !== false && parsedText.summary
-        ? [safePublicSummary(parsedText.summary, input.workingDirectory)]
-        : [];
-      const executionNote = input.projectSession !== false && toolCalls.length
-        ? safePublicSummary(parsedText.text, input.workingDirectory)
-        : "";
-      if (executionNote && !summaryDetails.includes(executionNote)) summaryDetails.push(executionNote);
-      pendingActivities.push({
-        type: "activity",
-        id: `history:${entry.id}:analysis`,
-        round,
-        kind: "thinking",
-        state: "completed",
-        summary: summaryDetails.some(Boolean)
-          ? `Pi 第 ${round} 轮模型公开摘要`
-          : `Pi 第 ${round} 轮未提供模型公开摘要`,
-        ...(summaryDetails.some(Boolean) ? { detail: summaryDetails.filter(Boolean).join("\n") } : {}),
-      });
-      for (const block of toolCalls) {
-        if (block.type !== "toolCall" || typeof block.id !== "string") continue;
-        const toolName = typeof block.name === "string" ? block.name : "";
-        const hasResult = toolResults.has(block.id);
-        const failed = toolResults.get(block.id) === true;
-        pendingActivities.push({
-          type: "activity",
-          id: `history:${entry.id}:${block.id}`,
-          round,
-          kind: "tool",
-          state: !hasResult || failed ? "error" : "completed",
-          summary: `${!hasResult ? "执行未完成" : failed ? "执行失败" : "已完成"}：${visibleToolLabel(toolName)}`,
-          ...(() => {
-            const detail = safeToolDetail(toolName, block.arguments, input.workingDirectory);
-            return detail ? { detail } : {};
-          })(),
-        });
-      }
-      const text = parsedText.text;
-      if (!text || toolCalls.length) continue;
-      result.push({
-        id: entry.id || `${input.session.id}-${result.length}`,
-        sessionId: input.session.id,
-        role: "assistant",
-        content: text,
-        createdAt: entry.timestamp,
-        ...(pendingActivities.length ? { activities: pendingActivities } : {}),
-      });
-      pendingActivities = [];
-    }
-    appendPendingActivities(`${input.session.id}-unfinished-activity`, entries.at(-1)?.timestamp ?? new Date().toISOString());
-    return result;
+    return projectTranscriptEntries(manager.getBranch(), { workingDirectory: input.workingDirectory, coordinatorExecutionIds: input.coordinatorExecutionIds }).map(message => ({ ...message, sessionId: input.session.id, id: message.id || `${input.session.id}` }));
   }
 
   private manager(input: SessionRuntimeInput): SessionManager | null {
@@ -675,12 +445,13 @@ class PiSessionRuntime implements PiRuntimePort, PiContextPort {
     const handle = this.handles.get(sessionId);
     if (!input) return handle;
     if (
-      handle && handle.cwd === input.workingDirectory && handle.input.allowProjectWrite === input.allowProjectWrite
+      handle && sameRuntimeConfiguration(handle.input,input)
     ) {
       handle.session.setAutoCompactionEnabled(false);
       return handle;
     }
     if (handle) {
+      if(!handle.session.isIdle)throw new DomainError("SESSION_BUSY","当前 Pi 正在运行，不能替换配置",409,true);
       handle.session.dispose();
       this.handles.delete(sessionId);
     }

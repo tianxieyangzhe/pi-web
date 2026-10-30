@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { DomainError } from "@/domain/errors";
 import { projectRepository } from "@/infrastructure/database/project-repository.server";
+import type { ProjectMessageReference } from "@/domain/message-references";
 
 export type GitFileStatus =
   | "added"
@@ -38,6 +39,7 @@ const ignoredDirectories = new Set([
 ]);
 const sensitiveNames = [
   /^\.env(?:\.|$)/i,
+  /^\.(?:ssh|aws|codex)$/i,
   /^\.npmrc$/i,
   /^\.pypirc$/i,
   /^credentials?\./i,
@@ -71,6 +73,7 @@ function safePath(root: string, relativePath: string): string {
     throw new DomainError("INVALID_PATH", "文件路径无效", 400, true);
   }
   const requested = path.resolve(root, relativePath);
+  if (isSensitive(path.relative(root, requested))) throw new DomainError("SENSITIVE_FILE", "敏感文件不能预览", 403);
   if (requested !== root && !requested.startsWith(`${root}${path.sep}`)) {
     throw new DomainError("PATH_OUTSIDE_PROJECT", "文件路径超出项目目录", 403);
   }
@@ -92,6 +95,7 @@ function safePath(root: string, relativePath: string): string {
 function safeDirectory(root: string, relativePath: string): string {
   if (!relativePath) return root;
   const absolute = safePath(root, relativePath);
+  if ([relativePath, path.relative(root, absolute)].some(value => value.split(/[\\/]/).some(part => ignoredDirectories.has(part)))) throw new DomainError("INVALID_PATH", "目录不可访问", 403, true);
   if (!fs.statSync(absolute).isDirectory()) {
     throw new DomainError("INVALID_PATH", "路径不是目录", 400, true);
   }
@@ -132,6 +136,35 @@ function gitStatuses(root: string): Map<string, GitFileStatus> {
     // Non-git projects have no status overlay.
   }
   return statuses;
+}
+
+export function readProjectReference(reference: ProjectMessageReference): {name: string; data: string} {
+  const resolve = () => {
+    const root = projectRoot(reference.projectId);
+    const absolute = safePath(root, reference.path);
+    if ([reference.path, path.relative(root, absolute)].some(value => value.split(/[\\/]/).some(part => ignoredDirectories.has(part)))) throw new DomainError("INVALID_PATH", "参考文件位于不可访问目录", 403, true);
+    return absolute;
+  };
+  let fd: number | undefined;
+  try {
+    const absolute = resolve();
+    fd = fs.openSync(absolute, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+    const stat = fs.fstatSync(fd);
+    const checked = resolve();
+    const checkedStat = fs.statSync(checked);
+    if (checked !== absolute || stat.dev !== checkedStat.dev || stat.ino !== checkedStat.ino) throw new DomainError("FILE_CHANGED", "参考文件路径发生变化，请重试", 409, true);
+    if (!stat.isFile()) throw new DomainError("INVALID_FILE", "只能选择普通文件", 400, true);
+    if (stat.size > 2 * 1024 * 1024) throw new DomainError("FILE_TOO_LARGE", "参考文件超过容量限制", 413, true);
+    const buffer = Buffer.alloc(stat.size);
+    let offset = 0;
+    while (offset < buffer.length) { const n = fs.readSync(fd, buffer, offset, buffer.length - offset, offset); if (!n) break; offset += n; }
+    const after = fs.fstatSync(fd);
+    if (offset !== stat.size || after.size !== stat.size || after.mtimeMs !== stat.mtimeMs || after.ctimeMs !== stat.ctimeMs) throw new DomainError("FILE_CHANGED", "参考文件发生变化，请重试", 409, true);
+    return { name: path.basename(absolute), data: buffer.toString("base64") };
+  } catch (error) {
+    if (error instanceof DomainError) throw error;
+    throw new DomainError("REFERENCE_READ_FAILED", "无法读取参考文件，请检查后重试", 409, true);
+  } finally { if (fd !== undefined) fs.closeSync(fd); }
 }
 
 export const projectFiles = {

@@ -49,7 +49,7 @@ export function useProjectSessionNavigation() {
       else next.delete(projectId);
       return next;
     });
-    if (expand) void loadProjectSessions(projectId);
+    if (expand) void loadProjectSessions(projectId, true);
   }, [expandedProjectIds, loadProjectSessions]);
 
   const updateProjectSessions = useCallback((projectId: string, sessions: Session[]) => {

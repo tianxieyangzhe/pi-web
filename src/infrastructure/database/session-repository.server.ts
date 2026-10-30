@@ -1,19 +1,21 @@
 import {DomainError} from "@/domain/errors";
-import type { Agent, JsonObject, Mcp, Session } from "@/domain/models";
+import type { JsonObject, Mcp, Session } from "@/domain/models";
+import { hydrateAgentSnapshot, serializeAgentSnapshot } from "./agent-snapshot.server";
 import { database, assertSchemaCompatible } from "./database.server";
 import { entityId, now, type DatabaseRow } from "./common";
 import { parseJson, stringifyJson } from "./json";
+const hasSessionStatusColumn=(database.prepare('PRAGMA table_info(sessions)').all() as Array<{name:string}>).some(column=>column.name==='status');
 
 function mapSession(row: DatabaseRow): Session {
   return {
     id: row.id as string,
     sessionMemoryId: row.session_memory_id as string,
     projectId: row.project_id as string,
+    status: (row.status as Session["status"]|undefined)??(row.ended_at||row.state==='ended'?'closed':'open'),
     purpose: row.purpose as string,
+    botConversationId:row.bot_conversation_id as string|null,participantName:row.participant_name as string|null,assignment:row.assignment as string|null,collaborationState:row.collaboration_state as Session["collaborationState"],botJoinedAt:row.bot_joined_at as string|null,updatedAt:row.updated_at as string,
     agentId: row.agent_id as string | null,
-    agentSnapshot: row.agent_snapshot_json
-      ? parseJson<Agent>(row.agent_snapshot_json, "sessions.agent_snapshot_json")
-      : null,
+    agentSnapshot: row.agent_snapshot_json ? hydrateAgentSnapshot(parseJson<unknown>(row.agent_snapshot_json, "sessions.agent_snapshot_json")) : null,
     mcpIds: parseJson<string[]>(row.mcp_ids_json, "sessions.mcp_ids_json"),
     mcpSnapshots: parseJson<Mcp[]>(row.mcp_snapshots_json, "sessions.mcp_snapshots_json"),
     state: row.state as Session["state"],
@@ -30,7 +32,7 @@ function mapSession(row: DatabaseRow): Session {
 export type CreateSessionRecord = Pick<
   Session,
   "projectId" | "purpose" | "agentId" | "agentSnapshot" | "mcpIds" | "mcpSnapshots"
-> & { sessionMemoryId: string };
+> & { sessionMemoryId: string;stableId?:string };
 
 export const sessionRepository = {
   listForProject(projectId: string): Session[] {
@@ -52,26 +54,28 @@ export const sessionRepository = {
     assertSchemaCompatible();
     const memoryId = input.sessionMemoryId;
     if (!memoryId) throw new DomainError("INVALID_SESSION_MEMORY", "每个 Session 必须绑定一份独有记忆", 422, true);
-    const id = entityId("session");
+    const id = input.stableId??entityId("session");
     const timestamp = now();
     database
-      .prepare(
-        `INSERT INTO sessions (
+      .prepare(hasSessionStatusColumn?`INSERT INTO sessions (
+          id, session_memory_id, project_id, purpose, agent_id, agent_snapshot_json,
+          mcp_ids_json, mcp_snapshots_json, status, state, native_ref_json,
+          native_metadata_json, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open', 'not_started', NULL, '{}', ?, ?)`: `INSERT INTO sessions (
           id, session_memory_id, project_id, purpose, agent_id, agent_snapshot_json,
           mcp_ids_json, mcp_snapshots_json, state, native_ref_json,
-          native_metadata_json, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'not_started', NULL, '{}', ?)`,
-      )
+          native_metadata_json, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'not_started', NULL, '{}', ?, ?)`,)
       .run(
         id,
         memoryId,
         input.projectId,
         input.purpose,
         input.agentId,
-        input.agentSnapshot ? stringifyJson(input.agentSnapshot) : null,
+        input.agentSnapshot ? stringifyJson(serializeAgentSnapshot(input.agentSnapshot)) : null,
         stringifyJson(input.mcpIds),
         stringifyJson(input.mcpSnapshots),
-        timestamp,
+        timestamp, timestamp,
       );
     return this.get(id)!;
   },
@@ -89,10 +93,9 @@ export const sessionRepository = {
     const current = this.get(id);
     if (!current) return null;
     database
-      .prepare(
-        `UPDATE sessions SET state = ?, native_ref_json = ?, native_metadata_json = ?,
-          last_activity_at = ?, ended_at = ? WHERE id = ?`,
-      )
+      .prepare(hasSessionStatusColumn?`UPDATE sessions SET state = ?, native_ref_json = ?, native_metadata_json = ?, status = ?,
+          last_activity_at = ?, ended_at = ? WHERE id = ?`:`UPDATE sessions SET state = ?, native_ref_json = ?, native_metadata_json = ?,
+          last_activity_at = ?, ended_at = ? WHERE id = ?`)
       .run(
         patch.state ?? current.state,
         patch.nativeRef === undefined
@@ -103,6 +106,7 @@ export const sessionRepository = {
             ? stringifyJson(patch.nativeRef)
             : null,
         stringifyJson(patch.nativeMetadata ?? current.nativeMetadata),
+        ...(hasSessionStatusColumn?[patch.endedAt===undefined?current.status:patch.endedAt?'closed':'open']:[]),
         now(),
         patch.endedAt === undefined ? current.endedAt : patch.endedAt,
         id,

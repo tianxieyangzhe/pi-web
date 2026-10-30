@@ -1,28 +1,35 @@
-# 05｜需求文档
+# 05｜需求：模型与 API 的完成条件
 
-> 状态：**单项目 SessionMemory 目标设计，核心实现已接入，需求验收状态以验证记录为准。** 本版依据既有产品讨论重建，并于 2026-09-30 细化 SessionMemory 辅助工作线。跨项目会话、跨项目编排器、旧执行记录 和 跨项目任务 的新模型留待下一阶段设计；现有代码中的跨项目实现不能反向决定本版 SessionMemory 的含义。
+本文决定做什么、不做什么，以及何时算完成。每项需求使用稳定 ID，并只按两个要点验收：模型事实是否正确，API 是否按契约读写模型并使用规定的 Pi 能力。
+
+页面只验证它是否忠实显示 API 结果。需求不复制 `02` 的字段或 `03` 的完整流程，只引用它们。没有需求 ID 和验收条件的行为不得实现。
+
+测试通过只证明本文件已记录的条件，不替代其他四份文档。默认只运行受影响的函数级或 API 测试。
+
+## 当前规则
 
 ## 1. 产品定义
-
-
-
 ~~~text
-Project → Session ↔ SessionMemory → 当前上下文 / 历史待处理草稿
-                     ↑
+Bot：长期协调 Agent、Project 范围和并发上限
+ └─ 协调会话：独立协调 Pi
+     ├─ 原始输入：用户提示词只保存一次
+     ├─ 项目调用：调用 ID、实际发送内容、状态、transcript 边界
+     └─ 项目 Session：同一协调会话和项目只复用一个，并拥有独有 SessionMemory
+协调依据：绑定 Agent.md 的职责边界 + 项目调用返回的 assistant 原文
+左侧入口：Bot → 协调会话；Project → 独立项目 Session
 ~~~
 
+核心工作是按项目职责选择 Agent、复用同一项目 Session，并通过项目调用取得证据。不能为每次调用无条件创建 Session，也不能把一次项目失败写成协调会话失败。字段见 `02`“协调会话”，流程见 `03`“协调会话 API”，页面见 `04`“Bot 总对话与多 Session 协作页面”。
 
 ## 2. 当前范围
-
-- 本轮只定义单项目 SessionMemory。跨项目会话将来决定改造现有表或新增表，本版不规定其持久关系、路由和页面验收。
+- 本轮新增 Bot 协作设计：Bot 有固定工作目录，包含多个独立总对话；项目会话通过固定父归属关联总对话并由 Bot 调度，Pi 仍为唯一 Runtime。左侧分别按 Bot 和 Project 分类展示入口；独立项目会话保留。字段以 `02`、流程以 `03`、页面以 `04` 为准。
 - SessionMemory 相关持久数据只使用 `session_memories` 一张表；`sessions` 是已有独立实体表。不存在 `旧项目关联表`、`旧内容表`、旧条目、旧提案 或其他 SessionMemory 关联表作为本版目标结构。
 - SessionMemory 模板的 `projectId` 为空；SessionMemory 的 `projectId` 必填。模板复制后成为独立SessionMemory，不能直接绑定 Session 执行。
 - 每个项目 Session 必须绑定一个SessionMemory；同一SessionMemory 只绑定一个 Session，二者 Project 必须一致。
-- 工具、扩展、Agent、MCP、Skill 后续作为独立基础对象设计。资源记录可为空项目模板，实际运行使用复制到该 Project 的独立实例；SessionMemory 不保存这些对象的 ID、配置或快照。
+- Agent 就是角色，定义以版本化 Markdown 为准且没有 owner。Bot 配置显式建立运行关系，见 `02`“Agent Markdown 与 Bot 绑定”。项目 Agent.md 只提供功能、职责和边界；实际权限由用户选择与应用支持决定。其他资源另行设计，SessionMemory 不保存资源配置。
 - SessionMemory 内容存数据库。Pi transcript、Runtime 句柄、模型上下文和工具执行记录不复制到 SessionMemory。
 
 ## 3. SessionMemory 需求
-
 | ID | 状态 | 需求 | 验收条件 |
 | --- | --- | --- | --- |
 | SMEM-001 | 待实现 | 项目 Session 与 SessionMemory 一对一 | 创建 Session 与SessionMemory 在同一事务完成；Session.sessionMemoryId 必填且唯一；数据库和应用均拒绝跨 Project、模板 SessionMemory 或重复绑定 |
@@ -36,46 +43,91 @@ Project → Session ↔ SessionMemory → 当前上下文 / 历史待处理草�
 | SMEM-005 | 待实现 | LLM 直接更新 | 自动和手动总结通过校验后直接写当前记忆和游标；无需确认，过期结果不得覆盖人工修改 |
 | UI-016 | 待实现 | 总结状态 | 顶部提供立即总结，完成后刷新当前记忆，无草稿审核区域 |
 | UI-017 | 待实现 | 模板初始化入口 | 创建时选择模板并预览，复制后只初始化新会话指导线展示 |
-| SEC-003 | 待实现 | 主线隔离 | 主请求只使用 Pi 原生上下文与用户消息；记忆不改变提示词、工具或压缩，历史记录不重写 |
+| SEC-003 | 待实现 | 主线隔离 | 主请求使用 Pi 原生上下文、固定应用指导、绑定角色及显式输入；记忆不改变提示词、工具或压缩，历史记录不重写 |
 
 | SMEM-004 | 待实现 | 每次回答实时同步 | 每次完整公开回答后立即用 LLM 增量更新，取消五次周期与 30 秒冷却；单记忆至多一个任务，追加回答继续处理，失败或空结果不推进游标 |
 | SMEM-010 | 待实现 | 手动总结 | 立即总结共用自动总结流程，结果直接更新记忆；无新来源时反馈，不调用 LLM |
 
 ## 4. 项目资源与 Session
-
 | ID | 状态 | 需求 | 验收条件 |
 | --- | --- | --- | --- |
-| RES-001 | 待实现 | 资源归属项目或模板 | 每条实际运行资源只归属一个 Project，项目为空的记录明确作为模板；不存在跨 Project 共用运行实例 |
-| RES-002 | 待实现 | 模板复制后独立调试 | Agent、MCP 等资源模板复制产生新 ID；凭据、项目路径和调试结果须在目标 Project 单独配置或测试 |
-| RES-003 | 待设计 | 资源基础模型独立 | 工具、扩展、Agent、MCP、Skill 的详细字段及生命周期另行设计，不借 SessionMemory JSON 实现 |
-| PSES-001 | 待实现 | 项目 Session 独立执行 | Session 固定绑定一个 Project 和 SessionMemory；项目消息直接进入 Pi Session；不创建 旧执行记录/跨项目任务，不调用跨项目 跨项目编排器 或 跨项目汇总器 |
-| PSES-002 | 现有实现待复验 | Pi 原生 transcript 与活动 | 恢复当前活动分支的用户/assistant 文本、真实轮次和工具活动；公开高层摘要可展示，原始 thinking 不下发 |
+| RES-001 | Agent 目标已修订；资源边界持续约束 | 资源明确归属 | Project是执行边界；Agent 独立无 owner，由 Bot/Session显式关系和版本引用使用，参考项目不自动授权；其他资源复制为项目实例后使用 |
+| RES-002 | Agent 旧复制规则被替代 | 模板和角色版本 | Agent 保持独立版本定义、显式采用；其他项目模板复制独立实例后使用，能力不覆盖固定模型或凭据 |
+| RES-003 | 待设计 | 资源基础模型独立 | Agent 按 `02`“Agent Markdown 与 Bot 绑定”，其他资源另行设计，不借 SessionMemory JSON 实现 |
+| PSES-001 | 修复已接入，用户库触发器已迁移；真实模型待验证 | 项目 Session 独立执行 | Session 固定绑定 Project 和 SessionMemory；项目 Agent 可选且不决定项目读写工具。无角色、历史角色或停用角色可发送；项目文件操作受项目路径保护和用户意图约束。空角色可在目标库创建，旧库不自动迁移。项目消息直接进入 Pi，停止覆盖排队、启动和运行，项目调用 `unknown` 保持待核对。 |
+| PSES-006 | 代码已接入；真实模型和浏览器待验证 | 会话参考文件 | 输入框提供独立的本地上传和文件参考两个入口；参考通过目录浏览选择，不输入路径。项目会话限所属项目；协调会话可选 Bot 自身工作目录和绑定的活动项目，即使目录与项目重叠也可用于本轮显式参考；材料可多选和移除，已选项位于紧邻的两个入口下方，且不与输入框边线重叠；发送后消息下方不标注文件。本次选中的材料仅供该次用户输入发起的运行使用，不随下一次输入自动进入模型请求，不建立持续授权。接受前失败保留输入和选择。 |
+| UI-040 | 待验证 | 项目会话等待反馈 | 发起项目消息后，在运行且尚未出现本轮首个可见文字或工具活动时显示“正在思考”及转圈；出现可见内容、结束或失败后不再显示。该提示仅表示等待响应，不表示实际模型 thinking，不进入 transcript。 |
+| PSES-005 | 待验证 | 项目消息延迟诊断 | 服务端按一次发送记录阶段耗时，区分 Pi 句柄复用/创建/恢复、prompt、首个 assistant 流事件、首段可见文本、首个工具活动和完成或失败；另以流 turnId 关联服务端首段文字入队及完成事件、浏览器收到对应事件的时间，区分传输与生成延迟。各端耗时各自基于单调时钟，跨端时钟可能不同；不记录消息、思考、工具参数/结果、文件路径或密钥，不影响流和执行结果。 |
+| PSES-002 | 待按 entry 时间顺序复验 | Pi 原生 transcript | 恢复当前活动分支的用户消息、assistant 文本和独立工具调用 entry，保持 transcript 时间顺序；工具调用不嵌入 assistant 消息；不恢复执行过程、模型轮次或思考摘要，原始 thinking 不下发 |
 | PSES-004 | 待实现 | 用户手动原生上下文压缩 | 创建和恢复 Pi Session 都关闭自动压缩，仅用户页面点击调用原生压缩；溢出不自动压缩重试，压缩不计回答、不改变记忆同步游标，历史继续可恢复 |
 
-## 5. 页面需求
+PSES-006 已选文件位置调整验证：`tests/message-references-composer.test.cjs` 覆盖两个入口下方的已选列表、选择与移除，7 项通过；未进行真实浏览器验收。
 
+PSES-006 本轮参考范围修正验证：`tests/message-reference-scope.test.cjs` 验证上下文与压缩过滤、Pi 内联扩展加载；`tests/pi-reference-integration.test.cjs` 使用内存 Pi Session 和假模型流验证本轮、下一轮及恢复后请求；`tests/transcript-projection.test.cjs` 验证不投影文件标注；`tests/message-references-composer.test.cjs` 验证输入区间距规则；`tests/message-upload-api.test.cjs`、`tests/bot-reference-files-api.test.cjs` 验证消息旧服务门禁；`tests/message-references.test.cjs` 验证参考范围与内容。上述定向测试、`tests/project-message-stream-acceptance.test.cjs` 与类型检查通过。`tests/coordinator-conversation-api.test.cjs` 因测试配置的临时数据库路径与当前固定路径约束冲突，初始化前失败；未改用用户数据库。真实浏览器及模型未验收；未操作运行服务或用户数据库。
+
+PSES-006 已选文件与消息标注验证：`tests/message-references-composer.test.cjs`、`tests/prompt-input-submit.test.cjs` 覆盖入口布局规则、选择与草稿；`tests/message-references.test.cjs`、`tests/transcript-projection.test.cjs` 覆盖安全文件名、Pi 内存历史关联和失败边界；`tests/message-upload-api.test.cjs`、`tests/bot-reference-files-api.test.cjs` 覆盖接受和旧服务保护，定向测试及类型检查通过。未进行真实浏览器或模型验收，未操作服务或用户数据库；旧关联消息没有文件名时不补写。
+
+PSES-006 Bot 工作目录来源验证：`tests/message-references.test.cjs` 覆盖会话归属、混合快照、工作目录重叠和敏感路径；`tests/bot-reference-files-api.test.cjs` 覆盖目录路由和缓存保护；`tests/message-references-composer.test.cjs` 覆盖默认来源和文件选择；`tests/bot-project-boundary.test.cjs` 覆盖普通浏览边界。23 项通过，类型检查通过；未验收真实浏览器或模型，未操作服务或用户数据库。
+
+PSES-006 双入口验证：`tests/message-references.test.cjs` 覆盖混合限额、项目归属和项目文件安全读取；`tests/message-references-composer.test.cjs` 覆盖上传、目录浏览和失败保留；`tests/message-upload-api.test.cjs`、`tests/bot-reference-files-api.test.cjs`、`tests/project-message-stream-acceptance.test.cjs`、`tests/prompt-input-submit.test.cjs`、`tests/bot-project-boundary.test.cjs` 覆盖消息接口、缓存保护、草稿和目录边界，共 26 项通过，类型检查通过。真实浏览器及模型未验证，未操作服务或数据库。
+
+PSES-006 本地上传验证：`tests/message-references.test.cjs` 覆盖内容校验与 Pi 发送，`tests/message-upload-api.test.cjs`、`tests/bot-reference-files-api.test.cjs` 覆盖消息 API 限额和旧服务保护，`tests/message-references-composer.test.cjs`、`tests/prompt-input-submit.test.cjs` 覆盖上传、移除和失败保留，`tests/project-message-stream-acceptance.test.cjs`、`tests/bot-project-boundary.test.cjs` 覆盖接受语义和普通浏览边界，共 20 项通过，类型检查通过。未调用真实模型或浏览器、未操作服务或数据库；Pi 不可见原生历史保留上传快照。
+
+PSES-006 工作目录重叠修复验证：`tests/message-references.test.cjs` 覆盖工作目录及嵌套目录参考快照和路径保护；`tests/bot-reference-files-api.test.cjs` 覆盖旧消息服务保护；`tests/bot-project-boundary.test.cjs`、`tests/message-references-composer.test.cjs` 覆盖普通预览边界与选择入口，共 19 项通过，类型检查通过。未操作运行服务或数据库，现场待用户验证。
+
+PSES-006 目录不可用修复验证：`tests/bot-reference-files-api.test.cjs` 覆盖缓存旧服务下的列表调用和含参考消息拒绝；`tests/message-references.test.cjs` 覆盖目录错误和参考范围；`tests/bot-project-boundary.test.cjs`、`tests/message-references-composer.test.cjs` 覆盖预览边界和选择入口，18 项通过，类型检查通过。现场错误原因未经服务日志确认。
+
+PSES-006 重叠目录调整验证：`tests/bot-reference-files-api.test.cjs` 覆盖参考列表路由；`tests/message-references.test.cjs` 覆盖会话归属、绑定重叠、未绑定拒绝和消息读取；`tests/bot-project-boundary.test.cjs` 覆盖常规预览边界；`tests/message-references-composer.test.cjs` 覆盖选择入口，共 17 项通过，类型检查通过。居中样式尚未真实浏览器验收。
+
+PSES-006 手动路径调整验证：`tests/message-references-composer.test.cjs` 覆盖弹窗、默认目录、手动跳转及越界拒绝；`tests/message-references.test.cjs` 覆盖服务端目录边界和文件范围，12 项通过；类型检查通过。未进行真实浏览器验收。
+
+PSES-006 工作目录与对话框调整验证：`tests/message-references.test.cjs` 覆盖 Bot 工作目录及绑定项目范围、文件快照与重叠保护；`tests/message-references-composer.test.cjs` 覆盖模态入口、默认来源和请求参数；`tests/prompt-input-submit.test.cjs` 覆盖草稿保护。13 项通过，类型检查通过；未进行真实浏览器或模型验收。
+
+PSES-006 此前代码验证：`tests/message-references.test.cjs` 覆盖选择范围、项目和 Bot 消息、Pi 关联材料及文件安全；`tests/message-references-composer.test.cjs` 覆盖选择保留与 API 参数；`tests/project-message-stream-acceptance.test.cjs`、`tests/prompt-input-submit.test.cjs`、`tests/prompt-input-ime.test.cjs` 覆盖流接受、草稿与输入法。共 15 项通过，类型检查通过；未调用真实模型、服务或用户数据库，真实浏览器和图片模型能力待验证。
+
+UI-040 代码验证：`tests/project-session-waiting.test.cjs` 覆盖等待时的状态文字和转圈，以及首段文字、工具活动或结束后隐藏；2 项测试和类型检查通过，真实浏览器待验证。
+
+PSES-005 代码验证：`tests/project-message-timing.test.cjs` 覆盖阶段顺序、去重、失败和日志内容边界；`tests/session-execution-cancel.test.cjs` 覆盖停止链路。5 项测试与类型检查通过。流诊断追加验证：`tests/project-message-stream-timing.test.cjs` 覆盖首段与完成事件的入队、解析、关联及日志隐私；`tests/project-message-stream-acceptance.test.cjs` 覆盖流接收语义，4 项测试通过；真实服务及模型耗时待复验。
+
+此前无角色只读限制已被用户要求撤销；此前测试只证明当时行为，不证明当前验收条件。`tests/project-session-optional-role.test.cjs` 验证目标空库无角色创建、非法绑定拒绝、工具及路径边界；`tests/session-execution-optional-role.test.cjs` 验证无角色、历史及停用角色发送；`tests/session-execution-cancel.test.cjs` 验证停止链路。针对性测试及类型检查通过；未做真实模型验证。用户授权后，`tests/optional-role-migration.test.cjs` 在临时库验证迁移，原库离线替换角色必填触发器并备份；完整性和外键检查通过，4 条 Session 和 4 条 SessionMemory 保留。
+
+## 5. 页面需求
 | ID | 状态 | 需求 | 验收条件 |
 | --- | --- | --- | --- |
-| UI-001 | 现有实现待复验 | 项目导航与历史会话 | Project 是顶层入口；项目下的 Session 记录独立展开，以当前生效记忆摘要命名，摘要为空显示“新会话”，保存/确认后更新；点击项目进入会话或点击会话记录均收起右侧面板、文件预览及所有浮窗，不自动切成检查，项目行可进入最近工作线并创建新会话 |
-| UI-007 | 现有实现待复验 | Session 对话和活动 | 按用户消息、Pi 真实模型轮次、最终输出排列；请求执行总览及轮次均默认收起，长列表内部滚动且全部详情可展开，展示模型公开摘要与真实工具调用；回答安全渲染 Markdown，发送与流式更新后滚动到最新内容 |
+| UI-001 | Project 新建入口与直接打开已浏览器验收；仅适用于独立 Project Session | 项目导航与历史会话 | Project 是独立项目入口；“新建项目”按钮与 Bot 新建按钮并列在 Project 分区标题行，不放在顶部快捷操作；独立 Session 记录按当前记忆摘要命名、空会话显示“新会话”；Bot 管理的项目 Session 归属与导航以 UI-036 为准。点击独立项目会话收起右侧面板、文件预览及所有浮窗，不自动切成检查。 |
+| UI-007 | 待按 entry 时间顺序复验 | Session 对话 | 项目会话和协调会话只按所属 Pi transcript 当前分支的时间顺序显示用户消息、assistant 文本和独立工具调用 entry。工具调用不挂在 assistant 下方，不使用自定义数据格式。不显示执行过程、模型轮次或第几轮。工具调用默认收起并可展开；回答安全渲染 Markdown，发送与流式更新后滚动到最新内容 |
 | UI-011 | 现有实现待复验 | 项目优先布局与文件 | 侧栏浅灰蓝、文字中性、选中浅绿；导航可收缩；文件树非 Git 也可用，文件预览插入主画布和文件/检查共用列之间，路径显示项目绝对根目录，代码预览不用深色背景 |
 | UI-013 | 现有实现待复验 | Next 单应用分层 | 页面、Feature、Hook、API Client、领域协议与服务端分层；页面不承载事件解析或业务编排 |
 | UI-018 | 待设计 | 项目资源页面 | 项目实例在所属 Project 下管理和调试；项目为空的模板在模板库展示；详细交互随资源基础模型确定 |
 | UI-019 | 待实现 | 原生上下文检查与压缩入口 | 检查显示已用/容量/剩余 Token、占比、测量口径与时间、自动压缩关闭状态、最近压缩时间和手动按钮；未知指标不伪造，繁忙禁用，完成刷新，失败可手动重试 |
+| UI-025 | 历史导航基线，由 UI-036 替代其 Bot Session 所在层级 | Bot/项目共享选择 | 保留单一 WorkspaceSelection、互斥 active、展开不抢选中、刷新不抢选中、创建后进入对应资源；Bot 项目 Session 的父级与唯一导航入口按 UI-036。 |
+| UI-036 | 代码已接入；Session transcript 标签按 UI-037 验收；协调会话直接删除待验收 | Bot→协调会话→项目 Session 三层导航 | Bot 项目 Session 作为唯一子项出现在所属协调会话下，不在 Project 树重复；独立 Project Session 继续出现在 Project 树。单击协调会话后通过 UI-037 标签切换到真实项目 Session transcript，第三层导航进入同一 Session 的完整画布；不维护存根输出副本。选择状态全局唯一，展开不抢选中，切换关闭右侧面板/预览/浮窗但不中止后台工作。每条开放协调会话有危险样式删除按钮；确认后直接删除该总对话及其关联项目 Session，不归档。会话尚未结束时强制删除，不等待结束；失败时保留原页。 |
+| UI-037 | 待按 entry 时间顺序复验 | 协调会话与项目会话同结构展示 | 协调画布与项目会话画布只按 Pi entry 时间顺序显示用户输入、assistant 文本和默认收起的独立工具调用，不把工具调用挂在 assistant 下方，不使用自定义数据格式，不显示执行过程或第几轮。每次已发起的项目调用额外有一张默认收起的项目输出卡片。`completed` 显示该次 assistant 原文；无原文或读取失败显示错误。其他状态显示状态错误，不伪装成有效输出。没有项目调用时不显示空卡片。Composer 只进入协调会话。提交后立即显示输入和等待响应；202 后保持处理中。发送失败保留草稿并只在 Composer 显示，不产生未处理异常。同一协调会话复用 Pi 句柄，不在每次输入结束后重建。 |
+| UI-039 | 代码已接入；针对性测试及类型检查通过，真实浏览器待验证 | 提交后的输入框 | 项目及协调会话提交时立即清空输入框并在对话中回显，不等待长流结束；发送失败仅在原会话草稿未修改时恢复，不能覆盖其他会话或新输入，也不自动重发。 |
+| UI-038 | 代码已接入；键盘回归与 TypeScript 检查通过，真实浏览器输入法验收待做 | 输入法安全的对话发送快捷键 | Project 与 Bot 共用 Composer；Enter 发送、Shift+Enter 换行，点击发送按钮行为不变。IME 候选组合期间 Enter 只确认候选且不调用发送，需兼容 composition 状态、`isComposing` 和旧浏览器 `keyCode=229`。 |
+| UI-026 | 修订中 | 对话无额外读写勾选 | 项目及协调会话 Composer 不显示读写模式。独立项目工具权限由项目执行策略确定而非角色，实际操作遵循用户请求；协调会话自身与项目调用边界保持独立。 |
+
+UI-025 代码验证（2026-10-09，历史导航模型）：两侧导航统一读取 WorkspaceSelection，资源加载 Hook 不再存另一份项目选中 ID；Bot 首页/总对话/参与会话与项目/项目会话互斥高亮，父项只展开。该历史实现验证中的 Bot 项目 Session 所在层级现由 UI-036 替代。
+
+UI-026 代码验证（2026-10-09）：项目与 Bot 输入区已移除额外读写勾选，浏览器发送消息不再携带 operation；服务端共用绑定角色能力投影，协调者自身写入与派发修改能力分别限制对应工具。固定运行指导要求实际操作遵循用户请求，讨论、读取与问答不擅自修改；只读角色及既有执行范围保持，steer 默认沿用正在执行的范围。新增两输入区静态渲染和角色能力投影回归，70 项测试、类型检查及独立目录生产构建通过。页面视觉和真实模型操作仍待复验；本轮不改数据库或服务进程。
+
+UI-039 验证：`tests/prompt-input-submit.test.cjs` 覆盖流进行时清空与失败草稿保护，`tests/project-message-stream-acceptance.test.cjs` 覆盖流接受和拒绝边界，`tests/prompt-input-ime.test.cjs` 覆盖输入法回归；8 项通过，类型检查通过。未进行真实浏览器或模型验收。
+
+UI-038 实现验收（2026-10-20）：用户反馈普通 Enter 换行的调整不符合页面交互习惯，恢复 Enter 发送、Shift+Enter 换行；保留 composition 状态、`nativeEvent.isComposing` 与旧浏览器 `keyCode=229` 候选保护。项目与 Bot Composer 共用该实现。键盘逻辑回归 2 项、`npm run typecheck` 与 `git diff --check` 通过；真实浏览器输入法端到端验收待做。
 
 ## 6. 安全与非功能需求
-
 | ID | 状态 | 需求 | 验收条件 |
 | --- | --- | --- | --- |
 | SEC-001 | 待实现 | 项目隔离 | Session、SessionMemory 和执行资源的 projectId 一致；跨项目资源 ID 或模板不能作为运行实例注入 |
 | SEC-002 | 待实现 | SessionMemory 输入安全 | 模型上下文不含原始 thinking、未脱敏工具结果、secret、nativeRef 或项目外路径；固定 JSON 与 Markdown 渲染均有长度预算 |
 | NFR-001 | 现有实现待复验 | 类型检查与构建 | TypeScript strict 和单应用生产构建通过，服务端依赖不进入客户端 |
-| NFR-003 | 待实现 | Token 与生成预算 | 单次总结输入、输出、时间受限；每次完整回答增量同步，单记忆任务互斥；相同候选可按无变化处理；记录可获得的 Token 用量；默认值以 `03` 第 5.3 节为准，超时/超长均有可见反馈 |
-| NFR-011 | 待实现 | 历史数据和迁移受控 | 结构变更由实现修改表定义及约束；先说明旧数据影响，由用户决定是否迁移；确认后交付独立脚本，未批准不运行、不清库 |
+| NFR-003 | 待实现 | Token 与生成预算 | 单次总结输入、输出、时间受限；每次完整回答增量同步，单记忆任务互斥；相同候选可按无变化处理；记录可获得的 Token 用量；默认值以 `03`“默认预算”为准，超时/超长均有可见反馈 |
+| NFR-011 | 当前决定 | 固定数据库文件 | 数据库固定为 `.data/ai-workspace-v5.sqlite`。保留项目、Agent、Session 和 SessionMemory。已授权删除 `legacy_v5_*` 与旧 Work、Task、Execution、Message 表，并新建 `project_calls`。不得重建数据库文件，也不得把旧调度记录转换成项目调用。 |
 
 ## 7. 本轮不做
-
-- 跨项目会话、跨项目关联 scope、旧执行记录、跨项目任务、跨项目编排器 和 跨项目汇总器 的新设计或实现；
+- 恢复独立于 Bot 的旧跨项目实体、旧路由、旧执行记录或旧编排实现；
+- 迁移、读取、备份、改写、清空或重建旧库；
+- Bot 记忆、跨 Bot 自动协作、共享依赖目录授权模型、自动发布及真实设备下发入口；这些能力待后续单独定义，不能借当前 Bot 模型隐式实现；
 - SessionMemory 子记录表、关系表、独立内容版本系统；
 - SessionMemory 内保存或启用工具、扩展、Agent、MCP、Skill；
 - 将完整 Pi transcript、原始 thinking 或工具结果写入 SessionMemory；
@@ -84,11 +136,9 @@ Project → Session ↔ SessionMemory → 当前上下文 / 历史待处理草�
 
 ## 8. 实现顺序与完成定义
 
-
-新需求只有在代码实现、风险相称的测试和本表验收条件全部通过后才能标为已验证。当前文档更新不代表 Schema 或运行时已经完成。历史项目 Session 的空 sessionMemoryId、旧跨项目会话/旧内容记录 和项目为空的旧资源都需要影响评估；数据迁移是否执行由用户决定。
+新需求只有在代码实现、与风险相称的函数级或 API 测试，以及本表验收条件全部通过后才能标为已验证。默认不运行全量测试、生产构建或真实模型验收；只有用户明确要求，或目标行为无法用函数级和 API 测试证明时才扩大范围。当前文档更新不代表 Schema 或运行时已经完成。旧库不迁移；新库只从空库初始化。
 
 ## 9. SessionMemory 实现阶段与验证矩阵
-
 以下是现有需求的实施细化，状态仍为待实现，不表示本次文档已完成代码验收。
 
 | 阶段 | 对应需求 | 实施产物与退出条件 |
@@ -108,28 +158,7 @@ Project → Session ↔ SessionMemory → 当前上下文 / 历史待处理草�
 验证分为领域/Repository 的针对性测试、使用受控无工具总结器的应用流程测试和真实页面的端到端验收；真实模型调用另做小规模联调，不能用不稳定模型输出取代事务及冲突测试。部署需满足 `01` 的单个长驻服务进程边界。
 
 
-## 10. 历史验证记录（2026-09-30，仅记录当时行为）
-
-已接入单项目 SessionMemory Schema/Repository、Session 同事务绑定、确认上下文的每请求系统注入、固定回答触发点、无工具总结、草稿编辑/确认/拒绝/基线冲突、模板 API 与创建选择、原生检查和手动压缩入口。旧库只读保护已实现，迁移脚本独立交付且默认预览；仅在临时副本执行验证。
-
-验证：`npm test` 当前覆盖 9 项针对性测试，包括迁移历史保留、1/5/10 固定触发、主动总结不重置、生成期间人工写入冲突、模板副本独立和手动压缩互斥。类型检查与生产构建通过。真实固定模型联调已观察到主回答、首次自动草稿、确认后下一条请求读取仅存 SessionMemory 的事实；人工编辑页面保存通过，检查显示原生 Token 与已知模型容量。来源范围重审、安全产出预览及独立 SessionMemory 模板库入口已接入。原生短会话无法压缩时返回明确原因；合成长会话的原生手动压缩成功，压缩后没有新响应时用量正确标为未知。
-
-尚不将整项需求标为已验证：完整恢复、分支范围交互与窄屏端到端矩阵仍需复验。当前实时用量采用原生最近可信响应采样，标为 last_known；容量无法可靠识别时为 null，不使用 Runtime 的默认窗口数字冒充真实容量。
-
-SessionMemory 命名重构验证包括 sessionMemoryId 映射、重复绑定拒绝与不一致旧别名拒绝；迁移测试使用迁移前备份作为只读源，不将已迁移的当前数据库当成旧 Schema。
-
-本次统一清理：业务模型、API 和目标数据库只使用 SessionMemory/sessionMemory/session_memory_id/session_memories 命名，删除旧跨项目执行代码与协议；跨项目会话只保留无提交能力的页面入口，后续流程等待用户定义。已有数据库须离线按独立改名脚本迁移，保持 ID、JSON、原生会话引用和历史归档完整；应用启动不自动改写。
-
-清理验收：目标代码/接口/类型/样式中没有旧实体名称及旧跨项目运行模块；跨项目页面不提供提交操作；SessionMemory 和原生手动压缩测试通过，改名脚本仅在临时库运行。旧库在用户执行离线改名前不可写。
-
-## 总结直接生效（2026-09-30）
-
-
-历史 draftJson 仅保留旧数据，不再作为待办、不阻塞总结、不自动采用、不删除。新总结不创建 draftJson，模板复制直接初始化 contextJson。移除草稿编辑、确认、拒绝入口；手动总结使用 POST memory/summarize。页面只展示当前记忆、生成状态及局部修改，保存和自动更新后同步侧栏摘要。
-
-
-## 11. Pi 上下文管理验收（2026-10-08）
-
+## 10. Pi 上下文管理验收（2026-10-08）
 | ID | 状态 | 需求 | 验收条件 |
 | --- | --- | --- | --- |
 | PCTX-001 | 待实现 | Pi 原生上下文为主 | 原生窗口用量读取 Pi getContextUsage；压缩和取消调用 compact/abortCompaction，SessionMemory 与原生控制端口分离，无第二份 transcript 或数据库窗口 |
@@ -140,8 +169,7 @@ SessionMemory 命名重构验证包括 sessionMemoryId 映射、重复绑定拒�
 2026-10-08 实现验证：已读取 Pi SDK 原生上下文/取消能力声明，完成上下文端口拆分、原生 getContextUsage 估算读取、取消压缩及优先检查 UI。18 项针对性测试和类型检查通过；包括取消保持锁、只读限制与完成/取消竞态。新功能未修改数据库或原生历史；生产构建通过；当前 3000 仍返回旧版 DTO，实际页面联调待用户重新启动加载新代码后复验。
 
 
-## 12. 记忆纠错线验收（2026-10-08）
-
+## 11. 记忆纠错线验收（2026-10-08）
 | ID | 状态 | 需求 | 验收条件 |
 | --- | --- | --- | --- |
 | SMEM-011 | 待实现 | 指导线校正 | 人工校正只作用于当前展示及后续独立总结；旧输出因基线改变失效，不影响正在运行或后续主 Pi 请求 |
@@ -152,8 +180,7 @@ SessionMemory 命名重构验证包括 sessionMemoryId 映射、重复绑定拒�
 历史验证（本次展示阶段调整前）：2026-10-08 记忆纠错线实现验证：23 项测试与类型检查通过，生产构建通过；覆盖每回答同步、多入口互斥、追加回答追赶、下一请求读取人工纠正、旧候选不覆盖修正、历史草稿保留、与主回答并行及失败后不无限重试。未修改数据库或服务进程；当前真实模型输出与页面视觉表现仍需运行服务联调，测试通过不宣称 LLM 一定不会误判事实。
 
 
-## 13. 固定指导模式与展示阶段（2026-10-08）
-
+## 12. 固定指导模式与展示阶段（2026-10-08）
 | ID | 状态 | 需求 | 验收条件 |
 | --- | --- | --- | --- |
 | SMEM-012 | 待实现 | 固定指导模式 | 七个字段问题与提炼边界以 02 为准；总结仅使用固定模式，不造新任务、未表达目标或未采纳决策；事实冲突明确区分 |
@@ -164,6 +191,44 @@ SessionMemory 命名重构验证包括 sessionMemoryId 映射、重复绑定拒�
 
 固定总结模式代码验收补充：输入预算包含模式指令和数据正文，超限在创建临时 Pi 总结 Session 前拒绝；验证返回固定七个字段的模式约束与主线无注入。采用保守字节上界，宁可明确预算超限也不静默截断来源。
 
-2026-10-08 优化验收：同步中记忆最多一条共享 2 秒读取链；已同步关闭面板后停止，打开空闲面板 30 秒重查；重复读取并发合并、隐藏暂停、用户操作立即刷新。检查空闲不刷新 Session 列表。每请求只显示一行执行总览，展开后全部轮次与工具可查看，错误状态不被完成摘要掩盖。
+2026-10-08 优化验收：同步中记忆最多一条共享 2 秒读取链；已同步关闭面板后停止，打开空闲面板 30 秒重查；重复读取并发合并、隐藏暂停、用户操作立即刷新。检查空闲不刷新 Session 列表。该日期记录的执行总览和轮次展示已不再是当前验收条件。
 
 2026-10-08 优化代码验证：32 项测试与类型检查通过，新增自适应轮询停止条件、并发读取合并、卸载忽略迟到结果与活动总览计数/失败展示测试。旧轮询行为的历史验证不作为当前界面频率要求；真实请求频率与视觉仍待当前服务加载新代码后复验。
+
+## 13. 数据模型可读性约束
+| ID | 状态 | 需求 | 验收条件 |
+| --- | --- | --- | --- |
+| NFR-012 | 持续约束 | 控制表数量与模型理解成本 | 每次新增、合并、拆分、重命名或退役表先按 `02`“表数量与模型可读性”说明必要性、方案取舍、数量变化、紧凑关系总览与历史映射；仅实现当前已定义需求，不将流程或状态机械拆表，不用任意 JSON 掩盖核心关系；结构调整保留历史并遵守显式迁移决定 |
+
+该约束适用于后续全部持久模型设计。用户最新允许按情况调整现有表，取代此前“不精简、保留七表”的限制；现有七表是实现基线，目标不固定表数。可以评估增表、合并、拆分、重命名或退役，不以减表数为唯一目标；协作事实、历史覆盖和核心约束须保留，迁移执行仍由用户决定。
+
+## 14. 开发服务清单读取稳定性
+| ID | 状态 | 需求 | 验收条件 |
+| --- | --- | --- | --- |
+| NFR-013 | 已验证（当前版本） | 开发编译清单原子替换 | Webpack 开发输出已知 JSON 清单读者不见写入中空内容；文件提交通过同目录临时文件及原子替换；失败保留原清单并返回原错误，普通输出/生产编译保持原行为，不改数据库或 Pi 历史，不吞掉业务解析错误 |
+
+问题证据：用户报告静态路径生成偶发 JSON 空内容错误、随后恢复；只读接口核对返回 200，开发编译时连续采样捕捉到五种清单的同类解析失败。验收需覆盖实际 Webpack 编译与并发读者、失败场景和普通文件输出；真实 Next 开发服务复验在用户重新启动加载配置后进行。
+
+2026-10-08 修复验证：开发 Webpack 增加已知清单原子替换插件，未修改 node_modules、数据库或 Pi 历史。新增四项测试验证写入期间读到完整旧版、rename 失败保留原清单与原错误、普通/输出目录外文件维持直写，以及实际 Webpack 编译产出；全套 45 项测试通过，类型检查和生产构建通过。运行中的 Next 服务加载新配置后，五类清单实际更新，61,495 次采样读取无解析失败；消息、记忆、模板及 Bot API 均返回 200。助手未操作服务启动/停止。此验证针对已捕捉的编译竞态，不作为所有 JSON 或未来 Next 内部变化的保证。
+
+## 15. Agent Markdown 编辑与 Bot 绑定验收（2026-10-12）
+本节取代 Agent owner/template 与 Markdown 确定性导入要求。Agent 内容权威改为版本化 Markdown，DB 仅索引及存关系；上传任意 Markdown 一律 LLM 转换；创建/编辑 UI 为独立对话和只读 Markdown 展示；绑定只在 Bot 配置。
+
+| ID | 状态 | 验收条件 |
+| --- | --- | --- |
+| AGFILE-001 | Agent 列表及编辑工作区的桌面主次按钮经手工浏览器检查；窄屏与键盘焦点待验收 | Agent 列表是居中弹窗；新增在顶部；每行编辑/删除；编辑器不是弹窗，进入后占据主画布与右侧列且保留左侧导航；中间为 Agent 对话、右侧只读 Agent.md；主要、次要、危险按钮外观易区分，Agent 与 Bot 的表单/管理操作均有明确按钮形状；取消回到列表；小屏纵向布局可读 |
+| AGFILE-002 | 代码已接入，待真实模型验收 | 选择 Project/目录、指定文件、上传 Agent Markdown 都通过无工具 LLM 生成/修改；来源内容不被执行，也不授予能力或归属 |
+| AGFILE-003 | 代码已接入，待真实浏览器验收 | 用户用自然语言意见反复修订；右侧展示当前保存版本/草稿；取消返回角色列表并丢弃未保存草稿，保存新增不可变文件版本 |
+| AGFILE-004 | 代码已接入，自动化验证通过 | Markdown frontmatter 输出经严格校验；能力默认关闭且显式授权；DB 快照仅引用 ID/revision/SHA-256，Pi Runtime 读取准确版本文件 |
+| AGFILE-005 | 代码已接入，待真实浏览器验收 | Agent 定义创建时无 Bot/Project owner；新建 Bot 才选择 coordinator、项目集合和每项目的 project Agent；新总对话原子继承绑定快照 |
+| AGFILE-006 | 用户库迁移完成，完整性/外键核验通过 | 新增关系 Schema 有离线迁移预览；历史 JSON/owner 引用和 Pi transcript 保留；旧正文不自动激活。临时数据库迁移测试通过；用户库迁移及备份已于 2026-10-13 核验 |
+
+## 16. 协调会话验收
+
+| ID | 状态 | 需求 | 验收条件 |
+| --- | --- | --- | --- |
+| BOT-043 | 模型与 API 已重写；桥梁插件待接入 | 协调会话通过项目调用观测和传递 | 页面只使用创建、读取、协调历史、协调输入和强制删除。协调输入不带目标项目 Session。桥梁插件只显式加载在协调会话，提供读取 Agent、发起、查询、读取返回、修正和放弃六个工具，并立即返回。相同项目、原始输入和实际发送内容重复发起返回同一调用。每次调用保存调用 ID、项目会话 ID、原始输入、不可变实际发送内容、状态和 transcript 起止条目。同一项目 Session 同时只有一个 `accepted` 或 `working` 调用；不同项目受 Bot 并发上限限制。只有 `completed` 才按调用边界读取 assistant 原文；返回不固定格式。`aborted` 和 `unknown` 不继续传递。重启不能恢复边界时进入 `unknown`，未明确放弃前不释放该项目 Session。修正只对 `working` 调用使用 `steer`；放弃只把 `unknown` 改为 `aborted`。 |
+| BOT-045 | 代码已接入；现场待验证 | 协调会话项目调用诊断 | 服务端记录协调运行与桥梁工具阶段，以及项目调用保存、排队、句柄、prompt、订阅、结束和失败的安全诊断；只含可信身份、固定阶段、受限错误码与耗时，不含消息、工具参数/结果、路径、密钥或异常正文；日志失败不影响原流程。真实现场根因须依据运行日志确认。 |
+| BOT-044 | 当前实现 | 动态项目存在性工具 | 协调会话按当前项目范围动态注册只读存在性工具。描述明确只用于感知项目存在。返回只包含数据库 `projects` 已保存的信息，不读取或写入项目。没有项目 Agent 的项目仍可感知。工具不接受路径、命令或项目操作；项目 Session 不加载该插件层。 |
+
+BOT-045 代码验证：`tests/coordinator-bridge-plugin.test.cjs` 覆盖项目调用启动、排队、失败及诊断隐私，`tests/coordinator-diagnostics.test.cjs` 使用假 Runtime 覆盖协调运行和工具日志隐私；7 项通过，类型检查通过。未重启服务或使用用户数据库，现场原因待日志确认。

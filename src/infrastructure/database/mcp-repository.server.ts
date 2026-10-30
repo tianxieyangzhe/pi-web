@@ -18,6 +18,7 @@ function mapMcp(row: DatabaseRow): Mcp {
 
 export const mcpRepository = {
   list(): Mcp[] {
+    assertSchemaCompatible();
     return (database.prepare("SELECT * FROM mcps ORDER BY status, name, id").all() as DatabaseRow[]).map(
       mapMcp,
     );

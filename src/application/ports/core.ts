@@ -3,7 +3,7 @@ import type {Agent,JsonObject,Mcp,Session} from "@/domain/models";
 export type CreateSessionRecord = Pick<
   Session,
   "projectId" | "purpose" | "agentId" | "agentSnapshot" | "mcpIds" | "mcpSnapshots"
-> & { sessionMemoryId: string };
+> & { sessionMemoryId: string;stableId?:string };
 
 export interface SessionRepositoryPort {
   listForProject(projectId: string): Session[];
@@ -18,6 +18,7 @@ export interface SessionRepositoryPort {
 
 export type SessionCatalogPort = {
   getAgent(id: string): Agent | null;
+  getAgentVersion(id:string,revision:number,sha256:string):Agent|null;
   getMcp(id: string): Mcp | null;
   getProject(id: string): import("@/domain/models").Project | null;
 };

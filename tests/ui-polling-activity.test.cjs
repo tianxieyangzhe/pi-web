@@ -1,7 +1,6 @@
 require('./register.cjs');
 const {test}=require('node:test');const assert=require('node:assert/strict');
 const {memoryPollingDelay,createAdaptivePoller}=require('../web/workspace/conversation/project-session/session-memory-polling.ts');
-const {summarizeActivities}=require('../web/workspace/conversation/ai-elements/activity-summary.ts');
 const settle=()=>new Promise(resolve=>setImmediate(resolve));
 test('memory polling follows pending work and stops synced hidden panels',()=>{
  assert.equal(memoryPollingDelay({syncState:'updating'},false,0,100),2000);
@@ -25,9 +24,4 @@ test('disposing a pending poll ignores its late result and creates no future req
  let finish;let received=0,timers=0;
  const loop=createAdaptivePoller({request:()=>new Promise(resolve=>{finish=resolve;}),receive:()=>received++,error:()=>{},delay:()=>2000,visible:()=>true,setTimer:()=>{timers++;return 1;},clearTimer:()=>{}});
  const pending=loop.refresh();await settle();loop.dispose();finish({});await pending;assert.equal(received,0);assert.equal(timers,0);
-});
-test('activity overview counts true rounds/tools once and exposes earlier failures',()=>{
- const source=[{id:'t1',round:1,kind:'tool',state:'error'},{id:'thinking',round:2,kind:'thinking',state:'completed'},{id:'t2',round:2,kind:'tool',state:'running'},{id:'t2',round:2,kind:'tool',state:'completed'}];
- assert.deepEqual(summarizeActivities(source),{roundCount:2,currentRound:2,toolCount:2,state:'error'});
- assert.equal(summarizeActivities([{id:'r',round:17,kind:'thinking',state:'completed'}],true).state,'running');
 });

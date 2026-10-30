@@ -10,7 +10,7 @@ export async function GET() {
 
 export async function POST(request: Request) {
   return idempotentMutation(request, "agents:create", async () => {
-    try { return dataResponse(services.catalog.createAgent(await jsonBody(request)), { status: 201 }); }
+    try { return dataResponse(services.catalog.createAgent(await jsonBody(request,131072)), { status: 201 }); }
     catch (error) { return errorResponse(error); }
   });
 }

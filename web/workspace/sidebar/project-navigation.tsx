@@ -1,42 +1,42 @@
+import {isSelected,type WorkspaceSelection} from "./workspace-selection";
 import { ChevronDown, ChevronRight, FolderKanban, Plus, Settings2, Sparkles } from "lucide-react";
 import type { Project } from "../../domain/models";
 import { useProjectSessionNavigation } from "./use-project-session-navigation";
 
 type ResourceKind = "agent" | "mcp";
 
-export function ProjectNavigation({ projects, selectedProjectId, activeSessionId, navigation, creatingSessionProjectId, onNewProject, onOpenTemplates, onNewProjectSession, onOpenCrossProject, onCreateSession, onProjectSelect, onSessionSelect, onEditProject, onOpenResource }: {
+export function ProjectNavigation({ projects, selection, navigation, creatingSessionProjectId, onNewProject, onOpenTemplates, onNewProjectSession, botNavigation, onCreateSession, onProjectSelect, onSessionSelect, onEditProject, onOpenResource }: {
   projects: Project[];
-  selectedProjectId: string | null;
-  activeSessionId: string | null;
+  selection:WorkspaceSelection|null;
   navigation: ReturnType<typeof useProjectSessionNavigation>;
   creatingSessionProjectId: string | null;
   onNewProject: () => void;
   onOpenTemplates:()=>void;
   onNewProjectSession: () => void;
-  onOpenCrossProject: () => void;
+  botNavigation: import("react").ReactNode;
   onCreateSession: (projectId: string) => void;
   onProjectSelect: (projectId: string) => void;
   onSessionSelect: (projectId: string, sessionId: string) => void;
   onEditProject: (projectId: string) => void;
   onOpenResource: (kind: ResourceKind) => void;
 }) {
-  const selectedProject = projects.find((project) => project.id === selectedProjectId) ?? null;
   return (
       <aside className="sidebar" id="project-navigation">
         <div className="sidebar__actions">
-          <button onClick={() => onNewProject()}><Plus size={14} />新建项目</button>
           <button onClick={() => onNewProjectSession()}><Plus size={14} />新建项目会话</button>
-          <button onClick={onOpenCrossProject}><Plus size={14}/>跨项目会话</button>
+
           <button onClick={onOpenTemplates}><Sparkles size={14}/>记忆模板库</button>
         </div>
         <nav className="sidebar__nav" aria-label="项目导航">
-          <div className="sidebar__label">项目</div>
+          {botNavigation}
+          <div className="sidebar__label project-navigation__section-heading"><span>项目</span><button className="nav-icon" type="button" aria-label="新建项目" title="新建项目" onClick={onNewProject}><Plus size={14}/></button></div>
           {projects.map((project) => (
             <div className="project-nav-entry" key={project.id}>
               <div className="nav-row">
                 <button
-                  className={`project-link${selectedProjectId === project.id ? " active" : ""}`}
+                  className={`project-link${isSelected(selection,"project",project.id) ? " active" : ""}`}
                   aria-expanded={navigation.expandedProjectIds.has(project.id)}
+                  aria-current={isSelected(selection,"project",project.id)?"page":undefined}
                   onClick={() => {
                     navigation.toggleProject(project.id);
                     onProjectSelect(project.id);
@@ -69,15 +69,16 @@ export function ProjectNavigation({ projects, selectedProjectId, activeSessionId
                 <div className="project-sessions" aria-label={`${project.name}的会话记录`}>
                   {navigation.loadingProjectIds.has(project.id) && <div className="project-sessions__message" role="status">正在加载会话记录…</div>}
                   {navigation.errorsByProject[project.id] && <button className="project-sessions__message project-sessions__message--error" onClick={() => void navigation.loadProjectSessions(project.id, true)}>加载失败，点击重试</button>}
-                  {!navigation.loadingProjectIds.has(project.id) && !navigation.errorsByProject[project.id] && (navigation.sessionsByProject[project.id] ?? []).length === 0 && <div className="project-sessions__message">暂无会话记录</div>}
-                  {[...(navigation.sessionsByProject[project.id] ?? [])].reverse().map((session, index, sessions) => {
-                    const label = session.memorySummary?.trim().replace(/\s+/g, " ") || "新会话";
-                    const active = selectedProject?.id === project.id && activeSessionId === session.id;
+                  {!navigation.loadingProjectIds.has(project.id) && !navigation.errorsByProject[project.id] && (navigation.sessionsByProject[project.id] ?? []).filter(session=>!session.botParent).length === 0 && <div className="project-sessions__message">暂无独立会话记录</div>}
+                  {([...(navigation.sessionsByProject[project.id] ?? []).filter(session=>!session.botParent)]).reverse().map((session) => {
+                    const summary = session.memorySummary?.trim().replace(/\s+/g, " ");
+                    const label = summary || "新会话";
+                    const active = isSelected(selection,"project-session",session.id);
                     return (
                       <button
                         className={`project-session-link${active ? " active" : ""}`}
                         key={session.id}
-                        title={label}
+                        title={label+(session.botParent?' · '+session.botParent.conversationTitle:'')}
                         aria-current={active ? "page" : undefined}
                         onClick={() => {
                           onSessionSelect(project.id, session.id);
@@ -94,7 +95,7 @@ export function ProjectNavigation({ projects, selectedProjectId, activeSessionId
           ))}
         </nav>
         <footer className="sidebar__footer">
-          <button onClick={() => onOpenResource("agent")}><Settings2 size={14} />Agent</button>
+          <button onClick={() => onOpenResource("agent")}><Settings2 size={14} />角色</button>
           <button onClick={() => onOpenResource("mcp")}><Settings2 size={14} />MCP</button>
         </footer>
       </aside>

@@ -9,6 +9,13 @@ export function agentEventStreamResponse(
   const encoder = new TextEncoder();
   const turnId = crypto.randomUUID();
   let sequence = 0;
+  const started = performance.now();
+  let firstTextLogged = false;
+  const logStage = (stage: "first_text_enqueued" | "complete_enqueued") => {
+    try {
+      console.info(`[project-message-stream] ${JSON.stringify({ turnId, sessionId, stage, elapsedMs: Math.round((performance.now() - started) * 10) / 10, at: new Date().toISOString() })}`);
+    } catch { /* best effort */ }
+  };
   const stream = new ReadableStream({
     async start(controller) {
       const send = (event: AgentEvent) => {
@@ -20,6 +27,11 @@ export function agentEventStreamResponse(
           emittedAt: new Date().toISOString(),
           event,
         })}\n`));
+        if (!firstTextLogged && event.type === "message_delta" && event.text) {
+          firstTextLogged = true;
+          logStage("first_text_enqueued");
+        }
+        if (event.type === "complete") logStage("complete_enqueued");
       };
       try {
         for await (const event of source) send(event);

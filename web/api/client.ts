@@ -14,12 +14,30 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   return payload.data as T;
 }
 
-async function* stream<T>(url: string, init: RequestInit, fallback: string): AsyncGenerator<T> {
+async function* stream<T>(url: string, init: RequestInit, fallback: string, onAccepted?: () => void): AsyncGenerator<T> {
+  const started = performance.now();
+  let firstTextLogged = false;
+  let completeLogged = false;
+  const parseEvent = (line: string): T => {
+    const envelope = JSON.parse(line) as { event: T; turnId?: unknown; sessionId?: unknown };
+    const event = envelope.event as { type?: string; text?: string } | null;
+    const stage = !firstTextLogged && event?.type === "message_delta" && event.text ? "first_text_received"
+      : !completeLogged && event?.type === "complete" ? "complete_received" : null;
+    if (stage && typeof envelope.turnId === "string" && typeof envelope.sessionId === "string") {
+      if (stage === "first_text_received") firstTextLogged = true;
+      else completeLogged = true;
+      try {
+        console.info(`[project-message-stream] ${JSON.stringify({ turnId: envelope.turnId, sessionId: envelope.sessionId, stage, elapsedMs: Math.round((performance.now() - started) * 10) / 10, at: new Date().toISOString() })}`);
+      } catch { /* best effort */ }
+    }
+    return envelope.event;
+  };
   const response = await fetch(url, init);
   if (!response.ok || !response.body) {
     const payload = await response.json().catch(() => ({})) as ApiEnvelope<never>;
     throw new Error(`${payload.error?.message ?? fallback}（${response.status} ${url}）`);
   }
+  onAccepted?.();
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
@@ -29,9 +47,9 @@ async function* stream<T>(url: string, init: RequestInit, fallback: string): Asy
     buffer += decoder.decode(part.value, { stream: true });
     const lines = buffer.split("\n");
     buffer = lines.pop() ?? "";
-    for (const line of lines) if (line.trim()) yield (JSON.parse(line) as { event: T }).event;
+    for (const line of lines) if (line.trim()) yield parseEvent(line);
   }
-  if (buffer.trim()) yield (JSON.parse(buffer) as { event: T }).event;
+  if (buffer.trim()) yield parseEvent(buffer);
 }
 
 function mutation(method: string, body?: unknown): RequestInit {
@@ -59,21 +77,23 @@ export const api = {
   createProject: (body: Record<string, unknown>) => request<Project>("/api/projects", mutation("POST", body)),
   updateProject: (id: string, body: Record<string, unknown>) => request<Project>(`/api/projects/${id}`, mutation("PATCH", body)),
   deleteProject: (id: string) => request<{ deleted: boolean }>(`/api/projects/${id}`, mutation("DELETE")),
+  prepareAgent:(body:Record<string,unknown>,signal:AbortSignal)=>request<{suggestedStatus?:"active"|"disabled";name:string;description:string|null;definition:import("../domain/models").AgentDefinition;warnings:string[];sources:Array<{path:string;hash:string}>}>("/api/agents/prepare",{...mutation("POST",body),signal}),
   listAgents: () => request<Agent[]>("/api/agents"),
   getAgent: (id: string) => request<Agent>(`/api/agents/${id}`),
-  createAgent: (body: Record<string, unknown>) => request<Agent>("/api/agents", mutation("POST", body)),
-  updateAgent: (id: string, body: Record<string, unknown>) => request<Agent>(`/api/agents/${id}`, mutation("PATCH", body)),
-  deleteAgent: (id: string) => request<{ deleted: boolean }>(`/api/agents/${id}`, mutation("DELETE")),
+  createAgent: (body: Record<string, unknown>,signal?:AbortSignal) => request<Agent>("/api/agents", {...mutation("POST", body),signal}),
+  updateAgent: (id: string, body: Record<string, unknown>,signal?:AbortSignal) => request<Agent>(`/api/agents/${id}`,  {...mutation("PATCH", body),signal,headers:{...jsonHeaders,"if-match":String(body.writeETag??'')}}),
+  deleteAgent: (id: string) => request<{ deleted: boolean; archived:boolean }>(`/api/agents/${id}`, mutation("DELETE")),
   listMcps: () => request<Mcp[]>("/api/mcps"),
   getMcp: (id: string) => request<Mcp>(`/api/mcps/${id}`),
   createMcp: (body: Record<string, unknown>) => request<Mcp>("/api/mcps", mutation("POST", body)),
   updateMcp: (id: string, body: Record<string, unknown>) => request<Mcp>(`/api/mcps/${id}`, mutation("PATCH", body)),
   deleteMcp: (id: string) => request<{ deleted: boolean }>(`/api/mcps/${id}`, mutation("DELETE")),
   testMcp: (id: string) => request<never>(`/api/mcps/${id}/test`, mutation("POST")),
+  configureSessionRole:(projectId:string,s:Session,agentId:string,revision?:number,contentSha256?:string)=>request<Session>(`/api/projects/${projectId}/sessions/${s.id}/role`,{...mutation("POST",{agentId,revision,contentSha256}),headers:{...jsonHeaders,"if-match":s.writeETag}}),
   listSessions: (projectId: string) => request<Session[]>(`/api/projects/${projectId}/sessions`),
   createSession: (projectId: string, body: Record<string, unknown> = {}) => request<Session>(`/api/projects/${projectId}/sessions`, mutation("POST", body)),
   listMessages: (projectId: string, sessionId: string) => request<ConversationMessage[]>(`/api/projects/${projectId}/sessions/${sessionId}/messages`),
-  sendMessage: (projectId: string, sessionId: string, content: string) => stream<AgentEvent>(`/api/projects/${projectId}/sessions/${sessionId}/messages`, { ...mutation("POST", { content }), headers: { ...jsonHeaders, "idempotency-key": crypto.randomUUID() } }, "无法发送项目消息"),
+  sendMessage: (projectId: string, sessionId: string, content: string, steer=false, onAccepted?: () => void, references?: import("../../src/domain/message-references").MessageReference[]) => stream<AgentEvent>(`/api/projects/${projectId}/sessions/${sessionId}/messages`, { ...mutation("POST", { content,steer,references }), headers: { ...jsonHeaders, "idempotency-key": crypto.randomUUID() } }, "无法发送项目消息", onAccepted),
   interruptProjectSession: (projectId: string, sessionId: string) => request<Session>(`/api/projects/${projectId}/sessions/${sessionId}/interrupt`, mutation("POST")),
   restoreProjectSession: (projectId: string, sessionId: string) => request<Session>(`/api/projects/${projectId}/sessions/${sessionId}/restore`, mutation("POST")),
   endProjectSession: (projectId: string, sessionId: string) => request<Session>(`/api/projects/${projectId}/sessions/${sessionId}/end`, mutation("POST")),

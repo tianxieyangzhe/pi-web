@@ -41,11 +41,26 @@ export function errorResponse(error: unknown): Response {
   );
 }
 
-export async function jsonBody(request: Request): Promise<Record<string, unknown>> {
+export async function jsonBody(request: Request,maxBytes=65536): Promise<Record<string, unknown>> {
   try {
-    const raw = await request.text();
-    if (new TextEncoder().encode(raw).length > 65536) throw new DomainError("INVALID_INPUT","请求内容超过 64KiB",413,true);
-    const value: unknown = JSON.parse(raw);
+    const length = Number(request.headers.get("content-length"));
+    if (Number.isFinite(length) && length > maxBytes) throw new DomainError("INVALID_INPUT","请求内容超过容量上限",413,true);
+    const reader = request.body?.getReader();
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    if (reader) {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        size += value.byteLength;
+        if (size > maxBytes) { void reader.cancel().catch(() => {}); throw new DomainError("INVALID_INPUT","请求内容超过容量上限",413,true); }
+        chunks.push(value);
+      }
+    }
+    const bytes = new Uint8Array(size);
+    let offset = 0;
+    for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
+    const value: unknown = JSON.parse(new TextDecoder().decode(bytes));
     if (!value || typeof value !== "object" || Array.isArray(value)) {
       throw new DomainError("INVALID_JSON", "请求内容必须是 JSON 对象", 400, true);
     }

@@ -10,15 +10,9 @@ export type Project = {
   updatedAt?: string;
 };
 
-export type Agent = {
-  id: string;
-  name: string;
-  description: string | null;
-  extension: { instruction: string | null; thinkingLevel: string | null; tools: string[] | null; excludeTools: string[]; extensionSources: string[]; skillPaths: string[]; settings: Record<string, unknown> };
-  policy: { allowProjectWrite: boolean; allowExternalWrite: boolean; maxParallelTasks: number };
-  revision: number;
-  status: ResourceStatus;
-};
+export type AgentDefinition={instructions:string;capabilities:{readFiles:boolean;writeFiles:boolean;readProjects:boolean;dispatchTasks:boolean;dispatchProjectWrites:boolean;exchangeMessages:boolean}};
+export type Agent={id:string;name:string;description:string|null;kind:"coordinator"|"project"|null;botId:string|null;projectId:string|null;sourceTemplateId:string|null;definition:AgentDefinition|null;legacySource?:string|null;contentSha256:string|null;revision:number;status:ResourceStatus;writeETag?:string};
+export type AgentSnapshot={agentId:string;name:string;description:string|null;revision:number;kind:"coordinator"|"project";botId:null;projectId:null;contentSha256:string;definition:AgentDefinition};
 
 export type Mcp = {
   id: string;
@@ -29,7 +23,12 @@ export type Mcp = {
   status: ResourceStatus;
 };
 
+export type RoleState={configured:boolean;available:boolean;boundRevision:number|null;currentRevision:number|null;name:string|null;status:ResourceStatus|null;canAdoptLatest:boolean;reason:string|null};
+
 export type Session = {
+  roleState?:RoleState|null;
+  writeETag:string;agentId:string|null;agentSnapshot?:AgentSnapshot|null;
+  botParent?:{botId:string;conversationId:string;conversationTitle:string;sessionId:string;schedulingMode?:'enabled'|'paused';available?:boolean;reason?:string|null}|null;
   memorySummary?: string;
   sessionMemoryId: string;
   id: string;
@@ -43,13 +42,22 @@ export type Session = {
   mcps: Array<{ id: string; name: string; accessPolicy: "read_only" | "approval" | "allow" }>;
 };
 
+export type ConversationEntry = {
+  id: string;
+  kind: "text" | "tool";
+  text?: string;
+  activity?: ActivityEvent;
+};
+
 export type ConversationMessage = {
   id: string;
   sessionId: string;
   role: "user" | "assistant";
+  origin?: "user" | "coordinator";
   content: string;
   createdAt: string;
   activities?: ActivityEvent[];
+  entries?: ConversationEntry[];
 };
 
 export type ActivityEvent = {

@@ -1,33 +1,10 @@
-import {
-  DomainError,
-  enumValue,
-  optionalText,
-  requiredText,
-  uniqueStrings,
-} from "@/domain/errors";
-import type {
-  Agent,
-  AgentPolicy,
-  Mcp,
-  McpConfig,
-  PiAgentExtension,
-  Project,
-} from "@/domain/models";
+import { DomainError, enumValue, optionalText, requiredText, uniqueStrings } from "@/domain/errors";
+import type { Agent, Mcp, McpConfig, Project } from "@/domain/models";
+import { validateDefinition, roleETag } from "@/domain/agent-definition";
 import type { CatalogDependencies } from "@/application/ports/catalog";
-
 const resourceStatuses = ["active", "disabled", "archived"] as const;
 const projectKinds = ["code", "knowledge", "general"] as const;
 const mcpPolicies = ["read_only", "approval", "allow"] as const;
-const thinkingLevels = [
-  "off",
-  "minimal",
-  "low",
-  "medium",
-  "high",
-  "xhigh",
-  "max",
-] as const;
-
 function stringRecord(value: unknown, field: string): Record<string, string> {
   if (value === undefined) return {};
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -42,44 +19,24 @@ function stringRecord(value: unknown, field: string): Record<string, string> {
   }
   return result;
 }
-
-function isForbiddenModelSettingKey(key: string) {
-  const normalized = key.replace(/[_-]/g, "").toLowerCase();
-  return normalized === "model" ||
-    normalized === "provider" ||
-    normalized.endsWith("apikey") ||
-    normalized.endsWith("baseurl") ||
-    normalized.endsWith("modelid");
-}
-
-function containsModelConfiguration(value: unknown): boolean {
-  if (Array.isArray(value)) return value.some(containsModelConfiguration);
-  if (!value || typeof value !== "object") return false;
-  return Object.entries(value).some(([key, item]) =>
-    isForbiddenModelSettingKey(key) ||
-    containsModelConfiguration(item)
-  );
-}
-
 function parseMcpConfig(value: unknown): McpConfig {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new DomainError("INVALID_INPUT", "MCP 配置必须是对象", 400, true);
   }
   const config = value as Record<string, unknown>;
-  const kind = enumValue(
-    config.kind,
-    ["built_in", "stdio", "streamable_http"] as const,
-    "config.kind",
-  );
+  const kind = enumValue(config.kind, ["built_in", "stdio", "streamable_http"] as const, "config.kind");
   if (kind === "built_in") {
-    return { kind, implementation: "workspace" };
+    return {
+      kind,
+      implementation: "workspace"
+    };
   }
   if (kind === "stdio") {
     return {
       kind,
       command: requiredText(config.command, "config.command", "命令"),
       args: uniqueStrings(config.args, "config.args"),
-      envSecretRefs: stringRecord(config.envSecretRefs, "config.envSecretRefs"),
+      envSecretRefs: stringRecord(config.envSecretRefs, "config.envSecretRefs")
     };
   }
   const url = requiredText(config.url, "config.url", "URL");
@@ -89,167 +46,140 @@ function parseMcpConfig(value: unknown): McpConfig {
   } catch {
     throw new DomainError("INVALID_INPUT", "MCP URL 必须是 HTTP(S) URL", 400, true);
   }
-  return { kind, url, authSecretRef: optionalText(config.authSecretRef) };
-}
-
-function parseAgentExtension(value: unknown): PiAgentExtension {
-  const source = value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
-  if ("model" in source || "provider" in source || "modelId" in source || "baseUrl" in source || "apiKey" in source) {
-    throw new DomainError(
-      "MODEL_SELECTION_FORBIDDEN",
-      "Agent 不能配置模型、Provider、API 地址或凭据",
-      400,
-      true,
-    );
-  }
-  const settings = source.settings;
-  if (settings !== undefined && (!settings || typeof settings !== "object" || Array.isArray(settings))) {
-    throw new DomainError("INVALID_INPUT", "extension.settings 必须是对象", 400, true);
-  }
-  if (containsModelConfiguration(settings)) {
-    throw new DomainError(
-      "MODEL_SELECTION_FORBIDDEN",
-      "Agent settings 不能包含模型、Provider、API 地址或凭据",
-      400,
-      true,
-    );
-  }
   return {
-    instruction: optionalText(source.instruction),
-    thinkingLevel: source.thinkingLevel === null || source.thinkingLevel === undefined
-      ? null
-      : enumValue(source.thinkingLevel, thinkingLevels, "extension.thinkingLevel"),
-    tools: source.tools === null ? null : uniqueStrings(source.tools, "extension.tools"),
-    excludeTools: uniqueStrings(source.excludeTools, "extension.excludeTools"),
-    extensionSources: uniqueStrings(source.extensionSources, "extension.extensionSources"),
-    skillPaths: uniqueStrings(source.skillPaths, "extension.skillPaths"),
-    settings: (settings ?? {}) as Record<string, unknown>,
+    kind,
+    url,
+    authSecretRef: optionalText(config.authSecretRef)
   };
 }
-
-function parseAgentPolicy(value: unknown): AgentPolicy {
-  const source = value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
-  const max = source.maxParallelTasks ?? 4;
-  if (!Number.isInteger(max) || (max as number) < 1 || (max as number) > 32) {
-    throw new DomainError(
-      "INVALID_INPUT",
-      "maxParallelTasks 必须是 1 到 32 的整数",
-      400,
-      true,
-    );
-  }
-  return {
-    allowProjectWrite: source.allowProjectWrite === true,
-    allowExternalWrite: source.allowExternalWrite === true,
-    maxParallelTasks: max as number,
-  };
-}
-
 export function createCatalogService({
   projects: projectRepository,
   mcps: mcpRepository,
   agents: agentRepository,
-  normalizeProjectRoot,
+  normalizeProjectRoot
 }: CatalogDependencies) {
   return {
-  listProjects: () => projectRepository.list(),
-  getProject: (id: string) => projectRepository.get(id),
-  createProject(body: Record<string, unknown>): Project {
-    return projectRepository.create({
-      name: requiredText(body.name, "name", "项目名称"),
-      description: optionalText(body.description),
-      kind: enumValue(body.kind, projectKinds, "kind", "code"),
-      rootPath: normalizeProjectRoot(body.rootPath),
-      status: "active",
-    });
-  },
-  updateProject(id: string, body: Record<string, unknown>): Project {
-    const current = projectRepository.get(id);
-    if (!current) throw new DomainError("NOT_FOUND", "项目不存在", 404, true);
-    const updated = projectRepository.update(id, {
-      ...(body.name !== undefined ? { name: requiredText(body.name, "name", "项目名称") } : {}),
-      ...(body.description !== undefined ? { description: optionalText(body.description) } : {}),
-      ...(body.kind !== undefined ? { kind: enumValue(body.kind, projectKinds, "kind") } : {}),
-      ...(body.rootPath !== undefined ? { rootPath: normalizeProjectRoot(body.rootPath) } : {}),
-      ...(body.status !== undefined
-        ? { status: enumValue(body.status, resourceStatuses, "status") }
-        : {}),
-    });
-    return updated!;
-  },
-  deleteProject(id: string): void {
-    if (projectRepository.isInUse(id)) {
-      throw new DomainError("RESOURCE_IN_USE", "项目正在被工作线使用", 423, true);
+    listProjects: () => projectRepository.list(),
+    getProject: (id: string) => projectRepository.get(id),
+    createProject(body: Record<string, unknown>): Project {
+      return projectRepository.create({
+        name: requiredText(body.name, "name", "项目名称"),
+        description: optionalText(body.description),
+        kind: enumValue(body.kind, projectKinds, "kind", "code"),
+        rootPath: normalizeProjectRoot(body.rootPath),
+        status: "active"
+      });
+    },
+    updateProject(id: string, body: Record<string, unknown>): Project {
+      const current = projectRepository.get(id);
+      if (!current) throw new DomainError("NOT_FOUND", "项目不存在", 404, true);
+      const updated = projectRepository.update(id, {
+        ...(body.name !== undefined ? {
+          name: requiredText(body.name, "name", "项目名称")
+        } : {}),
+        ...(body.description !== undefined ? {
+          description: optionalText(body.description)
+        } : {}),
+        ...(body.kind !== undefined ? {
+          kind: enumValue(body.kind, projectKinds, "kind")
+        } : {}),
+        ...(body.rootPath !== undefined ? {
+          rootPath: normalizeProjectRoot(body.rootPath)
+        } : {}),
+        ...(body.status !== undefined ? {
+          status: enumValue(body.status, resourceStatuses, "status")
+        } : {})
+      });
+      return updated!;
+    },
+    deleteProject(id: string): void {
+      if (projectRepository.isInUse(id)) {
+        throw new DomainError("RESOURCE_IN_USE", "项目正在被工作线使用", 423, true);
+      }
+      if (!projectRepository.delete(id)) throw new DomainError("NOT_FOUND", "项目不存在", 404, true);
+    },
+    listMcps: () => mcpRepository.list(),
+    getMcp: (id: string) => mcpRepository.get(id),
+    createMcp(body: Record<string, unknown>): Mcp {
+      return mcpRepository.create({
+        name: requiredText(body.name, "name", "MCP 名称"),
+        description: optionalText(body.description),
+        config: parseMcpConfig(body.config),
+        accessPolicy: enumValue(body.accessPolicy, mcpPolicies, "accessPolicy", "approval"),
+        status: "active"
+      });
+    },
+    updateMcp(id: string, body: Record<string, unknown>): Mcp {
+      const current = mcpRepository.get(id);
+      if (!current) throw new DomainError("NOT_FOUND", "MCP 不存在", 404, true);
+      return mcpRepository.update(id, {
+        ...(body.name !== undefined ? {
+          name: requiredText(body.name, "name", "MCP 名称")
+        } : {}),
+        ...(body.description !== undefined ? {
+          description: optionalText(body.description)
+        } : {}),
+        ...(body.config !== undefined ? {
+          config: parseMcpConfig(body.config)
+        } : {}),
+        ...(body.accessPolicy !== undefined ? {
+          accessPolicy: enumValue(body.accessPolicy, mcpPolicies, "accessPolicy")
+        } : {}),
+        ...(body.status !== undefined ? {
+          status: enumValue(body.status, resourceStatuses, "status")
+        } : {})
+      })!;
+    },
+    deleteMcp(id: string): void {
+      if (mcpRepository.isInUse(id)) {
+        throw new DomainError("RESOURCE_IN_USE", "MCP 正在被工作线使用", 423, true);
+      }
+      if (!mcpRepository.delete(id)) throw new DomainError("NOT_FOUND", "MCP 不存在", 404, true);
+    },
+    listAgents: () => agentRepository.list().map(value => ({
+      ...value,
+      writeETag: roleETag(value)
+    })),
+    getAgent: (id: string) => agentRepository.get(id),
+    getAgentVersion: (id:string,revision:number,sha256:string) => agentRepository.getVersion(id,revision,sha256),
+    createAgent(body: Record<string, unknown>): Agent {
+      return saveRole(null, body);
+    },
+    updateAgent(id: string, body: Record<string, unknown>): Agent {
+      return saveRole(id, body);
+    },
+    deleteAgent(id: string): {deleted:boolean;archived:boolean} {
+      const current = agentRepository.get(id);
+      if (!current) throw new DomainError("NOT_FOUND", "角色不存在", 404, true);
+      if (agentRepository.isInUse(id)) {
+        agentRepository.update(id, { status: "archived" }, roleETag(current));
+        return {deleted:false,archived:true};
+      }
+      if (!agentRepository.delete(id)) throw new DomainError("NOT_FOUND", "角色不存在", 404, true);
+      return {deleted:true,archived:false};
     }
-    if (!projectRepository.delete(id)) throw new DomainError("NOT_FOUND", "项目不存在", 404, true);
-  },
-
-  listMcps: () => mcpRepository.list(),
-  getMcp: (id: string) => mcpRepository.get(id),
-  createMcp(body: Record<string, unknown>): Mcp {
-    return mcpRepository.create({
-      name: requiredText(body.name, "name", "MCP 名称"),
-      description: optionalText(body.description),
-      config: parseMcpConfig(body.config),
-      accessPolicy: enumValue(body.accessPolicy, mcpPolicies, "accessPolicy", "approval"),
-      status: "active",
-    });
-  },
-  updateMcp(id: string, body: Record<string, unknown>): Mcp {
-    const current = mcpRepository.get(id);
-    if (!current) throw new DomainError("NOT_FOUND", "MCP 不存在", 404, true);
-    return mcpRepository.update(id, {
-      ...(body.name !== undefined ? { name: requiredText(body.name, "name", "MCP 名称") } : {}),
-      ...(body.description !== undefined ? { description: optionalText(body.description) } : {}),
-      ...(body.config !== undefined ? { config: parseMcpConfig(body.config) } : {}),
-      ...(body.accessPolicy !== undefined
-        ? { accessPolicy: enumValue(body.accessPolicy, mcpPolicies, "accessPolicy") }
-        : {}),
-      ...(body.status !== undefined
-        ? { status: enumValue(body.status, resourceStatuses, "status") }
-        : {}),
-    })!;
-  },
-  deleteMcp(id: string): void {
-    if (mcpRepository.isInUse(id)) {
-      throw new DomainError("RESOURCE_IN_USE", "MCP 正在被工作线使用", 423, true);
-    }
-    if (!mcpRepository.delete(id)) throw new DomainError("NOT_FOUND", "MCP 不存在", 404, true);
-  },
-
-  listAgents: () => agentRepository.list(),
-  getAgent: (id: string) => agentRepository.get(id),
-  createAgent(body: Record<string, unknown>): Agent {
-    return agentRepository.create({
-      name: requiredText(body.name, "name", "Agent 名称"),
-      description: optionalText(body.description),
-      extension: parseAgentExtension(body.extension),
-      policy: parseAgentPolicy(body.policy),
-      status: "active",
-    });
-  },
-  updateAgent(id: string, body: Record<string, unknown>): Agent {
-    const current = agentRepository.get(id);
-    if (!current) throw new DomainError("NOT_FOUND", "Agent 不存在", 404, true);
-    return agentRepository.update(id, {
-      ...(body.name !== undefined ? { name: requiredText(body.name, "name", "Agent 名称") } : {}),
-      ...(body.description !== undefined ? { description: optionalText(body.description) } : {}),
-      ...(body.extension !== undefined ? { extension: parseAgentExtension(body.extension) } : {}),
-      ...(body.policy !== undefined ? { policy: parseAgentPolicy(body.policy) } : {}),
-      ...(body.status !== undefined
-        ? { status: enumValue(body.status, resourceStatuses, "status") }
-        : {}),
-    })!;
-  },
-  deleteAgent(id: string): void {
-    if (agentRepository.isInUse(id)) {
-      throw new DomainError("RESOURCE_IN_USE", "Agent 已被工作线引用，请归档", 423, true);
-    }
-    if (!agentRepository.delete(id)) throw new DomainError("NOT_FOUND", "Agent 不存在", 404, true);
-  },
   };
+  function saveRole(id: string | null, body: Record<string, unknown>): Agent {
+    if(Object.keys(body).some(k=>!['name','description','kind','definition','status','writeETag'].includes(k)))throw new DomainError('INVALID_ROLE','角色请求包含未支持字段',422,true);
+    const current = id ? agentRepository.get(id) : null;
+    if (id && !current) throw new DomainError('NOT_FOUND', '角色不存在', 404, true);
+    const kind = enumValue(body.kind ?? current?.kind, ['coordinator', 'project'] as const, 'kind');
+    if (current?.kind && kind !== current.kind) throw new DomainError('INVALID_ROLE', '角色用途不可在编辑时改变', 409, true);
+    const name = requiredText(body.name ?? current?.name, 'name', '角色名称'),
+      description = optionalText(body.description === undefined ? current?.description : body.description);
+    if ([...name].length > 120 || description && [...description].length > 2000) throw new DomainError('INVALID_ROLE', '名称或描述超长', 422, true);
+    const definition = validateDefinition(body.definition ?? current?.definition, kind);
+    definition.capabilities.readProjects = false;
+    const input = {
+      name,
+      description,
+      kind,
+      botId: null,
+      projectId: null,
+      sourceTemplateId: null,
+      definition,
+      status: enumValue(body.status ?? current?.status, resourceStatuses, 'status', 'active')
+    };
+    return current ? agentRepository.update(current.id, input, String(body.writeETag ?? ''))! : agentRepository.create(input);
+  }
 }

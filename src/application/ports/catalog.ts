@@ -27,13 +27,15 @@ export interface McpRepositoryPort {
 export interface AgentRepositoryPort {
   list(): Agent[];
   get(id: string): Agent | null;
-  create(input: Omit<Agent, "id" | "revision" | "createdAt" | "updatedAt">): Agent;
+  create(input: Omit<Agent, "id" | "revision" | "createdAt" | "updatedAt" | "contentSha256">): Agent;
   update(
     id: string,
     patch: Partial<Omit<Agent, "id" | "revision" | "createdAt" | "updatedAt">>,
+    expected?:string,
   ): Agent | null;
   delete(id: string): boolean;
   isInUse(id: string): boolean;
+  getVersion(id:string,revision:number,sha256:string):Agent|null;
 }
 
 export type CatalogDependencies = {
@@ -41,4 +43,6 @@ export type CatalogDependencies = {
   mcps: McpRepositoryPort;
   agents: AgentRepositoryPort;
   normalizeProjectRoot(value: unknown): string;
+  normalizeBotOwner?:(id:string)=>void;
+  getAgentVersion?:(id:string,revision:number,sha256:string)=>Agent|null;
 };

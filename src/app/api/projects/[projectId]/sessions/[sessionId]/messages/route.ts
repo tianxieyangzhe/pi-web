@@ -8,12 +8,6 @@ export const runtime = "nodejs";
 
 type Context = { params: Promise<{ projectId: string; sessionId: string }> };
 
-function operationFor(content: string) {
-  return /(?:修改|修复|实现|新增|创建|删除|重构|升级|安装|写入|替换|rename|change|update|fix|implement|create|delete|remove|refactor|install|write|edit|replace)/i.test(content)
-    ? "project_write" as const
-    : "read" as const;
-}
-
 export async function GET(_request: Request, { params }: Context) {
   try {
     const { projectId, sessionId } = await params;
@@ -26,12 +20,15 @@ export async function POST(request: Request, { params }: Context) {
   try {
     const { projectId, sessionId } = await params;
     services.projectSessions.get(projectId, sessionId);
-    const body = await jsonBody(request);
+    const body = await jsonBody(request, 12 * 1024 * 1024);
+    if (services.execution.referenceContractVersion !== 6) throw new DomainError("REFERENCE_SERVICE_RESTART_REQUIRED", "服务尚未加载参考文件功能，请重启服务后重试", 503, true);
     const content = typeof body.content === "string" ? body.content.trim() : "";
     if (!content) throw new DomainError("INVALID_INPUT", "消息不能为空", 400, true);
+    const binding=services.bots.participantForSession(sessionId);
+    if(binding) throw new DomainError('SESSION_ALREADY_ATTACHED','纳入协调会话的项目 Session 不能直接输入',409,true);
     if (!claimStreamingMutation(request, `projects:${projectId}:sessions:${sessionId}:messages`)) {
       throw new DomainError("TURN_ALREADY_ACCEPTED", "消息已经被项目工作线接收", 409, true);
     }
-    return agentEventStreamResponse(sessionId, services.execution.send(sessionId, content, operationFor(content)));
+    return agentEventStreamResponse(sessionId, services.execution.send(sessionId, content, body.operation==='read'?'read':undefined, body.references));
   } catch (error) { return errorResponse(error); }
 }

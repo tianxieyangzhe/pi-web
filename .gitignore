@@ -8,3 +8,5 @@ dist/
 .env.local
 .DS_Store
 *.tsbuildinfo
+
+.next-validation/

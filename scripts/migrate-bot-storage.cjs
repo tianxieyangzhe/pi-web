@@ -1,0 +1,17 @@
+#!/usr/bin/env node
+const fs=require('node:fs');
+const path=require('node:path');
+const {createHash}=require('node:crypto');
+const {spawnSync}=require('node:child_process');
+const Database=require('better-sqlite3');
+const schema=fs.readFileSync(path.resolve(__dirname,'bot-schema-v1.sql'),'utf8');
+const targetTables=['bots','bot_conversations','bot_conversation_sessions','bot_tasks','bot_task_dependencies','bot_executions','bot_messages'];
+const file=path.resolve(process.argv[2]||path.join(__dirname,'../.data/ai-workspace-v5.sqlite'));
+const apply=process.argv.includes('--apply');
+function snapshot(db){return db.prepare("SELECT name,sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all().filter(x=>!targetTables.includes(x.name)).map(table=>{const name='"'+table.name.replaceAll('"','""')+'"';const rows=db.prepare('SELECT * FROM '+name).all().map(row=>JSON.stringify(row)).sort();return {name:table.name,schema:table.sql,count:rows.length,hash:createHash('sha256').update(rows.join('\n')).digest('hex')};});}
+function checkSchema(db){const rows=db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name LIKE 'bot_%' OR name='bots' ORDER BY name").all();const found=targetTables.filter(t=>!!db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(t));if(!found.length&&rows.length===0)return false;if(found.length!==targetTables.length)throw new Error('检测到部分 Bot 结构，必须先审查修复，未修改数据库');const ref=new Database(':memory:');ref.exec('CREATE TABLE projects(id TEXT PRIMARY KEY); CREATE TABLE sessions(id TEXT PRIMARY KEY);'+schema);const expected=ref.prepare("SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name LIKE 'bot_%' OR name='bots' ORDER BY name").all();ref.close();if(JSON.stringify(rows)!==JSON.stringify(expected))throw new Error('Bot 结构与目标字段/索引/触发器不一致，未修改数据库');return true;}
+async function main(){if(!fs.existsSync(file))throw new Error('数据库不存在，未创建空库');let db=new Database(file,{readonly:true});db.pragma('foreign_keys=ON');const memoryCols=db.prepare('PRAGMA table_info(session_memories)').all().map(x=>x.name);if(!memoryCols.includes('context_json')||!db.prepare('PRAGMA table_info(sessions)').all().some(x=>x.name==='session_memory_id'&&x.notnull===1))throw new Error('当前库尚未完成 SessionMemory 迁移，不能直接迁移 Bot');if(checkSchema(db)){db.close();console.log('Bot 目标结构已完整存在，无需迁移。');return;}
+ const before=snapshot(db);console.log(JSON.stringify({database:file,mode:apply?'apply':'preview',newTables:targetTables,preservedTables:before.map(x=>({name:x.name,count:x.count})),changes:'只新增 Bot 表及约束、索引、触发器；保留全部原记录'},null,2));db.close();if(!apply)return;
+ const check=spawnSync('lsof',['-t','--',file],{encoding:'utf8'});if(check.error)throw new Error('无法检查数据库占用，请先停止服务并确认占用检查工具可用');if(check.stdout.trim())throw new Error('数据库正被其他进程打开，请先停止服务，未迁移');
+ db=new Database(file);db.pragma('foreign_keys=ON');const backup=file+'.before-bot-'+Date.now()+'.sqlite';await db.backup(backup);try{db.transaction(()=>{if(checkSchema(db))throw new Error('备份后结构发生变化');db.exec(schema);if(db.pragma('foreign_key_check').length)throw new Error('外键完整性校验失败');if(db.pragma('integrity_check',{simple:true})!=='ok')throw new Error('数据库完整性校验失败');if(JSON.stringify(snapshot(db))!==JSON.stringify(before))throw new Error('旧记录或结构发生变化，已回滚');if(!checkSchema(db))throw new Error('目标结构未完整创建');})();console.log(JSON.stringify({migrated:true,backup,preserved:true},null,2));}finally{db.close();}}
+main().catch(error=>{console.error(error.message);process.exitCode=1;});

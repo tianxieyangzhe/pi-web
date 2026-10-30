@@ -1,3 +1,4 @@
+import {isRoleSnapshot} from "@/domain/agent-definition";
 import fs from "node:fs/promises";
 import path from "node:path";
 import {
@@ -81,9 +82,10 @@ function renameTool<T extends { name: string; label: string; description: string
 }
 
 function toolAllowed(input: SessionRuntimeInput, name: string) {
-  const extension = input.session.agentSnapshot?.extension;
-  if (extension?.tools && !extension.tools.includes(name)) return false;
-  return !extension?.excludeTools.includes(name);
+  if (input.independentProjectTools) return true;
+  const s=input.session.agentSnapshot;
+  if(isRoleSnapshot(s))return (name==='read'||name==='ls')?s.definition.capabilities.readFiles:s.definition.capabilities.writeFiles;
+  return false;
 }
 
 export async function createPiProjectTools(
@@ -115,14 +117,14 @@ export async function createPiProjectTools(
   // Pi's ToolDefinition defaults are invariant; the concrete schemas remain
   // intact at runtime and are validated by Pi before execute is called.
   const tools: ToolDefinition<any, any, any>[] = [];
-  if (toolAllowed(input, "read")) {
+  if (input.allowProjectRead!==false&&toolAllowed(input, "read")) {
     tools.push(renameTool(
       createReadToolDefinition(input.workingDirectory, { operations: readOperations }),
       "project_read",
       "读取当前项目工作线绑定项目中的文件。",
     ));
   }
-  if (toolAllowed(input, "ls")) {
+  if (input.allowProjectRead!==false&&toolAllowed(input, "ls")) {
     tools.push(renameTool(
       createLsToolDefinition(input.workingDirectory, { operations: listOperations }),
       "project_list",

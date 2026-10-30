@@ -11,15 +11,20 @@ export const sessionMemoryRepository = {
   get(id: string): SessionMemory | null { assertSchemaCompatible(); const row = database.prepare('SELECT * FROM session_memories WHERE id=?').get(id) as Record<string, unknown> | undefined; return row ? map(row) : null; },
   templates(): SessionMemory[] { assertSchemaCompatible(); return (database.prepare('SELECT * FROM session_memories WHERE project_id IS NULL ORDER BY updated_at DESC').all() as Record<string, unknown>[]).map(map); },
   insert(memory: SessionMemory) { assertSchemaCompatible(); database.prepare('INSERT INTO session_memories(id,project_id,source_template_id,title,context_json,draft_json,last_reviewed_entry_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)').run(memory.id,memory.projectId,memory.sourceTemplateId,memory.title,JSON.stringify(memory.contextJson),memory.draftJson ? JSON.stringify(memory.draftJson) : null,memory.lastReviewedEntryId,memory.createdAt,memory.updatedAt); return memory; },
-  createSession(projectId: string, purpose: string, templateId?: string, templateETag?: string) {
-    assertSchemaCompatible(); return database.transaction(() => {
+  createSession(projectId: string, purpose: string, templateId?: string, templateETag?: string, role?:{stableId?:string;agentId:string;agentSnapshot:import("@/domain/models").AgentSnapshot}) {
+    assertSchemaCompatible();
+    if (!role) {
+      const trigger = database.prepare("SELECT sql FROM sqlite_master WHERE type='trigger' AND name='session_role_insert'").get() as {sql:string}|undefined;
+      if (trigger && /NEW\.agent_id\s+IS\s+NULL/i.test(trigger.sql)) throw new DomainError('SCHEMA_INCOMPATIBLE', '现有数据库要求项目会话绑定角色；需要单独决定离线迁移，历史数据未修改。', 409, true);
+    }
+    return database.transaction(() => {
       const template = templateId ? this.get(templateId) : null;
       if (templateId && (!template || template.projectId !== null)) throw new DomainError('INVALID_TEMPLATE','SessionMemory 模板不存在',422,true);
       if (template && templateETag !== sessionMemoryETag(template)) throw new DomainError('MEMORY_CONFLICT','模板已更新，请重新预览',409,true);
       const timestamp = new Date().toISOString();
       const memory: SessionMemory = { id: randomUUID(), projectId, sourceTemplateId: template?.id ?? null, title: purpose, contextJson: template?.contextJson ?? emptyContext(), draftJson: null, lastReviewedEntryId: null, createdAt: timestamp, updatedAt: timestamp };
       this.insert(memory);
-      return sessionRepository.create({sessionMemoryId:memory.id,projectId,purpose,agentId:null,agentSnapshot:null,mcpIds:[],mcpSnapshots:[]});
+      return sessionRepository.create({sessionMemoryId:memory.id,projectId,purpose,agentId:role?.agentId??null,agentSnapshot:role?.agentSnapshot??null,mcpIds:[],mcpSnapshots:[],stableId:role?.stableId});
     })();
   },
   update(id: string, expected: string | null, mutate: (memory: SessionMemory) => void): SessionMemory {

@@ -46,17 +46,22 @@ export type PiAgentExtension = {
   settings: JsonObject;
 };
 
-export type Agent = {
-  id: EntityId;
-  name: string;
-  description: string | null;
-  extension: PiAgentExtension;
-  policy: AgentPolicy;
-  revision: number;
-  status: ResourceStatus;
-  createdAt: ISODateTime;
-  updatedAt: ISODateTime;
+export type AgentDefinition = {
+  instructions: string;
+  capabilities: {readFiles:boolean;writeFiles:boolean;readProjects:boolean;dispatchTasks:boolean;dispatchProjectWrites:boolean;exchangeMessages:boolean};
 };
+export type Agent = {
+  id: EntityId; kind: "coordinator"|"project"|null; botId:string|null; projectId:string|null; sourceTemplateId:string|null;
+  name:string; description:string|null; definition:AgentDefinition|null;legacySource?:string|null;
+  contentSha256:string|null;
+  revision:number;status:ResourceStatus;createdAt:string;updatedAt:string;
+};
+export type AgentSnapshotRef = {agentId:string;revision:number;kind:"coordinator"|"project";botId:null;projectId:null;contentSha256:string;name:string;description:string|null};
+/** Runtime-hydrated snapshot. The definition is loaded from the immutable Markdown version file. */
+export type AgentSnapshot = AgentSnapshotRef & {definition:AgentDefinition};
+export type LegacyRoleSnapshot = {agentId:string;revision:number;kind?:"coordinator"|"project";botId?:string|null;projectId?:string|null;name:string;description?:string|null;definition:AgentDefinition};
+export type LegacyPiAgentSnapshot = {id:string;name:string;description?:string|null;extension:PiAgentExtension;policy:AgentPolicy;revision:number;status?:ResourceStatus;createdAt?:string;updatedAt?:string};
+export type LegacyAgentSnapshot = LegacyPiAgentSnapshot | LegacyRoleSnapshot;
 
 export type SessionState =
   | "not_started"
@@ -71,9 +76,11 @@ export type Session = {
   id: EntityId;
   sessionMemoryId: EntityId;
   projectId: EntityId;
+  status: "open" | "closed";
   purpose: string;
+  botConversationId:string|null;participantName:string|null;assignment:string|null;collaborationState:"active"|"disabled"|null;botJoinedAt:string|null;updatedAt:string;
   agentId: EntityId | null;
-  agentSnapshot: Agent | null;
+  agentSnapshot: AgentSnapshot | LegacyAgentSnapshot | null;
   mcpIds: EntityId[];
   mcpSnapshots: Mcp[];
   state: SessionState;
@@ -84,12 +91,21 @@ export type Session = {
   endedAt: ISODateTime | null;
 };
 
+export type ConversationEntry = {
+  id: string;
+  kind: "text" | "tool";
+  text?: string;
+  activity?: ActivityEvent;
+};
+
 export type ConversationMessage = {
   id: string;
   sessionId: EntityId;
   role: "user" | "assistant";
+  origin?: "user" | "coordinator";
   content: string;
   createdAt: ISODateTime;
+  entries?: ConversationEntry[];
 };
 
 export type ActivityEvent = {

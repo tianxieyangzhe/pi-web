@@ -7,6 +7,7 @@ export async function POST(_request: Request, { params }: { params: Promise<{ pr
   try {
     const { projectId, sessionId } = await params;
     services.projectSessions.get(projectId,sessionId);
+    services.bots.assertCanEnd(sessionId);
     await services.execution.close(sessionId);
     return dataResponse(services.projectSessions.end(projectId, sessionId));
   } catch (error) { return errorResponse(error); }

@@ -1,49 +1,130 @@
 # 项目设计契约
 
-本项目使用以下五份文档作为唯一权威设计。开始任何实现、重构、修复或评审前，必须读取与改动相关的文档；跨层改动必须读取全部五份。
+功能只有两个要点：模型和 API。五份设计文档是唯一权威；页面只投影 API，不单独定义功能。
 
-1. [`docs/01-architecture.md`](docs/01-architecture.md)：单项目 SessionMemory 技术路线、目录与职责、Pi 编排和依赖方向。
-2. [`docs/02-data-model.md`](docs/02-data-model.md)：SessionMemory 单表、Session 一对一、模板与项目归属、JSON 约束和迁移边界。
-4. [`docs/04-ui-layout.md`](docs/04-ui-layout.md)：项目会话、SessionMemory 面板、模板选择、文件与检查布局。
-5. [`docs/05-requirements.md`](docs/05-requirements.md)：产品范围、需求编号、验收条件、非功能要求与明确不做事项。
+## 1. 权威文档
 
-## 强制阅读规则
+开始实现、重构、修复或评审前，先读与本次模型和 API 相关的文档。模型和 API 同时变化时读取 `01`、`02`、`03`、`05`；只有可见投影变化时才读 `04`。
 
-- 任何代码改动都必须先更新对应权威设计文档，再修改代码；包括实现、修复、重构、页面样式和交互调整。不得代码先行后补文档。
+| 文档 | 唯一职责 |
+| --- | --- |
+| [`docs/05-requirements.md`](docs/05-requirements.md) | 做什么、不做什么、何时算完成 |
+| [`docs/02-data-model.md`](docs/02-data-model.md) | 持久模型、字段、表、约束和迁移映射 |
+| [`docs/03-interaction-logic.md`](docs/03-interaction-logic.md) | 状态如何变化，以及 API 的入参、返回、事务和错误 |
+| [`docs/01-architecture.md`](docs/01-architecture.md) | 代码位置、依赖方向、模型与 Pi 的归属 |
+| [`docs/04-ui-layout.md`](docs/04-ui-layout.md) | 页面如何投影 API，不定义新事实或新接口 |
 
-- 修改目录、模块边界、依赖、SDK、服务端/客户端边界前，读 `01-architecture.md`。
-- 修改类型、数据库、Repository、SessionMemory 上下文装配或 Pi Session 引用前，读 `02-data-model.md`。
-- 修改页面、组件、导航、面板、文案、空状态或响应式行为前，读 `04-ui-layout.md`。
-- 新增或改造前端组件前，必须按 `01-architecture.md` 的“AI Elements 组件治理”检索官方组件；有语义匹配组件时优先通过 Feature Wrapper 接入。
-- AI Elements 没有合适组件或不能采用时，先在 `01-architecture.md` 登记评估对象、例外原因、替代位置和复核条件。
-- 开始任何产品功能前，在 `05-requirements.md` 中找到对应需求 ID 和验收条件；不存在时不得自行扩展范围。
+字段和表只在 `02` 定义，状态变化和 API 只在 `03` 定义，Pi 归属只在 `01` 定义，页面只引用 API。禁止在多份文档复制完整字段、SQL 或流程。
 
-## 事实来源与冲突处理
+## 2. 功能边界
 
-- `05-requirements.md` 决定“做什么”和“何时算完成”。
-- `02-data-model.md` 决定“哪些是持久事实”。
-- `03-interaction-logic.md` 决定“这些事实如何变化”。
-- `04-ui-layout.md` 决定“用户如何看见和操作”。
-- `01-architecture.md` 决定“代码放在哪里、允许依赖什么”。
-- 现有代码实现的是旧模型，不能反向覆盖五份文档。
-- 五份文档冲突时停止实现，先修正文档；禁止在代码中自行折中。
-- 架构、模型、交互、布局或需求变化时，必须在同一改动中更新对应文档。
-- 不在多份文档复制完整定义；字段以数据模型为准，流程以交互逻辑为准，其他文档只引用。
+1. 模型：持久对象、SQL 表、关系、状态事实，以及对象与 Pi Session 的归属。
+2. API：入参、返回值、许可、事务、错误，以及它读写哪些模型、调用哪些 Pi 能力。
 
-## 当前阶段规则
+页面布局、文案、样式和交互不是第三个功能要点。页面只展示 API 返回的模型和派生状态，只通过已定义 API 发出用户意图。
 
-- 从 2026-09-28 起，所有数据库改动必须兼顾已有历史数据；禁止为了适配新 Schema 自动清库、删除旧表或静默丢弃记录。
-- 数据迁移是否需要、是否执行由用户决定。先说明旧数据影响和迁移选项；用户确认需要后，提供可审查的迁移脚本，默认不运行脚本、不直接改写用户数据库。
-- 数据库表结构、约束、索引、Repository 与应用代码由助手按批准后的目标模型直接实现；数据迁移脚本与应用启动/schema 初始化分离，不以启动时隐式迁移替代用户决定。
-- 未获用户确认前，不执行会改写历史记录的迁移；若旧数据库无法安全兼容新 Schema，应明确阻止该数据库继续写入并报告所需步骤，不得用重建数据库绕过。
-- 顶层资源是 Project。每个项目 Session 固定绑定一个 Project 和一个独有项目 SessionMemory；项目 SessionMemory 只能服务该 Session。Session 用户消息直接进入 Pi 原生 transcript。
-- SessionMemory 相关持久数据只用 `session_memories` 一张表。SessionMemory 的 `projectId=null` 表示模板；项目 SessionMemory 的 `projectId` 必填，模板复制创建独立项目副本。`Session.sessionMemoryId` 对项目 Session 必填且唯一，不建 SessionMemory 内容子表或多对多关系表。
-- SessionMemory 只保存 `02-data-model.md` 定义的摘要、目标、约束、事实、决策、下一步和产出摘要，不保存工具、扩展、Agent、MCP、Skill 的 ID、配置、快照或启用选择。
-- 项目为空的运行资源只作为模板；复制后成为属于一个 Project 的独立实例，逐项目配置与调试。资源基础模型详细字段另行设计，不通过 SessionMemory JSON 或关系表临时实现。
-- Pi Agent 是唯一 Runtime；固定服务端模型只兼容 OpenAI Chat Completions，只读取项目根目录 `.env.local` 的 `OPENAI_BASE_URL`、`OPENAI_API_KEY`、`OPENAI_MODEL_ID`，SessionMemory/Session/Agent/UI 均不覆盖。
-- SessionMemory 数据只存数据库；当前阶段仅固定模式总结展示，不进入主 Pi 提示词或消息。Pi 原生 transcript、Runtime 句柄、原始 thinking、未脱敏工具结果、执行锁、订阅和 Client 不进入 SessionMemory。
-- `page.tsx` 和 `route.ts` 只做入口与装配，不承载完整业务实现。
-- 每项需求必须实现、测试并按 `05-requirements.md` 验收后，才能标记完成。
+没有新的模型事实或 API 契约，就不是新功能。修复必须落回两个要点之一，不能只改页面表现来掩盖模型或 API 错误。
+
+## 3. 改动顺序
+
+先改对应文档，再改代码。纯解释也不从页面倒推事实。
+
+```text
+需求 ID → 模型（对象、表、状态、Pi 归属） → API（入参、返回、事务、Pi 能力） → 页面只投影 API
+```
+
+### 3.1 模型
+
+- 在 `02` 定位本次读写的持久对象：Bot、BotConversation、Work、Task、Execution、Message、Session、SessionMemory、Agent、Project，或明确的新事实。
+- 写清职责、身份、归属、生命周期、不可变字段和关系。运行句柄、锁、订阅、流式文本、草稿和 UI 阶段不是持久模型。
+- 派生状态必须标明来源和计算规则，不能新增含糊状态字段代替事实。
+- 在 `03` 按时间写清触发者、读取记录、事务写入、成功、失败和 unknown 分别留下什么。
+- 事务写明表、关键列、外键、唯一约束、触发器、幂等键和禁止写入的列。不能只写 Repository 方法名。
+- 在 `01` 写明每个对象对应哪个 Pi Session，或明确它不拥有 transcript。协调会话与项目会话使用独立 Pi Session；`Execution.targetSessionId` 决定归属。
+- 列出实际使用的 Pi 能力：prompt、steer、custom message、custom entry、transcript 读取、abort、compaction、工具和原生证据。同时写明 cwd、nativeRef、session 文件和恢复身份。没有 Pi 交互时明确写“不调用 Pi”。
+- 可见 transcript 只保存该 Session 应展示的自然内容。消息 ID、来源、类型、执行 ID、协议包装和结构化验收结果只进入业务表或不可见 Pi 关联记录。
+
+### 3.2 API
+
+- 在 `03` 写明方法、路径、调用方、前置许可、入参、返回 DTO、错误码、幂等键和副作用。
+- 入参只携带定位和用户意图。归属、角色、权限和当前状态由服务端从数据库读取。
+- 返回值不包含原生绝对路径、密钥、句柄、原始 thinking 或未脱敏工具结果。
+- 写清读写模型和事务边界，以及调用的 Pi 能力。失败时写明哪些记录保持不变，哪些进入 failed 或 unknown，以及可执行的恢复动作。
+- `page.tsx` 和 `route.ts` 只做入口与装配。业务规则放在 application，SQL 放在 infrastructure/database，Pi SDK 调用放在 infrastructure/pi。
+
+### 3.3 页面投影
+
+- 只有模型或 API 需要新的可见结果时，才更新 `04`。
+- 可见区域只能显示 API 返回的模型、派生状态或所属 Pi transcript。协调会话、项目会话、Work/Task 元数据和恢复操作不能混成第二份对话。
+- 用户动作只能调用已定义 API。等待、成功和失败反馈来自该 API 的返回、错误码和许可，不在页面推导新业务状态。
+- 缺少显示所需数据时，先修正模型或 API，不为页面新增字段、状态副本或专用接口。
+- 新增可见组件前，先按 `01` 的“AI Elements 组件治理”检索官方组件。没有可复用组件时，先登记评估对象、例外原因、替代位置和复核条件。
+
+### 3.4 闸门
+
+- 文档冲突时停止实现，先修正文档。不能在代码中折中。
+- 现有代码、旧接口和页面文案不能反向覆盖文档。
+- 每项需求在 `05` 有需求 ID、验收条件和状态。不存在时先补需求，不自行扩展范围。
+- 完成后只核对两点：模型事实是否完整，API 是否按契约读写该模型并使用规定的 Pi 能力。页面只核对是否忠实投影 API。
+- 需求按 `05` 验收后才能标记完成。测试只证明已记录的验收条件，不替代文档。
+
+## 4. 测试
+
+默认不运行全量测试。`npm test`、`node --test tests/*.test.cjs` 和其他运行全部测试文件的命令不是常规验收命令。
+
+1. 函数级测试：领域规则、状态推导、边界判断、协议解析、DTO 或 Repository 条件。使用临时内存库或假依赖，不启动服务，不调用真实模型。
+2. API 测试：Route Handler 或 application service 的入参、许可、事务、返回 DTO、错误码和副作用。只覆盖本次 API，使用临时数据库和受控 Runtime。
+3. 页面渲染、生产构建、全套回归、真实模型或浏览器验收，只有用户明确要求，或函数级和 API 测试无法证明目标行为时才做。
+
+- 运行前说明测试文件、覆盖的函数或 API，以及不扩大范围的原因。
+- 一个改动涉及多个独立目标时，只并行运行对应测试文件，不因此升级为全量测试。
+- 类型检查只在类型边界变化时运行，不替代目标测试，也不附带全量测试。
+- 测试只用临时库、内存库或副本。不得为测试启动、停止或改写用户服务和用户数据库。
+- 现有测试不能覆盖时，先补充最小测试，再运行该测试。
+- 新的完成记录写明实际测试文件和目标。
+
+## 5. 持久化与迁移
+
+- 数据库改动必须兼顾已有历史数据。禁止为适配新 Schema 自动清库或静默丢弃记录。
+- 是否迁移、何时执行由用户决定。先说明旧数据影响和迁移选项；用户确认后提供可审查脚本。默认不运行脚本，不直接改写用户数据库。
+- 表结构、约束、索引、Repository 和应用代码按批准后的目标模型实现。迁移脚本与应用启动和 schema 初始化分离，不以启动时隐式迁移替代用户决定。
+- 未获用户确认前，不执行会改写历史记录的迁移。旧库无法安全兼容时，阻止继续写入并报告所需步骤，不得重建数据库绕过。
+- 允许新增、合并、拆分、重命名或退役表。变更前必须在 `02`“表数量与模型可读性”说明独立持久事实、现有问题、方案取舍、数量变化、关系总览和历史映射。
+- 不得把每个流程、状态、组件或潜在功能都拆成表，不提前建设通用任务平台。合并也不得用任意 JSON 隐藏归属、唯一性和必须查询的关系。
+- 表数量没有固定目标。现有 Bot 表是实现和迁移基线，不是必须保留的数量。表结构设计调整不等于历史库迁移授权。
+- 已完成的迁移授权只覆盖当时目标。后续任何迁移都须单独授权。执行前核对服务和数据库无其他打开连接，不操作用户服务启停。
+
+## 6. 运行边界
+
+- Pi Agent 是唯一 Runtime。固定服务端模型只兼容 OpenAI Chat Completions，只读取项目根目录 `.env.local` 的 `OPENAI_BASE_URL`、`OPENAI_API_KEY`、`OPENAI_MODEL_ID`。SessionMemory、Session、Agent 和 UI 均不覆盖。
+- 协调 Pi 使用 Bot 工作目录，项目 Pi 使用所属 `Project.rootPath`。Bot 原生历史保存于 `.data/bots/<botId>/pi-sessions`。不以 cwd 或“最近会话”推断业务归属。
+- 新建 Bot 可指定已有工作目录；留空时使用 `.data/bots/<botId>/workspace`。
+- Bot 的归属、Work、Task、依赖、Execution 和 Message 保存于 Bot 业务表，不写入 SessionMemory。完整对话历史归 Pi。Bot 总对话不绑定项目为空的 SessionMemory，也不冒充资源模板。
+- SessionMemory 只用 `session_memories` 一张表。`projectId=null` 表示模板；项目 SessionMemory 的 `projectId` 必填，模板复制后成为独立项目副本。`Session.sessionMemoryId` 必填、唯一、不可变，并与记忆所属 Project 保持组合外键一致。
+- SessionMemory 只保存 `02` 定义的摘要、目标、约束、事实、决策、下一步和产出摘要。不保存工具、扩展、Agent、MCP、Skill 的 ID、配置、快照或启用选择。
+- SessionMemory 当前只独立总结、展示和人工校正，不进入主 Pi 提示词或消息。自动和手动总结经 LLM 校验后直接更新 `contextJson`，无确认流程。历史 `draftJson` 仅保留，不阻塞、不自动采用、不静默删除。
+- Pi 原生 transcript、Runtime 句柄、原始 thinking、未脱敏工具结果、执行锁、订阅和 Client 不进入 SessionMemory。
+- Agent 就是角色。页面称“Agent”，内部分别称 Agent 和 agents，不另建 Role。正式定义是应用管理的版本化 Markdown；数据库只保留目录索引、状态、摘要及 Bot、Project 和会话关系，不保存新版本正文。
+- Agent 创建时没有 Bot 或 Project owner。保存定义不建立关系；新建 Bot 时才选择一个协调 Agent、项目集合及各项目的项目 Agent。项目和文件选择只用于本次生成或修订，不形成永久绑定或目录授权。
+- 用户上传的 Markdown，包括 OpenCode、Claude 和普通 Markdown，都交给独立无工具 LLM 转换为规范 Agent.md。knowledge-v2 的 OpenCode 定义只是参考样本，不自动加载、执行或授予旧工具和目录权限。
+- Agent 能力开关由用户明确选择，默认关闭。LLM 不授予能力。用户不手工编辑 Agent.md；创建和修改通过独立对话接收自然语言意见，右侧只读展示版本化 Markdown。
+- 无 Project 的其他项目执行资源只作为模板，复制成 Project 独立实例后使用。其他资源模型另行设计，不借 SessionMemory 临时实现。
+
+## 7. 当前设计入口
+
+当前 Bot 目标以各文档“当前规则”为准：
+
+- `02`：协调会话、Agent Markdown 绑定、项目范围与导航。
+- `03`：协调会话 API，以及独立 Agent 编辑与 Bot 绑定。
+- `04`：Bot 总对话页面投影，以及 Agent 列表与编辑工作区。
+- `05`：协调会话验收，以及 Agent Markdown 绑定验收。
+
+以下决定已经生效，不在代码中回退：
+
+- Bot、总对话和项目会话取代旧跨项目会话入口。数据库迁移仍须单独决定。
+- Agent Markdown 文件存储和 Bot 项目角色关系已完成。旧内容不自动变成正式角色。
+- 旧 Bot 数据和 Bot 项目 Session 绑定已删除；Project、Agent、项目 Session、SessionMemory 与项目 Pi 历史保留。
+- Agent owner、template 复制模型和固定表数量限制不再使用。
 
 <!-- BEGIN:nextjs-agent-rules -->
 
@@ -54,11 +135,3 @@ This version has breaking changes — APIs, conventions, and file structure may 
 This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
 
 <!-- END:nextjs-agent-rules -->
-
-- 跨项目会话当前仅保留页面入口及待设计空状态，不实现执行 API、编排或持久模型，等待用户另行定义。
-
-- SessionMemory 相关持久内容只使用 session_memories 单表，Session.sessionMemoryId 必填、唯一且不可变；sessions.session_memory_id 与记忆所属 Project 通过组合外键保持一致。
-
-- 自动和手动总结均通过 LLM 校验后直接更新 SessionMemory.contextJson，无确认流程；历史 draftJson 仅保留，不阻塞、不自动采用、不静默删除。
-
-- SessionMemory 为固定七部分指导线，目前只独立总结、展示及人工校正；校正只供后续独立总结，不自动干预主 LLM 思考或执行，Pi 原生上下文继续管理主会话。

@@ -1,9 +1,15 @@
+import {RoleVersion} from '../roles/role-version';
+import {useState,useEffect} from 'react';
+import {api} from '../../api/client';
+import type {Agent} from '../../domain/models';
+import {RoleSelector} from '../roles/role-selector';
 import {NativeContextSection} from "./native-context-section";
 import { RotateCcw } from "lucide-react";
 import type { Project, Session } from "../../domain/models";
 import { useProjectSession } from "../conversation/project-session/use-project-session";
 
 export function ProjectSessionInspector({ project, session }: { project: Project; session: ReturnType<typeof useProjectSession> }) {
+
   const active = session.sessions.find((item) => item.id === session.sessionId) ?? null;
   const agent = active?.agent ?? null;
   const mcpSnapshots = active?.mcps ?? [];
@@ -29,16 +35,17 @@ export function ProjectSessionInspector({ project, session }: { project: Project
       {active?.state === "unavailable" && <button className="session-inspector__action" onClick={() => void session.restore()}><RotateCcw size={13} />恢复工作线</button>}
       <p className="session-inspector__note">运行时由平台管理，不展示本地 transcript 文件或内部句柄。</p>
     </section>
-    <section className="session-inspector__section"><h2>Agent</h2>
-      <DetailRow label="执行配置" value={agent?.name ?? "平台默认"} />
-      {agent && <><DetailRow label="版本" value={`修订 ${agent.revision}`} /><DetailRow label="思考等级" value={agent.thinkingLevel ?? "平台默认"} /></>}
+    <section className="session-inspector__section"><h2>角色</h2>
+      <DetailRow label="执行配置" value={agent?.name ?? "待配置角色"} />
+      {agent && <><DetailRow label="版本" value={`修订 ${agent.revision}`} /></>}
     </section>
+    {active&&<RoleVersion key={active.id} state={active.roleState} snapshot={active.agentSnapshot} agentId={active.agentId} kind="project" projectId={project.id} projects={[project]} onRefresh={()=>session.selectSession(active.id)} onAdopt={async(id,revision,sha)=>{await api.configureSessionRole(project.id,active,id,revision,sha);await session.selectSession(active.id);}}/>}
     <section className="session-inspector__section"><h2>MCP</h2>
       {mcpSnapshots.length ? mcpSnapshots.map((mcp) => <DetailRow key={mcp.id} label={mcp.name} value={mcp.accessPolicy === "read_only" ? "只读" : mcp.accessPolicy === "approval" ? "需审批" : "按策略运行"} />) : <p className="session-inspector__empty">此工作线没有绑定 MCP。</p>}
     </section>
     <section className="session-inspector__section"><h2>Skills</h2>
       <DetailRow label="Skill 配置" value={`${agent?.skills.length ?? 0} 项`} />
-      {agent?.skills.length ? <div className="session-inspector__tags">{agent.skills.map((skill) => <span key={skill}>{skill}</span>)}</div> : <p className="session-inspector__empty">Agent 未配置专属 Skill；Pi 仍按项目与用户配置发现可用 Skill。</p>}
+      {agent?.skills.length ? <div className="session-inspector__tags">{agent.skills.map((skill) => <span key={skill}>{skill}</span>)}</div> : <p className="session-inspector__empty">本版角色不启用隐式 Skill。</p>}
     </section>
   </div>;
 }

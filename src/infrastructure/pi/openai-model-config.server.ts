@@ -107,7 +107,7 @@ export async function createOpenAIModelRuntime() {
       api: "openai-completions",
       baseUrl: environment.baseUrl,
       reasoning: false,
-      input: ["text"],
+      input: ["text", "image"],
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       contextWindow: knownContextWindow ?? 128_000,
       maxTokens: 16_384,

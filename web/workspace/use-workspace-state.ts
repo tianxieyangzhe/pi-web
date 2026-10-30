@@ -6,7 +6,6 @@ export function useWorkspaceState() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [mcps, setMcps] = useState<Mcp[]>([]);
-  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
 
@@ -15,13 +14,11 @@ export function useWorkspaceState() {
     try {
       const [nextProjects, nextAgents, nextMcps] = await Promise.all([api.listProjects(), api.listAgents(), api.listMcps()]);
       setProjects(nextProjects); setAgents(nextAgents); setMcps(nextMcps);
-      setSelectedProjectId((current) => current && nextProjects.some((item) => item.id === current) ? current : nextProjects[0]?.id ?? null);
     } catch (cause) { setError(cause instanceof Error ? cause.message : "无法加载工作区"); }
     finally { setLoading(false); }
   }, []);
   useEffect(() => { void reload(); }, [reload]);
 
-  function selectProject(id: string) { setSelectedProjectId(id); }
   async function saveResource(kind: "project" | "agent" | "mcp", id: string | null, body: Record<string, unknown>) {
     try {
       if (kind === "project") id ? await api.updateProject(id, body) : await api.createProject(body);
@@ -38,5 +35,5 @@ export function useWorkspaceState() {
       await reload();
     } catch (cause) { setError(cause instanceof Error ? cause.message : "无法删除资源"); }
   }
-  return { projects, agents, mcps, selectedProjectId, selectProject, reload, saveResource, deleteResource, error, setError, loading };
+  return { projects, agents, mcps, reload, saveResource, deleteResource, error, setError, loading };
 }
