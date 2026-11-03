@@ -37,7 +37,7 @@ export function createNativeContextService(deps:{sessions:SessionRepositoryPort;
       acquireSession(sessionId);
       const operation:CompactionOperation={running:true,cancelRequested:false,cancelled:false,error:null};operations.set(sessionId,operation);
       try{
-        let handle=deps.runtime.getHandle(sessionId);if(!handle)handle=await deps.runtime.restore(value.input);
+        const handle=deps.runtime.getHandle(sessionId);if(!handle)throw new DomainError("RUNTIME_NOT_OPEN","请先打开项目会话",409,true);
         const preflight=await deps.runtime.inspect(value.input);
         if(!preflight.canCompact)throw new DomainError("NOTHING_TO_COMPACT",preflight.unavailableReason??"原生会话无需压缩",409,true);
         operation.handle=handle;

@@ -4,6 +4,8 @@ import { api } from "../../api/client";
 import { botApi } from "../../api/bot-client";
 import type { FileEntry, Project } from "../../domain/models";
 import type { ProjectMessageReference, BotMessageReference } from "../../../src/domain/message-references";
+import { validateAttachments } from "./clipboard";
+import { ErrorToast } from "./error-toast";
 type DirectoryReference = ProjectMessageReference | BotMessageReference;
 type BotWorkspace = {botId: string; conversationId: string};
 function sameReference(left: DirectoryReference, right: DirectoryReference) {
@@ -16,19 +18,18 @@ export function ReferencePicker({ selected, onChange, disabled, projectCount = 0
   function add(files: FileList | null) {
     if (!files?.length) return;
     const next = [...selected, ...Array.from(files)];
-    if (next.length + projectCount > 10) { setError("最多上传 10 个参考文件"); return; }
-    if (next.some(file => file.size > 2 * 1024 * 1024) || next.reduce((sum, file) => sum + file.size, 0) > 8 * 1024 * 1024) { setError("参考文件单个不能超过 2 MiB，合计不能超过 8 MiB"); return; }
+    try { validateAttachments(next, projectCount); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : "文件不可用"); return; }
     setError(""); onChange(next);
   }
   return <div className="reference-picker">
-    {selected.length > 0 && <div className="reference-picker__selected">{selected.map((file, index) => <span key={index}>{file.name}<button type="button" aria-label={`移除 ${file.name}`} disabled={disabled} onClick={() => onChange(selected.filter((_, i) => i !== index))}><X size={13}/></button></span>)}</div>}
     <input ref={input} type="file" multiple hidden disabled={disabled} onChange={event => { add(event.target.files); event.target.value = ""; }} />
     <button type="button" className="reference-picker__trigger" disabled={disabled} onClick={() => input.current?.click()}><Paperclip size={15}/> 上传文件</button>
-    {error && <p role="alert">{error}</p>}
+    <ErrorToast message={error} onDismiss={() => setError("")} />
   </div>;
 }
 
-export function ProjectReferencePicker({ projects, workspace, selected, onChange, disabled, uploadCount }: { projects: Project[]; workspace?: BotWorkspace; selected: DirectoryReference[]; onChange: (references: DirectoryReference[]) => void; disabled?: boolean; uploadCount: number }) {
+export function ProjectReferencePicker({ projects, workspace, selected, onChange, disabled, uploadCount, onDone }: { projects: Project[]; workspace?: BotWorkspace; selected: DirectoryReference[]; onChange: (references: DirectoryReference[]) => void; disabled?: boolean; uploadCount: number; onDone?: () => void }) {
   const [open, setOpen] = useState(false);
   const [projectId, setProjectId] = useState("");
   const [path, setPath] = useState("");
@@ -51,9 +52,8 @@ export function ProjectReferencePicker({ projects, workspace, selected, onChange
     setError(""); onChange(exists ? selected.filter(value => !sameReference(value, item)) : [...selected, item]);
   }
   return <div className="reference-picker">
-    {selected.length > 0 && <div className="reference-picker__selected">{selected.map(item => <span key={JSON.stringify(item)}>{"source" in item ? "Bot 工作目录" : projects.find(project => project.id === item.projectId)?.name ?? "项目"} / {item.path}<button type="button" disabled={disabled} aria-label={`移除 ${item.path}`} onClick={() => toggle(item)}><X size={13}/></button></span>)}</div>}
     <button type="button" className="reference-picker__trigger" disabled={disabled || !workspace && !projects.length} onClick={() => { setProjectId(workspace ? "bot:" : projects[0] ? `project:${projects[0].id}` : ""); setPath(""); setError(""); setOpen(true); }}><Folder size={15}/> 参考项目文件</button>
-    {open && <dialog ref={dialog} className="reference-picker__dialog" aria-label="参考项目文件" onClose={() => setOpen(false)}>
+    {open && <dialog ref={dialog} className="reference-picker__dialog" aria-label="参考项目文件" onClose={() => { setOpen(false); onDone?.(); }}>
       <header><b>参考项目文件</b><button type="button" aria-label="关闭" onClick={() => dialog.current?.close()}><X size={16}/></button></header>
       <div className="reference-picker__projects">{workspace && <button type="button" aria-pressed={projectId === "bot:"} onClick={() => { setProjectId("bot:"); setPath(""); }}>Bot 工作目录</button>}{projects.map(project => <button type="button" key={project.id} aria-pressed={projectId === `project:${project.id}`} onClick={() => { setProjectId(`project:${project.id}`); setPath(""); }}>{project.name}</button>)}</div>
       <div className="reference-picker__path"><span>{path || "项目根目录"}</span>{path && <button type="button" onClick={() => setPath(path.split(/[\\/]/).slice(0,-1).join("/"))}>上一级</button>}</div>

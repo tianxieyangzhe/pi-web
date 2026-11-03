@@ -17,9 +17,13 @@ export type SessionRuntimeInput = {
 
 export interface PiRuntimePort {
   getHandle(sessionId: string, input?: SessionRuntimeInput): PiSessionHandle | undefined;
+  isBusy?(handle: PiSessionHandle): boolean;
+  subscribe?(handle: PiSessionHandle, listener: (event: AgentEvent) => void): () => void;
   open(input: SessionRuntimeInput): Promise<{ handle: PiSessionHandle; nativeRef: JsonObject }>;
   restore(input: SessionRuntimeInput): Promise<PiSessionHandle>;
-  send(handle: PiSessionHandle, message: string, emit: (event: AgentEvent) => void, onAssistantStream?: () => void, references?: import("@/domain/message-references").ReferenceContent): Promise<void>;
+  initializeProject?(input: SessionRuntimeInput, commit: (ref: JsonObject) => JsonObject): Promise<PiSessionHandle>;
+  readTree?(input: SessionRuntimeInput): Promise<{ entries: Array<{ entry: unknown; label: string | null; labelTimestamp: string | null }>; activeLeafId: string | null }>;
+  send(handle: PiSessionHandle, message: string, emit: (event: AgentEvent) => void, onAssistantStream?: () => void, references?: import("@/domain/message-references").ReferenceContent, allowProjectWrite?: boolean): Promise<void>;
   interrupt(handle: PiSessionHandle): Promise<void>;
   projectHandle?(input: SessionRuntimeInput): Promise<import("@/infrastructure/pi/coordinator-bridge-plugin").ProjectSessionHandle>;
   readMessages(input: SessionRuntimeInput): Promise<Array<{

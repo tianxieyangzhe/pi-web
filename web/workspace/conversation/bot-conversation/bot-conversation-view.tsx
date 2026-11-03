@@ -2,7 +2,8 @@ import type { ReactNode } from "react";
 import type { Project } from "../../../domain/models";
 import type { BotProjectCall } from "../../../domain/bot";
 import type { useBotConversation } from "./use-bot-conversation";
-import { Conversation } from "../ai-elements/conversation";
+import { Conversation } from "../project-session/conversation";
+import { ErrorToast } from "../error-toast";
 import { PromptInput } from "../prompt-input";
 
 const callErrors: Record<BotProjectCall["status"], string | null> = {
@@ -23,21 +24,21 @@ export function BotConversationView({ state, projects }: { state: ReturnType<typ
     if (!anchor) continue;
     const previous = cards.get(anchor);
     const error = call.outputError ?? callErrors[call.status];
-    const card = <details className="activity activity-request project-call-card" key={call.id}>
-      <summary className="activity__heading activity-round__summary"><span>{projectName(call.projectId)} · 项目输出 {index + 1}</span><span>{call.status}</span></summary>
-      <div className="activity-request__rounds">{error ? <p role="alert">{error}</p> : <div className="message__content">{call.output}</div>}</div>
+    const card = <details className="min-w-0 rounded-md border border-zinc-200 bg-zinc-50/50" key={call.id}>
+      <summary className="flex cursor-pointer items-center justify-between gap-2 px-3 py-1.5 text-xs text-zinc-600"><span>{projectName(call.projectId)} · 项目输出 {index + 1}</span><span>{call.status}</span></summary>
+      <div className="min-w-0 whitespace-pre-wrap border-t border-zinc-200 px-3 py-2 text-sm leading-6">{error ? <p role="alert">{error}</p> : <div className="message__content">{call.output}</div>}</div>
     </details>;
     cards.set(anchor, <>{previous}{card}</>);
   }
-  const blockedReason = !detail ? "正在加载协调会话…" : detail.bot.status !== "active" ? "Bot 已停用。" : detail.conversation.roleState?.available === false ? detail.conversation.roleState.reason ?? "协调 Agent 不可用。" : undefined;
+  const blockedReason = !state.ready ? "正在连接协调会话…" : !detail ? "正在加载协调会话…" : detail.bot.status !== "active" ? "Bot 已停用。" : detail.conversation.roleState?.available === false ? detail.conversation.roleState.reason ?? "协调 Agent 不可用。" : undefined;
 
   return <main className="surface">
-    <header className="surface__header"><div><span className="eyebrow">{detail?.bot.name ?? "Bot"} / 协调会话</span><h1>{detail?.conversation.title ?? "正在加载…"}</h1><p>{detail?.conversation.goal || "消息直接进入此协调会话。"}</p></div></header>
-    <div className="surface__body"><div className="content-width">
-      {!state.messages.length && !state.pendingText && !state.liveEntries.length && <div className="empty-state"><h2>协调会话准备就绪</h2><p>输入需求后将直接进入协调会话。</p></div>}
-      {state.error && <button className="error-banner" onClick={() => state.setError("")}>{state.error}</button>}
-      <Conversation messages={state.messages.map(message => ({ ...message, sessionId: detail?.conversation.id ?? "" }))} pendingText={state.pendingText} streamingText="" activities={[]} liveEntries={state.liveEntries} running={state.running} waitingText={state.running && !state.liveEntries.length ? "正在等待协调会话响应" : ""} afterTurns={cards} />
+    <header className="surface__header min-h-0! px-3! py-3! sm:px-4! [&_h1]:mt-1! [&_h1]:text-lg! [&_p]:mt-1!"><div><span className="eyebrow">{detail?.bot.name ?? "Bot"} / 协调会话</span><h1>{detail?.conversation.title ?? "正在加载…"}</h1><p>{detail?.conversation.goal || "消息直接进入此协调会话。"}</p></div></header>
+    <div className="min-h-0 flex-1 overflow-auto px-3 py-3 sm:px-4"><div className="mx-auto w-full min-w-0">
+      {!state.messages.length && !state.pendingText && !state.temporary.length && <div className="empty-state"><h2>协调会话准备就绪</h2><p>输入需求后将直接进入协调会话。</p></div>}
+      <ErrorToast message={state.error || state.actionErrors.coordinator} onDismiss={() => { state.setError(""); state.clearActionError(); }} />
+      <Conversation tree={state.tree} temporary={state.temporary} pendingText={state.pendingText} running={state.running} afterTurns={cards} />
     </div></div>
-    <footer className="composer">{state.actionErrors.coordinator && <button className="error-banner" onClick={() => state.clearActionError()}>{state.actionErrors.coordinator}</button>}<PromptInput draftKey={`bot:${detail?.conversation.id ?? "pending"}`} placeholder={`直接交给 ${detail?.conversation.title ?? "协调会话"} 处理`} running={state.running} blocked={!!blockedReason} blockedReason={blockedReason} referenceWorkspace={detail ? {botId:detail.bot.id, conversationId:detail.conversation.id} : undefined} referenceProjects={projects.filter(project => project.status === "active" && detail?.conversation.projectBindings?.some(binding => binding.projectId === project.id))} onSubmit={(value, references) => state.send(value,undefined,references)} /></footer>
+    <footer className="composer px-3! py-2! sm:px-4!"><PromptInput draftKey={`bot:${detail?.conversation.id ?? "pending"}`} placeholder={`直接交给 ${detail?.conversation.title ?? "协调会话"} 处理`} running={state.running} blocked={!!blockedReason} blockedReason={blockedReason} referenceWorkspace={detail ? {botId:detail.bot.id, conversationId:detail.conversation.id} : undefined} referenceProjects={projects.filter(project => project.status === "active" && detail?.conversation.projectBindings?.some(binding => binding.projectId === project.id))} onSubmit={(value, references) => state.send(value,undefined,references)} /></footer>
   </main>;
 }

@@ -1,4 +1,4 @@
-import type { Bot, BotConversation, BotParticipant, BotDetail, BotOverview, BotNativeMessage, BotLiveEvent, BotMessage } from '../domain/bot';
+import type { Bot, BotConversation, BotParticipant, BotDetail, BotOverview, BotMessage } from '../domain/bot';
 import type { NativeContextInspection } from '../domain/native-context';
 import type { FilePreview, ProjectFileListing } from '../domain/models';
 async function request<T>(url: string, method = 'GET', body?: unknown, etag?: string) {
@@ -39,12 +39,7 @@ export const botApi = {
   cancelQueued:(b:string,c:string,executionId:string)=>request<BotDetail>(base(b,c)+'/executions/'+executionId+'/cancel','POST'),
   stopWork:(b:string,c:string,workId:string)=>request<BotDetail>(base(b,c)+'/works/'+workId+'/stop','POST'),
   configureRole:(b:string,c:BotConversation,agentId:string,revision?:number,contentSha256?:string)=>request<BotDetail>(base(b,c.id)+"/role","POST",{agentId,revision,contentSha256},c.writeETag),
-  messages: (b: string, c: string) => request<BotNativeMessage[]>(base(b, c) + '/messages'),
-  subscribeLive: (b:string,c:string,onEvent:(event:BotLiveEvent)=>void) => {
-    const source=new EventSource(base(b,c)+'/events');
-    source.onmessage=message=>{try{onEvent(JSON.parse(message.data) as BotLiveEvent);}catch{}};
-    return ()=>source.close();
-  },
+  messages: (b: string, c: string) => request<import("../domain/models").SessionTree>(base(b, c) + '/messages'),
   send: (b: string, c: string, content: string, targetSessionId?: string, steer = false, references?: import("../../src/domain/message-references").MessageReference[]) => request<BotMessage>(base(b, c) + '/messages', 'POST', {
     content,
     targetSessionId,

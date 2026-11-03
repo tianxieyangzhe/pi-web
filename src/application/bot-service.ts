@@ -1,3 +1,5 @@
+import { SessionEvents } from "./session-events";
+import { SessionPresence } from "./session-presence";
 import { createBotConfiguration } from "./bots/configuration-service";
 import { roleState } from "@/domain/role-state";
 import type { AgentSnapshot, Session } from "@/domain/models";
@@ -43,6 +45,12 @@ export function createBotService(d: BotServiceDependencies) {
   const configuration = createBotConfiguration(d, { bot, conversation, eligible, role, participantForSession, wake: () => undefined, detail });
   const subscribers = new Map<string, Set<(event: BotLiveEvent) => void>>();
 
+  const observers = new Map<string, () => void>();
+  const opening = new Map<string, Promise<void>>();
+  const openKeys = new Map<string, { id: string; expires: number; result: Promise<{ leaseId: string; status: string; outcome: null }> }>();
+  const presence = new SessionPresence({ busy: id => active.has(id), abort: id => d.runtime.abort("bot:" + id), release: async id => { observers.get(id)?.(); observers.delete(id); await d.runtime.close?.("bot:" + id); } });
+  const events = new SessionEvents(presence);
+
   function bot(botId: string) {
     const value = r.get("bots", botId);
     if (!value) throw new DomainError("NOT_FOUND", "Bot 不存在", 404, true);
@@ -69,6 +77,7 @@ export function createBotService(d: BotServiceDependencies) {
     return r.parentForSession(sessionId) ? d.sessions.get(sessionId) : null;
   }
   function publish(conversationId: string, event: BotLiveEvent) {
+    if (event.type === "project_call") events.publish(conversationId, { sessionId: conversationId, runId: null, sequence: null, type: "project_call", entryId: null, temporaryId: null, payload: event });
     for (const listener of subscribers.get(conversationId) ?? []) { try { listener(event); } catch { /* observer failure is isolated */ } }
   }
   function projectFor(projectId: string) {
@@ -87,8 +96,6 @@ export function createBotService(d: BotServiceDependencies) {
     return d.sessions.get(created.id)!;
   }
   async function sessionHandle(session: Session): Promise<ProjectSessionHandle> {
-    const cached = handles.get(session.id);
-    if (cached) return cached;
     if (!d.runtime.projectHandle) throw new DomainError("RUNTIME_ERROR", "项目会话端口不可用", 503, true);
     const project = projectFor(session.projectId);
     const snapshot = isRoleSnapshot(session.agentSnapshot) ? session.agentSnapshot : null;
@@ -171,6 +178,30 @@ export function createBotService(d: BotServiceDependencies) {
   return {
     ...configuration,
     referenceContractVersion: 7,
+    events,
+    async open(botId: string, conversationId: string, key: string) {
+      const c = conversation(conversationId, botId);
+      for (const [storedKey, entry] of openKeys) if (entry.expires <= Date.now()) openKeys.delete(storedKey);
+      const previous = openKeys.get(key);
+      if (previous) { if (previous.id !== conversationId) throw new DomainError("IDEMPOTENCY_CONFLICT", "打开幂等键已用于其他会话", 409, true); return previous.result; }
+      const result = (async () => {
+      if (!d.runtime.open) throw new DomainError("RUNTIME_NOT_OPEN", "协调运行端口需要更新", 503, true);
+      let pending = opening.get(c.id);
+      if (!pending) {
+        pending = d.runtime.open(runtimeInput(c), ref => { if (!c.nativeRef) r.update("bot_conversations", c.id, { nativeRef: ref }); }).then(() => {
+          if (!observers.has(c.id) && d.runtime.subscribe) observers.set(c.id, d.runtime.subscribe("bot:" + c.id, event => events.agent(c.id, event)));
+        }).finally(() => opening.delete(c.id));
+        opening.set(c.id, pending);
+      }
+      await pending;
+      return { leaseId: presence.open(c.id), status: active.has(c.id) ? "running" : "ready", outcome: null };
+      })();
+      openKeys.set(key, { id: conversationId, expires: Date.now() + 600_000, result });
+      try { return await result; } catch (error) { openKeys.delete(key); throw error; }
+    },
+    pong(botId: string, conversationId: string, connectionId: string, challenge: string) { conversation(conversationId, botId); events.pong(conversationId, connectionId, challenge); },
+    closeLease(botId: string, conversationId: string, leaseId: string) { conversation(conversationId, botId); presence.release(conversationId, leaseId); },
+    assertLease(botId: string, conversationId: string, leaseId: string) { conversation(conversationId, botId); presence.assertLease(conversationId, leaseId); },
     list: () => ({ available: r.available(), bots: r.list("bots").map(item => ({ ...item, projectBindings: r.botConfiguration(item.id), writeETag: botETag({ ...item, projectBindings: r.botConfiguration(item.id) }) })), conversations: r.list("bot_conversations").map(item => ({ ...item, status: "open" as const, projectBindings: r.conversationConfiguration(item.id), writeETag: botETag({ ...item, projectBindings: r.conversationConfiguration(item.id) }), stats: r.conversationStats(item.id) })), participants: r.list("bot_conversations").flatMap(item => r.participants(item.id).map(participant => { const session = d.sessions.get(participant.id), project = session ? d.projects.get(session.projectId) : null; return { ...participant, projectId: session?.projectId ?? "", projectName: project?.name, roleName: session?.agentSnapshot && "name" in session.agentSnapshot ? session.agentSnapshot.name : participant.participantName ?? "项目会话", topic: session?.purpose, writeETag: botETag(participant) }; })) }),
     detail, participantForSession,
     assertSessionAllowed(sessionId: string) { if (participantForSession(sessionId)?.botConversationId) throw new DomainError("SESSION_ALREADY_ATTACHED", "纳入协调会话的项目 Session 不能直接输入", 409, true); },
@@ -194,16 +225,16 @@ export function createBotService(d: BotServiceDependencies) {
       const referenceContent = parseMessageReferences(references, new Set(bound.map(item => item.projectId)), d.readProjectReference, d.readBotReference ? ref => d.readBotReference!(owner.workingDirectory, ref.path) : undefined);
       const controller = new AbortController(); active.set(conversationId, controller); sessionLocks.add("bot:" + conversationId);
       let released = false;
-      const release = () => { if (released) return; released = true; active.delete(conversationId); sessionLocks.delete("bot:" + conversationId); };
+      const release = () => { if (released) return; released = true; active.delete(conversationId); sessionLocks.delete("bot:" + conversationId); presence.settled(conversationId); };
       const started = performance.now();
       coordinatorDiagnostic({ conversationId, stage: "run_start" });
-      void d.runtime.run({ ...runtimeInput(c), referenceContent }, text, ref => { if (!c.nativeRef) r.update("bot_conversations", c.id, { nativeRef: ref }); }, event => { publish(conversationId, { type: "event", event }); if (event.type === "complete" || event.type === "error") { coordinatorDiagnostic({ conversationId, stage: event.type === "complete" ? "run_complete_event" : "run_error_event", elapsedMs: Math.round(performance.now() - started) }); release(); } })
+      void d.runtime.run({ ...runtimeInput(c), referenceContent }, text, ref => { if (!c.nativeRef) r.update("bot_conversations", c.id, { nativeRef: ref }); }, event => { publish(conversationId, { type: "event", event }); if (event.type !== "pi_event" && event.type !== "entry_link") events.agent(conversationId, event); if (event.type === "complete" || event.type === "error") { coordinatorDiagnostic({ conversationId, stage: event.type === "complete" ? "run_complete_event" : "run_error_event", elapsedMs: Math.round(performance.now() - started) }); } })
         .then(() => { coordinatorDiagnostic({ conversationId, stage: "run_returned", elapsedMs: Math.round(performance.now() - started) }); })
-        .catch(error => { coordinatorDiagnostic({ conversationId, stage: "run_failed", errorCode: coordinatorErrorCode(error), elapsedMs: Math.round(performance.now() - started) }); publish(conversationId, { type: "error", code: error instanceof DomainError ? error.code : "RUNTIME_ERROR", message: error instanceof Error ? error.message : "协调会话失败" }); })
+        .catch(error => { coordinatorDiagnostic({ conversationId, stage: "run_failed", errorCode: coordinatorErrorCode(error), elapsedMs: Math.round(performance.now() - started) }); events.agent(conversationId, { type: "error", recoverable: true, code: "RUNTIME_ERROR", message: "协调会话执行失败，请核对历史" }); publish(conversationId, { type: "error", code: error instanceof DomainError ? error.code : "RUNTIME_ERROR", message: error instanceof Error ? error.message : "协调会话失败" }); })
         .finally(release);
       return { accepted: true, conversationId };
     },
-    async messages(botId: string, conversationId: string) { const c = conversation(conversationId, botId); return c.nativeRef ? d.runtime.messages(runtimeInput(c)) : []; },
+    async messages(botId: string, conversationId: string) { const c = conversation(conversationId, botId); if (!d.runtime.readTree) throw new DomainError("SESSION_TREE_READ_FAILED", "协调树读取端口不可用", 503, true); return d.runtime.readTree(runtimeInput(c)); },
     subscribeLive(botId: string, conversationId: string, listener: (event: BotLiveEvent) => void) {
       conversation(conversationId, botId); const set = subscribers.get(conversationId) ?? new Set(); set.add(listener); subscribers.set(conversationId, set); return () => set.delete(listener);
     },

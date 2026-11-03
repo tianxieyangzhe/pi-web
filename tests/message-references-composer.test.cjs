@@ -13,32 +13,33 @@ function harness(onSubmit){hooks=[];function render(){index=0;effects=[];const t
 test('composer sends uploaded snapshots, retains files and draft on rejection, clears on acceptance',async()=>{
  const files=[{name:'a.txt',bytes:'hello'},{name:'b.png',bytes:'img'}];let reject=true,received;
  const h=harness(async(text,items)=>{received={text,items};if(reject)throw Error('invalid');});h.render();h.change('hello');h.select(files);await h.submit();
- assert.deepEqual(received,{text:'hello',items:[{name:'a.txt',data:'aGVsbG8='},{name:'b.png',data:'aW1n'}]});assert.deepEqual(h.render().props.children[1].props.children[0].props.selected,files);assert.equal(h.render().props.children[0].props.value,'hello');
+ assert.deepEqual(received,{text:'hello',items:[{name:'a.txt',data:'aGVsbG8='},{name:'b.png',data:'aW1n'}]});assert.deepEqual(h.render().props.children[1].props.children[0].props.selected,files);assert.equal(require('../web/workspace/conversation/inline-composer-document.ts').composerText(h.render().props.children[0].props.value),'hello');
  reject=false;await h.submit();assert.deepEqual(h.render().props.children[1].props.children[0].props.selected,[]);
 });
-test('selected files appear below compact reference buttons',()=>{
- const h=harness(()=>{});h.render();h.select([{name:'a',bytes:'A'}]);const group=h.render().props.children[1];assert.equal(group.props.className,'prompt-input__references');assert.equal(group.props.children[0].type,ReferencePicker);assert.equal(group.props.children[1].type,ProjectReferencePicker);
- const css=fs.readFileSync(require('node:path').join(__dirname,'../web/styles/app.css'),'utf8');assert.match(css,/\.prompt-input__references\s*\{[^}]*display:\s*flex[^}]*row-gap:\s*8px[^}]*padding:\s*0 12px 10px/);assert.match(css,/\.prompt-input__references\s+\.reference-picker__selected\s*\{[^}]*order:\s*1[^}]*flex:\s*0 0 100%/);
+test('composer keeps attachment blocks inside the editable document and only selectors in toolbar',()=>{
+ const h=harness(()=>{});h.render();h.select([{name:'a',bytes:'A'}]);const tree=h.render(),group=tree.props.children[1];
+ assert.match(group.props.className,/prompt-input__references/);assert.equal(group.props.children[0].type,ReferencePicker);assert.equal(group.props.children[1].type,ProjectReferencePicker);
+ assert.equal(tree.props.children[0].props.attachments.length,1);
+ assert.match(tree.props.children[0].props.value,/a|\uE000/);
 });
-test('upload picker supports multiple files, removal and limits without project',()=>{
+test('upload picker supports multiple files and limits without a separate selected list',()=>{
  hooks=[];let selected=[];function render(){index=0;effects=[];const tree=ReferencePicker({selected,onChange:files=>{selected=files;}});for(const effect of effects)effect();return tree;}
- let tree=render();const input=tree.props.children[1];assert.equal(input.props.type,'file');assert.equal(input.props.multiple,true);input.props.onChange({target:{files:[{name:'a',size:1},{name:'b',size:2}],value:'x'}});assert.equal(selected.length,2);
- tree=render();tree.props.children[0].props.children[0].props.children[1].props.onClick();assert.deepEqual(selected.map(x=>x.name),['b']);
- tree=render();tree.props.children[1].props.onChange({target:{files:[{name:'big',size:2*1024*1024+1}],value:'x'}});assert.equal(selected.length,1);assert.match(render().props.children[3].props.children,/容量|超过/);
+ let tree=render();const input=tree.props.children[0];assert.equal(input.props.type,'file');assert.equal(input.props.multiple,true);input.props.onChange({target:{files:[{name:'a',size:1},{name:'b',size:2}],value:'x'}});assert.equal(selected.length,2);
+ tree=render();tree.props.children[0].props.onChange({target:{files:[{name:'big',size:2*1024*1024+1}],value:'x'}});assert.equal(selected.length,2);assert.match(render().props.children[2].props.message,/容量|超过|MiB/);
 });
 test('project reference selector opens project directory browser without path input',async()=>{
  hooks=[];const old=api.listFiles;let calls=[],selected=[];api.listFiles=async(id,path)=>{calls.push([id,path]);return {entries:[{name:'src',path:'src',type:'directory'},{name:'a.txt',path:'a.txt',type:'file'}],truncated:false};};
  function render(){index=0;effects=[];const tree=ProjectReferencePicker({projects:[{id:'p',name:'P'}],selected,onChange:next=>{selected=next;},uploadCount:0});for(const effect of effects)effect();return tree;}
- try{let tree=render();assert.equal(tree.props.children[1].props.disabled,false);tree.props.children[1].props.onClick();render();await Promise.resolve();tree=render();const dialog=tree.props.children[2];assert.equal(dialog.type,'dialog');assert.equal(dialog.props['aria-label'],'参考项目文件');assert.deepEqual(calls,[['p','']]);const entries=dialog.props.children[3].props.children[0];entries[1].props.children[0].props.onChange();assert.deepEqual(selected,[{projectId:'p',path:'a.txt'}]);entries[0].props.onClick();render();await Promise.resolve();assert.deepEqual(calls,[['p',''],['p','src']]);}finally{api.listFiles=old;}
+ try{let tree=render();assert.equal(tree.props.children[0].props.disabled,false);tree.props.children[0].props.onClick();render();await Promise.resolve();tree=render();const dialog=tree.props.children[1];assert.equal(dialog.type,'dialog');assert.equal(dialog.props['aria-label'],'参考项目文件');assert.deepEqual(calls,[['p','']]);const entries=dialog.props.children[3].props.children[0];entries[1].props.children[0].props.onChange();assert.deepEqual(selected,[{projectId:'p',path:'a.txt'}]);entries[0].props.onClick();render();await Promise.resolve();assert.deepEqual(calls,[['p',''],['p','src']]);}finally{api.listFiles=old;}
 });
 test('Bot workspace is the default reference source without project bindings',async()=>{
- hooks=[];const old=botApi.referenceFiles;let calls=[],selected=[];botApi.referenceFiles=async(b,c,p)=>{calls.push([b,c,p]);return {entries:[{name:'a',path:'a',type:'file'}],truncated:false};};function render(){index=0;effects=[];const tree=ProjectReferencePicker({projects:[],workspace:{botId:'b',conversationId:'c'},selected,onChange:next=>{selected=next;},uploadCount:0});for(const effect of effects)effect();return tree;}try{let tree=render();assert.equal(tree.props.children[1].props.disabled,false);tree.props.children[1].props.onClick();render();await Promise.resolve();tree=render();assert.deepEqual(calls,[['b','c','']]);tree.props.children[2].props.children[3].props.children[0][0].props.children[0].props.onChange();assert.deepEqual(selected,[{source:'bot',path:'a'}]);}finally{botApi.referenceFiles=old;}
+ hooks=[];const old=botApi.referenceFiles;let calls=[],selected=[];botApi.referenceFiles=async(b,c,p)=>{calls.push([b,c,p]);return {entries:[{name:'a',path:'a',type:'file'}],truncated:false};};function render(){index=0;effects=[];const tree=ProjectReferencePicker({projects:[],workspace:{botId:'b',conversationId:'c'},selected,onChange:next=>{selected=next;},uploadCount:0});for(const effect of effects)effect();return tree;}try{let tree=render();assert.equal(tree.props.children[0].props.disabled,false);tree.props.children[0].props.onClick();render();await Promise.resolve();tree=render();assert.deepEqual(calls,[['b','c','']]);tree.props.children[1].props.children[3].props.children[0][0].props.children[0].props.onChange();assert.deepEqual(selected,[{source:'bot',path:'a'}]);}finally{botApi.referenceFiles=old;}
 });
 test('composer combines upload and project selections and retains both on rejection',async()=>{
  let received;const h=harness(async(_text,refs)=>{received=refs;throw Error('invalid');});h.render();h.change('hello');h.select([{name:'a',bytes:'A'}]);h.render().props.children[1].props.children[1].props.onChange([{projectId:'p',path:'x'}]);await h.submit();assert.deepEqual(received,[{name:'a',data:'QQ=='},{projectId:'p',path:'x'}]);assert.equal(h.render().props.children[1].props.children[0].props.selected.length,1);assert.equal(h.render().props.children[1].props.children[1].props.selected.length,1);
 });
 test('project and Bot clients send uploaded bytes without paths',async()=>{
  const previous=global.fetch,requests=[];global.fetch=async(url,init)=>{requests.push(JSON.parse(init.body));return url.startsWith('/api/bots')?new Response(JSON.stringify({data:{accepted:true}}),{status:202}):new Response('',{status:200});};
- const refs=[{name:'note.txt',data:'eA=='}];try{await botApi.send('b','c','hello',undefined,false,refs);await api.sendMessage('p','s','hello',false,undefined,refs).next();}finally{global.fetch=previous;}
+ const refs=[{name:'note.txt',data:'eA=='}];try{await botApi.send('b','c','hello',undefined,false,refs);await api.sendMessage('p','s','lease','hello',false,undefined,refs).next();}finally{global.fetch=previous;}
  assert.deepEqual(requests[0].references,refs);assert.deepEqual(requests[1].references,refs);
 });

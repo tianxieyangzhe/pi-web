@@ -10,10 +10,26 @@ function harness(onSubmit){
  hooks=[];let key='a-'+Math.random(),running=false;
  function render(){index=0;effects=[];const tree=PromptInput({placeholder:'type',running,draftKey:key,onSubmit});for(const effect of effects)effect();return tree;}
  function textarea(){return render().props.children[0];}
- return {render,textarea,change(value){textarea().props.onChange({target:{value}});},submit(){return render().props.onSubmit({preventDefault(){}});},switchKey(next){key=next;render();},getKey(){return key;},setRunning(v){running=v;}};
+ return {render,textarea,paste(text){let prevented=false;textarea().props.onPaste({clipboardData:{items:[],getData:()=>text},preventDefault(){prevented=true;}});return prevented;},change(value){textarea().props.onChange({target:{value}});},submit(){return render().props.onSubmit({preventDefault(){}});},switchKey(next){key=next;render();},getKey(){return key;},setRunning(v){running=v;}};
 }
 function deferred(){let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return {promise,resolve,reject};}
 
+test('pasted long text sends as attachment alone, preserves on rejection and clears after acceptance',async()=>{
+ const previous=global.FileReader;
+ global.FileReader=class{readAsDataURL(file){file.arrayBuffer().then(bytes=>{this.result='data:text/plain;base64,'+Buffer.from(bytes).toString('base64');this.onload();});}};
+ try {
+  const sent=[],text=Array(12).fill('原文').join('\n');let reject=true;
+  const h=harness((content,refs)=>{sent.push({content,refs});if(reject)throw Error('failed');});h.render();
+  assert.equal(h.paste(text),true);assert.equal(require('../web/workspace/conversation/inline-composer-document.ts').composerText(h.textarea().props.value),'');await h.submit();
+  assert.equal(Buffer.from(sent[0].refs[0].data,'base64').toString(),text);
+  assert.equal(sent[0].content,'请查看本次附带的图片或文本。');
+  reject=false;await h.submit();assert.equal(sent.length,2);await h.submit();assert.equal(sent.length,2);
+ }finally{global.FileReader=previous;}
+});
+test('switching sessions drops pasted materials; short paste stays native',async()=>{
+ const sent=[],h=harness((...args)=>sent.push(args));h.render();assert.equal(h.paste('short'),false);
+ assert.equal(h.paste('x'.repeat(1001)),true);h.switchKey('other-paste-'+Math.random());h.render();await h.submit();assert.equal(sent.length,0);
+});
 test('clears submitted input immediately while the stream is running',async()=>{
  const d=deferred(),sent=[];const h=harness(value=>{sent.push(value);return d.promise;});h.render();h.change(' hello ');
  const pending=h.submit();assert.deepEqual(sent,['hello']);h.setRunning(true);assert.equal(h.textarea().props.value,'');

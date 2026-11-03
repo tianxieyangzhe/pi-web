@@ -114,6 +114,12 @@ export const sessionRepository = {
     return this.get(id);
   },
 
+  setNativeRefIfAbsent(id: string, nativeRef: JsonObject): Session | null {
+    assertSchemaCompatible();
+    database.prepare("UPDATE sessions SET native_ref_json = ? WHERE id = ? AND native_ref_json IS NULL AND ended_at IS NULL").run(stringifyJson(nativeRef), id);
+    return this.get(id);
+  },
+
   markInterruptedAfterRestart(): number {
     assertSchemaCompatible();
     return database

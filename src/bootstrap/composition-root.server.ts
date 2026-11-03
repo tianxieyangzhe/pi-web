@@ -53,7 +53,14 @@ function createServices() {
   const bots = createBotService({
     repository: botRepository,
     workspace: botWorkspace,
-    runtime: Object.assign(botRuntime, { projectHandle: (input: SessionRuntimeInput) => piSessionRuntime.projectHandle(input) }),
+    runtime: Object.assign(botRuntime, { projectHandle: async (input: SessionRuntimeInput) => {
+      if (!piSessionRuntime.getHandle(input.session.id) && !input.session.nativeRef) await piSessionRuntime.initializeProject(input, ref => {
+        const updated = sessionRepository.setNativeRefIfAbsent(input.session.id, ref);
+        if (!updated?.nativeRef) throw new Error("无法保存项目原生身份");
+        return updated.nativeRef;
+      });
+      return piSessionRuntime.projectHandle(input);
+    } }),
     runtimeInstanceId: botRuntimeInstanceId,
     readProjectReference,
     readBotReference,
@@ -72,7 +79,8 @@ function createServices() {
     sessionMemories: sessionMemoryRepository,
     onCompleted: id => sessionMemories.completed(id),
     assertSessionAllowed: id => bots.assertSessionAllowed(id),
-    coordinatorExecutionIds: () => new Set<string>()
+    coordinatorExecutionIds: () => new Set<string>(),
+    backgroundInUse: id => { const parent = botRepository.parentForSession(id); return !!parent && botRepository.projectCalls(parent).some(call => call.sessionId === id && ["accepted", "working", "unknown"].includes(call.status)); }
   });
   return {
     agentPreparation: createAgentPreparationService({

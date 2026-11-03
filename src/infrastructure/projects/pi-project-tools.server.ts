@@ -90,6 +90,7 @@ function toolAllowed(input: SessionRuntimeInput, name: string) {
 
 export async function createPiProjectTools(
   input: SessionRuntimeInput,
+  canWrite: () => boolean = () => true,
 ): Promise<ToolDefinition<any, any, any>[]> {
   const readRoots = [input.workingDirectory];
 
@@ -134,11 +135,13 @@ export async function createPiProjectTools(
 
   if (!input.allowProjectWrite) return tools;
   const writeRoots = [input.workingDirectory];
+  const assertWriteAllowed = () => { if (!canWrite()) throw new Error("当前执行不允许写入项目"); };
   const editOperations = {
     async readFile(target: string) {
       return fs.readFile(await assertExistingPath(target, writeRoots));
     },
     async writeFile(target: string, content: string) {
+      assertWriteAllowed();
       await fs.writeFile(await assertPlannedPath(target, writeRoots), content, "utf8");
     },
     async access(target: string) {
@@ -147,9 +150,11 @@ export async function createPiProjectTools(
   };
   const writeOperations = {
     async writeFile(target: string, content: string) {
+      assertWriteAllowed();
       await fs.writeFile(await assertPlannedPath(target, writeRoots), content, "utf8");
     },
     async mkdir(target: string) {
+      assertWriteAllowed();
       await fs.mkdir(await assertPlannedPath(target, writeRoots), { recursive: true });
     },
   };

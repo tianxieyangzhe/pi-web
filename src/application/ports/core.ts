@@ -13,6 +13,7 @@ export interface SessionRepositoryPort {
     id: string,
     patch: { state?: Session["state"]; nativeRef?: JsonObject | null; nativeMetadata?: JsonObject; endedAt?: string | null },
   ): Session | null;
+  setNativeRefIfAbsent(id: string, nativeRef: JsonObject): Session | null;
   markInterruptedAfterRestart(): number;
 }
 

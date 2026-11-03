@@ -19,18 +19,19 @@ async function* stream<T>(url: string, init: RequestInit, fallback: string, onAc
   let firstTextLogged = false;
   let completeLogged = false;
   const parseEvent = (line: string): T => {
-    const envelope = JSON.parse(line) as { event: T; turnId?: unknown; sessionId?: unknown };
-    const event = envelope.event as { type?: string; text?: string } | null;
+    const envelope = JSON.parse(line) as { event?: T; turnId?: unknown; runId?: unknown; sessionId?: unknown; payload?: unknown };
+    const event = (envelope.event ?? envelope.payload) as { type?: string; text?: string } | null;
     const stage = !firstTextLogged && event?.type === "message_delta" && event.text ? "first_text_received"
       : !completeLogged && event?.type === "complete" ? "complete_received" : null;
-    if (stage && typeof envelope.turnId === "string" && typeof envelope.sessionId === "string") {
+    const turnId = envelope.turnId ?? envelope.runId;
+    if (stage && typeof turnId === "string" && typeof envelope.sessionId === "string") {
       if (stage === "first_text_received") firstTextLogged = true;
       else completeLogged = true;
       try {
-        console.info(`[project-message-stream] ${JSON.stringify({ turnId: envelope.turnId, sessionId: envelope.sessionId, stage, elapsedMs: Math.round((performance.now() - started) * 10) / 10, at: new Date().toISOString() })}`);
+        console.info(`[project-message-stream] ${JSON.stringify({ turnId, sessionId: envelope.sessionId, stage, elapsedMs: Math.round((performance.now() - started) * 10) / 10, at: new Date().toISOString() })}`);
       } catch { /* best effort */ }
     }
-    return envelope.event;
+    return (envelope.event ?? envelope) as T;
   };
   const response = await fetch(url, init);
   if (!response.ok || !response.body) {
@@ -49,6 +50,7 @@ async function* stream<T>(url: string, init: RequestInit, fallback: string, onAc
     buffer = lines.pop() ?? "";
     for (const line of lines) if (line.trim()) yield parseEvent(line);
   }
+  buffer += decoder.decode();
   if (buffer.trim()) yield parseEvent(buffer);
 }
 
@@ -92,8 +94,10 @@ export const api = {
   configureSessionRole:(projectId:string,s:Session,agentId:string,revision?:number,contentSha256?:string)=>request<Session>(`/api/projects/${projectId}/sessions/${s.id}/role`,{...mutation("POST",{agentId,revision,contentSha256}),headers:{...jsonHeaders,"if-match":s.writeETag}}),
   listSessions: (projectId: string) => request<Session[]>(`/api/projects/${projectId}/sessions`),
   createSession: (projectId: string, body: Record<string, unknown> = {}) => request<Session>(`/api/projects/${projectId}/sessions`, mutation("POST", body)),
-  listMessages: (projectId: string, sessionId: string) => request<ConversationMessage[]>(`/api/projects/${projectId}/sessions/${sessionId}/messages`),
-  sendMessage: (projectId: string, sessionId: string, content: string, steer=false, onAccepted?: () => void, references?: import("../../src/domain/message-references").MessageReference[]) => stream<AgentEvent>(`/api/projects/${projectId}/sessions/${sessionId}/messages`, { ...mutation("POST", { content,steer,references }), headers: { ...jsonHeaders, "idempotency-key": crypto.randomUUID() } }, "无法发送项目消息", onAccepted),
+  openSession: (projectId:string,sessionId:string) => request<{leaseId:string;status:string;outcome:string|null}>(`/api/projects/${projectId}/sessions/${sessionId}/runtime/open`, mutation("POST")),
+  closeSession: (projectId:string,sessionId:string,leaseId:string) => fetch(`/api/projects/${projectId}/sessions/${sessionId}/runtime/close`, {...mutation("POST", {leaseId}), keepalive:true}).then(() => {}),
+  listMessages: (projectId: string, sessionId: string) => request<import("../domain/models").SessionTree>(`/api/projects/${projectId}/sessions/${sessionId}/messages`, {cache:"no-store"}),
+  sendMessage: (projectId: string, sessionId: string, leaseId:string, content: string, steer=false, onAccepted?: () => void, references?: import("../../src/domain/message-references").MessageReference[]) => stream<import("../domain/models").PiStreamEvent>(`/api/projects/${projectId}/sessions/${sessionId}/messages`, { ...mutation("POST", { content,steer,references }), headers: { ...jsonHeaders, "idempotency-key": crypto.randomUUID(), "x-session-lease-id":leaseId } }, "无法发送项目消息", onAccepted),
   interruptProjectSession: (projectId: string, sessionId: string) => request<Session>(`/api/projects/${projectId}/sessions/${sessionId}/interrupt`, mutation("POST")),
   restoreProjectSession: (projectId: string, sessionId: string) => request<Session>(`/api/projects/${projectId}/sessions/${sessionId}/restore`, mutation("POST")),
   endProjectSession: (projectId: string, sessionId: string) => request<Session>(`/api/projects/${projectId}/sessions/${sessionId}/end`, mutation("POST")),

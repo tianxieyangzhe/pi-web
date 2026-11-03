@@ -1,3 +1,5 @@
+import { createPersistentAgentSession } from "./create-session.server";
+import { subscribeNativeSession } from "./native-session-events.server";
 import {requestScopeInstructions} from "@/domain/execution-operation";
 import { appendMessageReferences } from "./message-references.server";
 import { createMessageReferenceScope } from "./message-reference-scope.server";
@@ -11,7 +13,10 @@ import type {
   JsonObject,
   Session,
 } from "@/domain/models";
-import {existsSync,statSync} from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, rmdirSync, statSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import { join } from "node:path";
+import { readNativeFile, readTreeFile, snapshotTree } from "./session-tree.server";
 import { safeToolTarget } from "./tool-target";
 import {
   createAgentSession,
@@ -40,6 +45,7 @@ type Handle = {
   cwd: string;
   isProjectSession: boolean;
   input: SessionRuntimeInput;
+  writeAccess: { allowed: boolean };
 };
 
 type PiEvent = {
@@ -236,14 +242,15 @@ class PiSessionRuntime implements PiRuntimePort, PiContextPort {
 
   private async create(input: SessionRuntimeInput, manager: SessionManager): Promise<Handle> {
     const referenceScope = createMessageReferenceScope();
+    const writeAccess = { allowed: false };
     const loader = loaderFor(input, referenceScope);
     await loader.reload();
     const { runtime: modelRuntime, model } = await this.configuredModel();
     const customTools = [
-      ...(await createPiProjectTools(input)),
+      ...(await createPiProjectTools(input, () => !input.independentProjectTools || writeAccess.allowed)),
       ...toPiBotTools(input.collaborationTools ?? []),
     ];
-    const result = await createAgentSession({
+    const result = await createPersistentAgentSession({
       cwd: input.workingDirectory,
       sessionManager: manager,
       modelRuntime,
@@ -261,6 +268,7 @@ class PiSessionRuntime implements PiRuntimePort, PiContextPort {
       cwd: input.workingDirectory,
       isProjectSession: input.projectSession !== false,
       input,
+      writeAccess,
     };
   }
 
@@ -271,11 +279,27 @@ class PiSessionRuntime implements PiRuntimePort, PiContextPort {
     return { handle, nativeRef: nativeRef(handle.session, manager, input.workingDirectory) };
   }
 
+  async initializeProject(input: SessionRuntimeInput, commit: (ref: JsonObject) => JsonObject) {
+    const directory = join(process.cwd(), ".data", "project-pi-sessions");
+    mkdirSync(directory, { recursive: true, mode: 0o700 });
+    const file = join(directory, createHash("sha256").update(input.session.id).digest("hex") + ".jsonl");
+    const lock = file + ".lock";
+    try { mkdirSync(lock, { mode: 0o700 }); } catch { throw new DomainError("SESSION_INITIALIZATION_LOCKED", "Session 初始化中或有残留锁，需人工核对", 409, true); }
+    try {
+      if (!existsSync(file)) { closeSync(openSync(file, "wx", 0o600)); SessionManager.open(file, directory, input.workingDirectory); }
+      const verified = readNativeFile(file, input.workingDirectory);
+      if (!verified.endsWithNewline) throw new DomainError("SESSION_TREE_READ_FAILED", "原生历史末尾不完整", 500, true);
+      const winner = commit({ kind: "pi", sessionFile: file, sessionId: verified.header.id, cwd: input.workingDirectory });
+      return await this.restore({ ...input, session: { ...input.session, nativeRef: winner } });
+    } finally { rmdirSync(lock); }
+  }
+
   async restore(input: SessionRuntimeInput) {
     const reference = input.session.nativeRef;
     const sessionFile = reference?.sessionFile;
-    if (typeof sessionFile !== "string" || !sessionFile) throw new Error("Pi 原生 Session 引用无效");
-    if(!existsSync(sessionFile)||statSync(sessionFile).size===0)throw new DomainError("NO_NATIVE_REF","Pi 原生历史缺失，未新建替代",409,true);
+    if (typeof sessionFile !== "string" || !sessionFile || typeof reference?.sessionId !== "string") throw new DomainError("NO_NATIVE_REF", "Pi 原生 Session 引用无效", 409, true);
+    const verified = readNativeFile(sessionFile, input.workingDirectory, reference.sessionId);
+    if (!verified.endsWithNewline) throw new DomainError("SESSION_TREE_READ_FAILED", "原生历史末尾不完整", 500, true);
     const manager = SessionManager.open(sessionFile, undefined, input.workingDirectory);
     if(manager.getSessionId()!==reference?.sessionId||manager.getHeader()?.cwd!==input.workingDirectory)throw new DomainError("NO_NATIVE_REF","Pi 原生历史归属不一致",409,true);
     const handle = await this.create(input, manager);
@@ -283,14 +307,30 @@ class PiSessionRuntime implements PiRuntimePort, PiContextPort {
     return handle;
   }
 
-  async send(handle: object, message: string, emit: (event: AgentEvent) => void, onAssistantStream?: () => void, references?: import("@/domain/message-references").ReferenceContent) {
+  async send(handle: object, message: string, emit: (event: AgentEvent) => void, onAssistantStream?: () => void, references?: import("@/domain/message-references").ReferenceContent, allowProjectWrite = false) {
     const piHandle = handle as Handle;
+    piHandle.writeAccess.allowed = allowProjectWrite;
     const turn: TurnState = {
       publicText: "",
       toolDetails: new Map(),
     };
     let assistantStreamSeen = false;
+    const temporary = new WeakMap<object, string>();
+    let currentTemporary: string | null = null;
+    const pendingLinks: Promise<void>[] = [];
     const unsubscribe = piHandle.session.subscribe((event) => {
+      const message = "message" in event && event.message && typeof event.message === "object" ? event.message : null;
+      if (event.type === "message_start" && message) { currentTemporary = randomUUID(); temporary.set(message, currentTemporary); }
+      const temporaryId = message ? temporary.get(message) ?? currentTemporary : currentTemporary;
+      emit({ type: "pi_event", piType: event.type, payload: JSON.parse(JSON.stringify(event)), temporaryId });
+      if (event.type === "message_end" && message && temporaryId) {
+        pendingLinks.push(new Promise<void>(resolve => setImmediate(() => {
+          const entry = piHandle.manager.getEntries().find(item => item.type === "message" && item.message === message);
+          if (entry) emit({ type: "entry_link", entryId: entry.id, temporaryId });
+          resolve();
+        })));
+        currentTemporary = null;
+      }
       if (!assistantStreamSeen && event.type === "message_update") {
         assistantStreamSeen = true;
         onAssistantStream?.();
@@ -306,9 +346,18 @@ class PiSessionRuntime implements PiRuntimePort, PiContextPort {
       if(last?.stopReason==="error") { if(/context|token.*limit|maximum.*length/i.test(last.errorMessage??""))throw new DomainError("CONTEXT_LIMIT_REACHED","原生上下文已满，请在检查中手动压缩后重新发送",409,true);throw new DomainError("RUNTIME_ERROR", references?.some(item => item.type === "image") ? "模型请求失败；模型或服务可能不支持图片输入" : "模型请求失败，请检查配置或恢复状态",503,true); }
       if(last?.stopReason==="aborted")throw new DomainError("REQUEST_ABORTED","请求已停止",409,true);
     } finally {
+      await Promise.all(pendingLinks);
       piHandle.referenceScope.end();
+      piHandle.writeAccess.allowed = false;
       unsubscribe();
     }
+  }
+
+  isBusy(handle: object) { return !(handle as Handle).session.isIdle; }
+
+  subscribe(handle: object, listener: (event: AgentEvent) => void) {
+    const pi = handle as Handle;
+    return subscribeNativeSession(pi.session, pi.manager, listener);
   }
 
   async interrupt(handle: object) {
@@ -340,6 +389,14 @@ class PiSessionRuntime implements PiRuntimePort, PiContextPort {
         return branch.slice(start, end + 1).flatMap(entry => entry.type === "message" && (entry.message as { role?: string }).role === "assistant" ? [textOf((entry.message as { content?: unknown }).content)] : []).join("\n");
       },
     };
+  }
+
+  async readTree(input: SessionRuntimeInput) {
+    const live = this.handles.get(input.session.id);
+    if (live) return snapshotTree(live.manager);
+    const ref = input.session.nativeRef;
+    if (typeof ref?.sessionFile !== "string" || typeof ref.sessionId !== "string") throw new DomainError("NO_NATIVE_REF", "Pi 原生历史缺失", 409, true);
+    return readTreeFile(ref.sessionFile, input.workingDirectory, ref.sessionId);
   }
 
   async readMessages(input: SessionRuntimeInput) {
@@ -400,9 +457,8 @@ class PiSessionRuntime implements PiRuntimePort, PiContextPort {
 
   async inspect(input: SessionRuntimeInput): Promise<NativeContextInspection> {
     if (!input.session.nativeRef) return emptyInspection("Session 尚未启动");
-    let handle = this.handles.get(input.session.id);
-    if (!handle && input.session.state === "idle") handle = await this.restore(input) as Handle;
-    if (!handle) return emptyInspection("Session 需要恢复后才能读取用量");
+    const handle = this.handles.get(input.session.id);
+    if (!handle) return emptyInspection("请先打开 Session 后读取用量");
     const branch=handle.manager.getBranch();
     const usage=handle.session.getContextUsage();
     const tokens=usage?.tokens ?? null;

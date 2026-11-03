@@ -45,6 +45,13 @@ test('independent tools allow project writes but protect sensitive and outside p
   assert.equal(fs.readFileSync(path.join(root,'ok.txt'),'utf8'),'ok');
   await assert.rejects(()=>write.execute('call',{path:'.env',content:'bad'},undefined,()=>{}));
   await assert.rejects(()=>write.execute('call',{path:'../outside.txt',content:'bad'},undefined,()=>{}));
+  let allowed=false;
+  const guarded=(await createPiProjectTools({...base,independentProjectTools:true},()=>allowed)).find(t=>t.name==='project_write');
+  await assert.rejects(()=>guarded.execute('read',{path:'blocked.txt',content:'bad'},undefined,()=>{}),/不允许写入/);
+  assert.equal(fs.existsSync(path.join(root,'blocked.txt')),false);
+  allowed=true; await guarded.execute('write',{path:'allowed.txt',content:'ok'},undefined,()=>{});
+  allowed=false; await assert.rejects(()=>guarded.execute('after',{path:'allowed.txt',content:'bad'},undefined,()=>{}),/不允许写入/);
+  assert.equal(fs.readFileSync(path.join(root,'allowed.txt'),'utf8'),'ok');
   assert.deepEqual(await createPiProjectTools(base),[]);
  } finally {fs.rmSync(root,{recursive:true,force:true});}
 });

@@ -66,6 +66,10 @@ export type BotNativeEvidence = {
   failed: boolean;
 };
 export interface BotRuntimePort {
+  open?(input: BotRuntimeInput, onRef: (ref: PiNativeRef) => void): Promise<void>;
+  close?(identity: string): Promise<void>;
+  subscribe?(identity: string, listener: (event: AgentEvent) => void): () => void;
+  readTree?(input: BotRuntimeInput): Promise<unknown>;
   run(input: BotRuntimeInput, content: string, onRef: (ref: PiNativeRef) => void, emit: (event: AgentEvent) => void): Promise<{
     startId: string | null;
     endId: string | null;

@@ -2,6 +2,7 @@ require('./register.cjs');
 const {test}=require('node:test'),assert=require('node:assert/strict');
 const {createMessageReferenceScope}=require('../src/infrastructure/pi/message-reference-scope.server.ts');
 const {appendMessageReferences}=require('../src/infrastructure/pi/message-references.server.ts');
+const {referenceTreeProjection}=require('../web/workspace/conversation/reference-tree-projection.ts');
 
 test('Pi model requests contain only the active turn reference, including after restoration',async()=>{
  const {DefaultResourceLoader,createAgentSession,SessionManager,SettingsManager,ModelRuntime}=await import('@earendil-works/pi-coding-agent');
@@ -20,6 +21,9 @@ test('Pi model requests contain only the active turn reference, including after 
   let h=await open();let id=h.scope.begin();await appendMessageReferences(h.session,[{type:'text',text:'ONE_SECRET'},{type:'image',mimeType:'image/png',data:'aW1hZ2Ux'}],id);await h.session.prompt('one',{expandPromptTemplates:false});h.scope.end();
   id=h.scope.begin();await h.session.prompt('two',{expandPromptTemplates:false});h.scope.end();h.session.dispose();
   h=await open();id=h.scope.begin();await appendMessageReferences(h.session,[{type:'text',text:'THREE_SECRET'}],id);await h.session.prompt('three',{expandPromptTemplates:false});h.scope.end();h.session.dispose();
+  const projection=referenceTreeProjection({entries:manager.getEntries().map(entry=>({entry,label:null,labelTimestamp:null})),activeLeafId:manager.getLeafId()});
+  assert.equal(projection.attachments.size,2,'real Pi reference nodes must group with their user messages');
+  assert.deepEqual([...projection.attachments.keys()].map(id=>require('../web/workspace/conversation/session-tree-projection.ts').contentBlocks(manager.getEntry(id).message.content).map(block=>block.text??'').join('')),['one','three']);
   assert.equal(calls.length,3);assert.match(calls[0],/ONE_SECRET/);assert.match(calls[0],/aW1hZ2Ux/);assert.doesNotMatch(calls[1],/ONE_SECRET|aW1hZ2Ux/);assert.doesNotMatch(calls[2],/ONE_SECRET|aW1hZ2Ux/);assert.match(calls[2],/THREE_SECRET/);
  }finally{fs.rmSync(cwd,{recursive:true,force:true});}
 });

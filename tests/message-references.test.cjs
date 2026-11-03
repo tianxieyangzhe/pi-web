@@ -15,14 +15,14 @@ test('uploaded UTF-8 text and native images are validated and projected',()=>{
 });
 test('project send rejects invalid uploads before runtime and passes content',async()=>{
  let session={id:'references-session',projectId:'p',sessionMemoryId:'m',state:'idle',agentId:null,agentSnapshot:null,mcpIds:[],nativeRef:null};const calls=[];
- const service=createSessionExecutionService({sessions:{get:()=>session,updateRuntime:(_,patch)=>session={...session,...patch}},catalog:{},projects:{get:()=>({status:'active',rootPath:'/tmp'})},sessionMemories:{get:()=>({projectId:'p'})},runtime:{getHandle:()=>({}),send:async(_h,text,_emit,_timing,refs)=>calls.push({text,refs})}});
+ const service=createSessionExecutionService({sessions:{get:()=>session,updateRuntime:(_,patch)=>session={...session,...patch}},catalog:{},projects:{get:()=>({status:'active',rootPath:'/tmp'})},sessionMemories:{get:()=>({projectId:'p'})},runtime:{getHandle:()=>({}),close:async()=>{},send:async(_h,text,_emit,_timing,refs)=>calls.push({text,refs})}});
  assert.throws(()=>service.send(session.id,'hello',undefined,[{path:'x',projectId:'p'}]));assert.equal(calls.length,0);
  for await(const _ of service.send(session.id,'hello',undefined,[upload('a.txt','contents')])){};
  assert.equal(calls[0].text,'hello');assert.match(calls[0].refs[0].text,/contents/);
 });
 test('project send accepts only its own project files',async()=>{
  let session={id:'project-reference-session',projectId:'p',sessionMemoryId:'m',state:'idle',agentId:null,agentSnapshot:null,mcpIds:[],nativeRef:null};let sent;
- const service=createSessionExecutionService({sessions:{get:()=>session,updateRuntime:(_,patch)=>session={...session,...patch}},catalog:{},projects:{get:()=>({status:'active',rootPath:'/tmp'})},sessionMemories:{get:()=>({projectId:'p'})},readProjectReference:ref=>upload(ref.path,'owned'),runtime:{getHandle:()=>({}),send:async(_handle,_text,_emit,_timing,refs)=>{sent=refs;}}});
+ const service=createSessionExecutionService({sessions:{get:()=>session,updateRuntime:(_,patch)=>session={...session,...patch}},catalog:{},projects:{get:()=>({status:'active',rootPath:'/tmp'})},sessionMemories:{get:()=>({projectId:'p'})},readProjectReference:ref=>upload(ref.path,'owned'),runtime:{getHandle:()=>({}),close:async()=>{},send:async(_handle,_text,_emit,_timing,refs)=>{sent=refs;}}});
  assert.throws(()=>service.send(session.id,'hello',undefined,[{projectId:'other',path:'x'}]),e=>e.code==='REFERENCE_OUTSIDE_SCOPE');
  for await(const _ of service.send(session.id,'hello',undefined,[{projectId:'p',path:'x'}])){}assert.match(sent[0].text,/owned/);
 });

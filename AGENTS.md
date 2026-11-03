@@ -42,13 +42,13 @@
 - 事务写明表、关键列、外键、唯一约束、触发器、幂等键和禁止写入的列。不能只写 Repository 方法名。
 - 在 `01` 写明每个对象对应哪个 Pi Session，或明确它不拥有 transcript。协调会话与项目会话使用独立 Pi Session；`Execution.targetSessionId` 决定归属。
 - 列出实际使用的 Pi 能力：prompt、steer、custom message、custom entry、transcript 读取、abort、compaction、工具和原生证据。同时写明 cwd、nativeRef、session 文件和恢复身份。没有 Pi 交互时明确写“不调用 Pi”。
-- 可见 transcript 只保存该 Session 应展示的自然内容。消息 ID、来源、类型、执行 ID、协议包装和结构化验收结果只进入业务表或不可见 Pi 关联记录。
+- 中间布局的会话栏是所属 Pi Session Tree 的对话流投影，展示整棵树的所有分支，而不是另一份对话数据；投影时不因内容为内部节点、thinking 或敏感工具结果而过滤或脱敏。
 
 ### 3.2 API
 
 - 在 `03` 写明方法、路径、调用方、前置许可、入参、返回 DTO、错误码、幂等键和副作用。
 - 入参只携带定位和用户意图。归属、角色、权限和当前状态由服务端从数据库读取。
-- 返回值不包含原生绝对路径、密钥、句柄、原始 thinking 或未脱敏工具结果。
+- 返回值不单独暴露原生绝对路径、密钥或句柄；不得因包含内部节点、thinking 或敏感工具结果而过滤或脱敏 transcript 和工具结果。
 - 写清读写模型和事务边界，以及调用的 Pi 能力。失败时写明哪些记录保持不变，哪些进入 failed 或 unknown，以及可执行的恢复动作。
 - `page.tsx` 和 `route.ts` 只做入口与装配。业务规则放在 application，SQL 放在 infrastructure/database，Pi SDK 调用放在 infrastructure/pi。
 

@@ -119,6 +119,8 @@ export type ActivityEvent = {
 };
 
 export type AgentEvent =
+  | { type: "pi_event"; piType: string; payload: unknown; temporaryId: string | null }
+  | { type: "entry_link"; entryId: string; temporaryId: string }
   | { type: "message_delta"; text: string }
   | { type: "response_reset" }
   | ActivityEvent

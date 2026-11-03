@@ -1,7 +1,11 @@
 import "server-only";
+import { subscribeNativeSession } from "./native-session-events.server";
+import { createPersistentAgentSession } from "./create-session.server";
+import { initializeSession } from "./initialize-session.server";
+import { readTreeFile, snapshotTree } from "./session-tree.server";
 import {isRoleSnapshot} from "@/domain/agent-definition";
 import fs from "node:fs";
-import { createAgentSession, DefaultResourceLoader, SettingsManager, SessionManager, getAgentDir, type AgentSession } from "@earendil-works/pi-coding-agent";
+import { DefaultResourceLoader, SettingsManager, SessionManager, getAgentDir, type AgentSession } from "@earendil-works/pi-coding-agent";
 import type { BotRuntimePort, BotRuntimeInput, BotNativeEvidence, BotTool } from "@/application/ports/bot";
 import { assertBotBudget, botInputByteLimit, validateBotResult, safeBotContent, type BotExecutionResult, type PiNativeRef } from "@/domain/bot";
 import { DomainError } from "@/domain/errors";
@@ -116,7 +120,7 @@ class BotRuntime implements BotRuntimePort {
       old.session.dispose();
       this.handles.delete(input.identity);
     }
-    const manager = input.nativeRef ? SessionManager.open(input.nativeRef.sessionFile, input.sessionDirectory, input.cwd) : SessionManager.create(input.cwd, input.sessionDirectory);
+    const manager = input.nativeRef ? SessionManager.open(input.nativeRef.sessionFile, input.sessionDirectory, input.cwd) : input.kind === "coordinator" && input.sessionDirectory ? initializeSession(input.identity, input.cwd, input.sessionDirectory) : SessionManager.create(input.cwd, input.sessionDirectory);
     const {
       runtime: modelRuntime,
       model
@@ -141,7 +145,7 @@ class BotRuntime implements BotRuntimePort {
     });
     const {
       session
-    } = await createAgentSession({
+    } = await createPersistentAgentSession({
       cwd: input.cwd,
       modelRuntime,
       model,
@@ -368,6 +372,20 @@ class BotRuntime implements BotRuntimePort {
       input.signal?.removeEventListener('abort', cancel);
     }
   }
+  async open(input: BotRuntimeInput, onRef: (ref: PiNativeRef) => void) { if (!this.handles.has(input.identity)) await this.handle(input, [], onRef); }
+  async close(identity: string) { const handle = this.handles.get(identity); if (handle && handle.session.isIdle) { handle.session.dispose(); this.handles.delete(identity); } }
+  subscribe(identity: string, listener: Parameters<NonNullable<BotRuntimePort["subscribe"]>>[1]) {
+    const handle = this.handles.get(identity);
+    if (!handle) throw new DomainError("RUNTIME_NOT_OPEN", "请先打开协调会话", 409, true);
+    return subscribeNativeSession(handle.session, handle.manager, listener);
+  }
+  async readTree(input: BotRuntimeInput) {
+    const handle = this.handles.get(input.identity);
+    if (handle) return snapshotTree(handle.manager);
+    if (!input.nativeRef) throw new DomainError("NO_NATIVE_REF", "协调会话没有原生历史", 409, true);
+    return readTreeFile(input.nativeRef.sessionFile, input.cwd, input.nativeRef.sessionId);
+  }
+
   async abort(identity: string) {
     const h = identity.startsWith('bot:') ? this.handles.get(identity) : piSessionRuntime.getHandle(identity) as Handle | undefined;
     await h?.session.abort();

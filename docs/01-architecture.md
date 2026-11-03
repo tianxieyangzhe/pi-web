@@ -19,13 +19,19 @@ Bot：协调 Agent + Project 范围 + 每项目 Agent + 并发上限
 
 协调会话是独立对象，定义见 `02`“协调会话”，操作见 `03`“协调会话 API”。用户在协调会话提出需求、查看调用状态、回答问题和获得汇总。项目 Agent 定义提供项目功能与边界，项目工具负责取得项目会话的实际返回。协调会话不直接读写项目代码。一个项目 Session 可以承接同一协调会话的多次项目调用。
 
-一次项目调用归属于发起它的协调会话。项目会话的 transcript 只归该项目 Session。协调总对话用一个画布和顶部 Session 标签切换：首项是协调 Pi transcript，其余是该协调会话开启的项目 Session transcript。项目标签只显示项目原文和调用状态，不接受直接输入。协调输入只进入协调 Pi。
+一次项目调用归属于发起它的协调会话。项目会话的 transcript 只归该项目 Session。协调总对话用一个画布和顶部 Session 标签切换：首项是协调 Pi transcript，其余是该协调会话开启的项目 Session transcript。项目标签展示该项目 Pi Session Tree 的对话流投影和调用状态，不接受直接输入。协调输入只进入协调 Pi。
 
 Pi 是唯一 Runtime。应用保存项目调用和 transcript 边界，不让协调会话持有项目 Session 的锁，也不让模型改写调用状态。
 
-同一协调会话的运行时 Pi 句柄在进程内复用。后续输入直接调用原句柄的 `prompt`，不因一次输入结束而销毁并重建 AgentSession、ResourceLoader 或模型。cwd、nativeRef、session 文件、固定模型和工具边界变化时才重建。句柄不是持久模型，进程退出后按 nativeRef 恢复。
+项目 Session 和协调会话采用 PSES-007 的页面打开生命周期：页面选中时创建或按精确 nativeRef 恢复 Pi 句柄，保持打开期间复用，发送直接调用该句柄的 `prompt`。最后一个页面离开后，空闲句柄释放；正在运行的句柄继续工作，结束后释放，最长等待五分钟并请求中止。页面打开、后台项目调用分别持有运行使用权；页面切换不能销毁仍被后台项目调用使用的句柄。句柄、使用权和计时器均不是持久模型，释放不删除原生历史；进程退出后按 nativeRef 恢复。具体 API、计时和失败边界以 `03` 为准。
 
 SessionMemory 不保存项目调用、项目返回或协调汇总。
+
+### 会话订阅与紧凑对话流
+
+会话级事件服务位于 application，管理临时订阅身份与服务端心跳挑战；Pi 适配层持续订阅所属 AgentSession 的原生事件，HTTP 层仅编码 SSE。项目与协调页面共用 web/api/session-events.ts，不设置保活或 transcript 定时轮询。采用 SSE 推送及收到 ping 后 POST pong，不新增服务、数据库表或第二个 Runtime。后台使用权独立于页面订阅。
+
+已检索官方 AI Elements Conversation、Message、Tool（https://elements.ai-sdk.dev/components/conversation、/message、/tool）：语义适合消息、滚动与工具 disclosure，但依赖 AI SDK/shadcn，且不直接表达 Pi 全树身份、异常父关系和未确认节点。当前在 conversation/project-session/conversation.tsx 使用共享 Tailwind Feature Wrapper，复用现有 Response 安全 Markdown；后续配套依赖及全树关联能力可用时复核。
 
 ## 2. 资源归属
 SessionMemory/MCP 及其他项目资源无 Project 时属于模板，复制后固定 Project。Agent 是独立的可复用 Markdown 定义；Bot/Project/Session 的运行关系在各自配置流程中保存，不把材料来源误作 Agent owner。统一目录只管理定义，不代替 Bot 的显式绑定。
@@ -42,7 +48,9 @@ SessionMemory 不保存工具、扩展、Agent、MCP、Skill 的 ID、配置、�
 
 独立项目 Session 的项目读写工具由应用执行策略和项目路径保护装配，与可选 Agent 指导及其能力开关独立；Bot 调用仍遵循其自身绑定策略。
 
-Pi AgentSession/SessionManager 是唯一执行 Runtime 和原生上下文权威。本阶段 SessionMemory 是固定结构的指导线，仅用于独立总结、页面展示和人工校正，不注入 system prompt，不拼入用户消息，不写成 Pi custom message，不修改原生历史、压缩或工具配置。主请求验证同项目、一对一归属即可，无需将记忆正文读取为模型输入。
+Pi AgentSession/SessionManager 是唯一执行 Runtime 和原生上下文权威。每个业务会话的 Pi Session Tree 及全部分支由所属 Pi 管理；中间会话栏只是该树的对话流投影，不新建持久对话副本。读取和流更新契约以 `03` 为准。本阶段 SessionMemory 是固定结构的指导线，仅用于独立总结、页面展示和人工校正，不注入 system prompt，不拼入用户消息，不写成 Pi custom message，不修改原生历史、压缩或工具配置。主请求验证同项目、一对一归属即可，无需将记忆正文读取为模型输入。
+
+项目和协调 Runtime 的 AgentSession 初始化共用 `infrastructure/pi/create-session.server.ts`，在 SDK 初始化期间避免重复追加相同原生配置；比较及失败规则见 `03` 的 PSES-009，不改 Pi SDK 或已有 transcript。
 
 自动总结与立即总结共用固定服务端模型及指导模式；总结失败不影响主回复。Project.cwd 固定为 rootPath，固定 OpenAI Chat Completions 配置仍仅从应用根目录 .env.local 的三个 OPENAI 字段读取，页面和记忆不覆盖。
 
@@ -74,7 +82,7 @@ web/styles/                  全局视觉样式
 
 `web/workspace/` 按页面可见区域组织，区域内再按功能分子目录；看左侧功能先进入 `sidebar/`，看中间对话进入 `conversation/`，看文件与右侧检查分别进入 `files/` 和 `inspector/`。区域专用组件、表单与 Hook 同目录。`workspace.tsx` 维护区域装配，`use-workspace-state.ts` 维护跨区域选择；通用 API Client、DTO 和全局视觉样式保留在公共层。
 
-Bot 和项目共用一个 WorkspaceSelection。Bot 树按 Bot、协调会话、该会话拥有的项目 Session 投影既有归属；Bot 项目 Session 不在 Project 树重复列出。选择协调会话后，顶部标签切换协调 Pi transcript 和已使用项目 Session 的真实 transcript。项目标签只显示该 Session 原文和项目调用状态，输入只进入协调 Pi。`botConversationId` 是直接父归属。
+Bot 和项目共用一个 WorkspaceSelection。Bot 树按 Bot、协调会话、该会话拥有的项目 Session 投影既有归属；Bot 项目 Session 不在 Project 树重复列出。选择协调会话后，顶部标签切换协调 Pi transcript 和已使用项目 Session 的真实 transcript。项目标签展示该 Session 的完整树投影和项目调用状态，输入只进入协调 Pi。`botConversationId` 是直接父归属。
 
 依赖方向为 `app → application → domain + ports`、`infrastructure → ports + domain` 和 `app → web/workspace → web/api + web/domain`。只有 composition root 同时认识应用服务与基础设施。`page.tsx` 和 `route.ts` 只做入口与装配，不承载完整业务实现；页面不直接访问 Pi、SQLite 或 Node 文件系统。
 
@@ -87,7 +95,7 @@ Next.js 同时提供页面和同源 API；不增加独立 Vite 服务或第二�
 | --- | --- | --- |
 | Session 消息与 Markdown 回复 | Conversation / Message / Response | 现有 `web/workspace/conversation/ai-elements/response.tsx` 提供安全 Markdown 子集；官方依赖可用后复核替换 |
 | 项目会话等待响应 | Loader / Spinner | 已检索官方 [Loader](https://elements.ai-sdk.dev/components/loader)，当前指向 shadcn Spinner，匹配加载语义；项目尚未引入 shadcn 组件体系，复用现有 lucide `LoaderCircle` 和 `.spin`，在项目会话 Feature Wrapper 中配合可访问状态文本；统一基础组件体系引入时复核。 |
-| Pi 工具调用 entry | Tool | 页面不生成执行过程或模型轮次；工具调用是独立 transcript entry，按时间顺序用原生 disclosure 默认收起，不嵌入 assistant 消息，不使用自定义数据格式，位于 `conversation.tsx`；官方 Tool 可直接承载该 entry 时复核 |
+| Pi Session Tree entry（含工具） | Conversation / Message / Tool | 会话栏按 `03` 投影整棵树；工具内容及其他节点不得过滤，现有 `conversation.tsx` 可使用原生 disclosure 展开完整内容，官方组件能够承载节点和分支关系时复核 |
 | Bot 预算预检后的原输入恢复 | 同步状态与重试动作 | 官方 Confirmation 表达用户审批，不适合声明一条已证明未发送的原输入；在 `web/workspace/conversation/bot-conversation/bot-conversation-view.tsx` 现有恢复卡中展示准确原因并提供“重新处理原输入”动作，不复制消息、不改用其他 Runtime；官方提供面向未发送输入的可控恢复组件时复核 |
 | 原生上下文用量 | Context | 已检索官方 Context（https://ai-sdk.dev/elements/components/context）；依赖 AI SDK/shadcn HoverCard 与进度组件，项目尚未引入配套系统且需表达未知容量与最后可信值。当前以 `web/workspace/inspector/native-context-section.tsx` Feature Wrapper 和原生 progress 显示；配套依赖与未知值映射可用时复核替换 |
 | 记忆局部修改 | 富文本表单弹窗 | 官方 AI Elements Context/Confirmation 无局部富文本表单语义；采用 `web/workspace/inspector/memory-field-dialog.tsx` Feature Wrapper 与原生 dialog，将安全格式转换为 Markdown。官方支持字段富文本编辑时复核 |
@@ -98,8 +106,9 @@ Next.js 同时提供页面和同源 API；不增加独立 Vite 服务或第二�
 | 项目文件树与预览 | File Tree / Code Block | 只读且受 Project Path Guard 约束；Git 只是可选状态 |
 | Bot 总对话项目范围 | 可检索多选 | 已检索官方 [Model Selector](https://elements.ai-sdk.dev/components/model-selector)，其搜索对象是单个 AI 模型，不匹配多 Project 多选；由 `web/workspace/sidebar/bot-create-dialog.tsx` Feature Wrapper 使用原生搜索框/复选框表达项目范围。项目行复选框保持固有尺寸，名称/路径使用剩余宽度并在窄屏换行；官方提供语义通用且支持多选的组件时复核 |
 | Bot 项目 Agent 绑定 | 可搜索单选下拉框 | 已检索官方 Model Selector、Voice Selector 与 Mic Selector；分别针对单个模型、语音或音频设备，不匹配项目 Agent 选择语义。由 `web/workspace/roles/project-agent-picker.tsx` Feature Wrapper 使用原生按钮、搜索输入和单选按钮；跨 Bot 创建/设置共享，搜索只过滤选项且不清除已选 Agent；官方提供可控通用单选时复核 |
+| 会话与输入错误气泡 | 通用错误通知 | 已检索官方 [AI Elements 组件目录](https://elements.ai-sdk.dev/components)，Confirmation 表达审批，未发现通用 Toast。使用 `web/workspace/conversation/error-toast.tsx` 共享 Feature Wrapper，以 React portal、原生 alert 和关闭/重试按钮显示现有错误；引入统一通知基础组件时复核。 |
 | 本轮参考文件 | [Prompt Input Attachments](https://elements.ai-sdk.dev/components/prompt-input) / [File Tree](https://elements.ai-sdk.dev/components/file-tree) | 官方附件组件面向浏览器上传、File Tree 只提供树投影，均未覆盖本项目的草稿门禁及服务端项目范围；沿用 Composer Feature Wrapper、原生多文件输入和模态目录浏览。统一基础组件支持这些门禁时复核。 |
-| 项目/Bot 对话输入与发送快捷键 | Prompt Input | 已检索官方 [Prompt Input](https://elements.ai-sdk.dev/components/prompt-input)：提供文本输入和 Enter 发送/Shift+Enter 换行，语义符合原有键位习惯；组件还引入项目未使用的 AI SDK/shadcn 输入依赖，且不能直接承载现有会话草稿与运行门禁。保留 `web/workspace/conversation/prompt-input.tsx` Feature Wrapper 和原生 textarea；Enter 发送、Shift+Enter 换行，并同时检查 composition 状态、`nativeEvent.isComposing` 与旧浏览器 `keyCode=229`，防止候选确认误发。浏览器输入法覆盖或统一基础输入组件接入时复核 |
+| 项目/Bot 对话输入与发送快捷键 | Prompt Input | 已检索官方 [Prompt Input](https://elements.ai-sdk.dev/components/prompt-input)：提供文本输入和 Enter 发送/Shift+Enter 换行，语义符合原有键位习惯；组件还引入项目未使用的 AI SDK/shadcn 输入依赖，且不能直接承载现有会话草稿与运行门禁。保留 `web/workspace/conversation/prompt-input.tsx` Feature Wrapper；PSES-010 的光标内联附件由 `inline-composer-editor.tsx` 使用原生 contentEditable/Selection/Range 承载，官方 Prompt Input Attachments 未提供本项目所需的混合光标文档与项目文件引用，故不引入依赖。DOM 仅承载浏览器草稿，不构成持久消息。Enter 发送、Shift+Enter 换行，并同时检查 composition 状态、`nativeEvent.isComposing` 与旧浏览器 `keyCode=229`，防止候选确认误发。浏览器输入法覆盖或统一基础输入组件接入时复核 |
 | Agent.md 诊断与用户选择 | 确认/修改 Agent 定义 | AI Elements Confirmation 代表一次审批动作；此流程的“修改”是进入独立 Agent 编辑器并产生未保存草稿，“暂不修改”只关闭本次提示，语义并非即时批准或保存。使用 Bot Conversation Feature Wrapper 中的原生按钮，复用现有 RoleEditor，不自动写定义 |
 | 项目或 SessionMemory 模板选择 | 资源选择弹窗 | 选择并复制 Project/模板不等于模型操作审批；沿用 Feature 层弹窗，官方组件有匹配语义时复核 |
 | 记忆 / 文件 / 检查切换 | 通用面板导航 | 已检索官方 AI Elements 目录，Context 为模型用量展示、Confirmation 为审批，均不匹配面板导航；采用 `web/workspace/workspace.tsx` 中原生可访问独立按钮和 `web/workspace/inspector/context-panel.tsx` 内容装配。官方提供通用面板切换组件时复核 |
@@ -193,7 +202,7 @@ Pi 原生上下文压缩算法和原生历史恢复能力保留，但自动压�
 已有 SessionMemory 数据保留。应用启动不自动改写数据库，也不恢复旧实体或旧协议。
 
 ## 10. Pi 主导上下文管理（2026-10-08）
-Pi AgentSession/SessionManager 是执行上下文的权威：管理当前有效消息窗口、原生历史和压缩边界。应用只调用 Pi 的原生读取/压缩/取消/恢复能力并提供安全 UI 投影，不维护第二套模型窗口，不用数据库摘要拼装假 transcript，不以 SessionMemory 总结代替 Pi compaction。
+Pi AgentSession/SessionManager 是执行上下文的权威：管理当前有效消息窗口、原生历史和压缩边界。应用只调用 Pi 的原生读取/压缩/取消/恢复能力并提供 Session Tree 的对话流投影，不维护第二套模型窗口，不用数据库摘要拼装假 transcript，不以 SessionMemory 总结代替 Pi compaction。
 
 SessionMemory 是应用层可编辑的指导线，目前只用于独立 LLM 总结和展示，主 Pi 请求不读取记忆正文作为上下文。其总结游标用于应用记忆增量处理，不是 Pi 压缩游标。原生上下文压缩仍由用户手动触发、自动关闭，不因采用 Pi 为主而恢复自动压缩。
 
@@ -210,7 +219,7 @@ SessionMemory 是与 Pi 对话同时存在的工作理解与人工纠错线，�
 2026-10-08 当前阶段边界：指导模式固定，记忆内容只总结展示。任何后续将指导线作用于主 LLM 的方案必须先定义需求与交互，本次不提供隐式注入或自动干预。
 
 ## 12. 共享状态读取与活动总览
-当前 Session 的记忆只由 `conversation/project-session/use-session-memory.ts` 读取，主会话侧栏与记忆面板共享其结果。状态变化仍由主请求完成钩子独立驱动，不依赖轮询产生总结。轮询节奏和可见性以 `03` 为准。对话只按 Pi transcript 的可见 entry 时间顺序展示，不生成执行过程或模型轮次。工具调用是独立 entry，使用原生 details 默认收起，不嵌入 assistant 消息，不使用自定义数据格式；官方 Tool 可直接承载该 entry 时复核。
+当前 Session 的记忆只由 `conversation/project-session/use-session-memory.ts` 读取，主会话侧栏与记忆面板共享其结果。状态变化仍由主请求完成钩子独立驱动，不依赖轮询产生总结。轮询节奏和可见性以 `03` 为准。对话按 `03` 投影所属 Pi Session Tree 的全部节点和分支；SessionMemory 的活动分支安全来源仍与会话树展示独立。
 
 ## 13. Agent Markdown 定义与 Bot 绑定
 Bot 采用最新版只更新显式提交的默认引用，并且只影响后续协调会话。当前协调会话或项目 Session 的同 Agent 采用是独立动作，见 `02`“Agent Markdown 与 Bot 绑定”。普通保存不刷新任何引用。用户修订正文仍经独立无工具 LLM、应用校验和版本文件仓库完成，不能直接修改已引用版本文件。

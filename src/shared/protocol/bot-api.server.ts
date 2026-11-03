@@ -3,7 +3,7 @@ import { dataResponse, errorResponse, jsonBody } from "./api";
 import { DomainError } from "@/domain/errors";
 import { botFiles } from "@/infrastructure/bots/bot-files.server";
 import { botActionId } from "@/infrastructure/database/bot-idempotency.server";
-import type { BotLiveEvent } from "@/domain/bot";
+import { sessionEventResponse } from "./session-event-response.server";
 const key = (request: Request) => {
   const k = request.headers.get('idempotency-key');
   if (!k) throw new DomainError('PRECONDITION_REQUIRED', '缺少动作幂等键', 428, true);
@@ -26,8 +26,21 @@ export async function botApi(request: Request, segments: string[]) {
       });
     }
     if (resource === 'conversations' && conversationId) {
+      if ((action === "events" || action === "runtime") && !services.bots.events) throw new DomainError("SESSION_SUBSCRIPTION_RESTART_REQUIRED", "服务尚未加载会话订阅，请重新启动服务", 503, true);
       if(action==='events'&&request.method==='GET'){
-        return liveEventResponse(request,listener=>services.bots.subscribeLive(botId,conversationId,listener));
+        const leaseId = new URL(request.url).searchParams.get("leaseId") ?? "";
+        services.bots.assertLease(botId, conversationId, leaseId);
+        return sessionEventResponse(request, services.bots.events, conversationId, leaseId);
+      }
+      if (action === "runtime" && request.method === "POST") {
+        if (segments[4] === "open") return dataResponse(await services.bots.open(botId, conversationId, key(request)), { headers: { "cache-control": "no-store" } });
+        const body = await jsonBody(request);
+        if (segments[4] === "pong") {
+          if (typeof body.connectionId !== "string" || typeof body.challenge !== "string") throw new DomainError("INVALID_INPUT", "缺少心跳应答", 400, true);
+          services.bots.pong(botId, conversationId, body.connectionId, body.challenge);
+        } else if (segments[4] === "close" && typeof body.leaseId === "string") services.bots.closeLease(botId, conversationId, body.leaseId);
+        else throw new DomainError("INVALID_INPUT", "无效会话动作", 400, true);
+        return new Response(null, { status: 204, headers: { "cache-control": "no-store" } });
       }
       const query = new URL(request.url).searchParams;
       if (action === 'files' && !segments[4] && request.method === 'GET' && query.get('purpose') === 'references') return dataResponse(listBotReferenceFiles(botId, conversationId, query.get('path') ?? ''));
@@ -36,11 +49,12 @@ export async function botApi(request: Request, segments: string[]) {
       if (!action && request.method === 'PATCH') return dataResponse(services.bots.updateConversation(botId, conversationId, await jsonBody(request, 131072), request.headers.get('if-match')));
       if(action==='role'&&request.method==='POST'){const body=await jsonBody(request);services.bots.configureConversation(botId,conversationId,String(body.agentId??''),request.headers.get('if-match'),typeof body.revision==='number'?body.revision:undefined,typeof body.contentSha256==='string'?body.contentSha256:undefined);return dataResponse(await services.bots.detail(conversationId));}
       if (action === 'messages') {
-        if (request.method === 'GET') return dataResponse(await services.bots.messages(botId, conversationId));
+        if (request.method === "GET") return dataResponse(await services.bots.messages(botId, conversationId), { headers: { "cache-control": "no-store" } });
         if (request.method === 'POST') {
           const body = await jsonBody(request, 12 * 1024 * 1024);
           if (body.targetSessionId || body.sessionId || body.projectId) throw new DomainError('INVALID_BOT_INPUT', '协调输入不能指定项目目标', 422, true);
           if (services.bots.referenceContractVersion !== 7) throw new DomainError('REFERENCE_SERVICE_RESTART_REQUIRED', '服务尚未加载参考文件功能，请重启服务后重试', 503, true);
+          services.bots.assertLease(botId, conversationId, request.headers.get("x-session-lease-id") ?? "");
           return dataResponse(services.bots.send(botId, conversationId, String(body.content ?? ''), key(request), undefined, body.references), { status: 202 });
         }
       }
@@ -61,36 +75,4 @@ export async function botApi(request: Request, segments: string[]) {
   } catch (error) {
     return errorResponse(error);
   }
-}
-
-function liveEventResponse(request:Request,subscribe:(listener:(event:BotLiveEvent)=>void)=>()=>void):Response {
-  const encoder=new TextEncoder(),pending:Uint8Array[]=[];
-  let controller:ReadableStreamDefaultController<Uint8Array>|null=null,closed=false,heartbeat:ReturnType<typeof setInterval>|null=null;
-  const send=(event:BotLiveEvent)=>{
-    if(closed)return;
-    const frame=encoder.encode(`data: ${JSON.stringify(event)}\n\n`);
-    if(!controller){pending.push(frame);return;}
-    try{controller.enqueue(frame);}catch{close();}
-  };
-  const unsubscribe=subscribe(send);
-  const close=()=>{
-    if(closed)return;
-    closed=true;
-    if(heartbeat)clearInterval(heartbeat);
-    request.signal.removeEventListener('abort',close);
-    unsubscribe();
-    try{controller?.close();}catch{}
-  };
-  const stream=new ReadableStream<Uint8Array>({
-    start(value){
-      controller=value;
-      for(const frame of pending)value.enqueue(frame);
-      pending.length=0;
-      heartbeat=setInterval(()=>{try{controller?.enqueue(encoder.encode(': keep-alive\n\n'));}catch{close();}},15000);
-      request.signal.addEventListener('abort',close,{once:true});
-      if(request.signal.aborted)close();
-    },
-    cancel(){close();}
-  });
-  return new Response(stream,{headers:{'content-type':'text/event-stream; charset=utf-8','cache-control':'no-cache, no-transform','connection':'keep-alive','x-accel-buffering':'no'}});
 }
