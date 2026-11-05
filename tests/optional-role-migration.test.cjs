@@ -10,7 +10,7 @@ test('offline migration preserves existing records and allows role-less session 
   db.exec("DROP TRIGGER session_role_insert; CREATE TRIGGER session_role_insert BEFORE INSERT ON sessions WHEN NEW.agent_id IS NULL OR NOT EXISTS(SELECT 1 FROM agents WHERE id=NEW.agent_id AND kind='project' AND status='active' AND revision>=json_extract(NEW.agent_snapshot_json,'$.revision')) OR json_extract(NEW.agent_snapshot_json,'$.agentId') IS NOT NEW.agent_id OR json_extract(NEW.agent_snapshot_json,'$.contentSha256') IS NULL BEGIN SELECT RAISE(ABORT,'project role required'); END;");
   db.exec("INSERT INTO projects VALUES('p','P',NULL,'code','/tmp','active','now','now')");
   const context=JSON.stringify({summary:'keep',goal:'',constraints:[],facts:[],decisions:[],nextActions:[],outputs:[]});
-  db.prepare("INSERT INTO session_memories VALUES('m','p',NULL,'memory',?,NULL,NULL,'now','now')").run(context);db.close();
+  db.prepare("INSERT INTO session_memories(id,project_id,source_template_id,title,context_json,draft_json,last_reviewed_entry_id,created_at,updated_at) VALUES('m','p',NULL,'memory',?,NULL,NULL,'now','now')").run(context);db.close();
   const preview=spawnSync(process.execPath,[script,file],{encoding:'utf8'});assert.equal(preview.status,0,preview.stderr);assert.equal(JSON.parse(preview.stdout).state,'legacy');
   const result=spawnSync(process.execPath,[script,file,'--apply'],{encoding:'utf8'});assert.equal(result.status,0,result.stderr);assert.ok(fs.existsSync(JSON.parse(result.stdout).backup));
   const after=new Database(file);after.pragma('foreign_keys=ON');assert.equal(after.prepare('SELECT context_json FROM session_memories').get().context_json,context);

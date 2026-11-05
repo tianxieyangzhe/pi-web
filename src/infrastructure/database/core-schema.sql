@@ -43,6 +43,7 @@
   CREATE TABLE session_memories (
     id TEXT PRIMARY KEY,
     project_id TEXT REFERENCES projects(id) ON DELETE RESTRICT,
+    workspace_id TEXT REFERENCES workspaces(id) ON DELETE RESTRICT,
     source_template_id TEXT REFERENCES session_memories(id) ON DELETE RESTRICT,
     title TEXT NOT NULL,
     context_json TEXT NOT NULL CHECK(json_valid(context_json) AND json_type(context_json)='object'),
@@ -51,7 +52,10 @@
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     UNIQUE(id, project_id),
-    CHECK(project_id IS NOT NULL OR (source_template_id IS NULL AND draft_json IS NULL AND last_reviewed_entry_id IS NULL))
+    UNIQUE(id, workspace_id),
+    CHECK(project_id IS NULL OR workspace_id IS NULL),
+    CHECK(workspace_id IS NULL OR source_template_id IS NULL),
+    CHECK(project_id IS NOT NULL OR workspace_id IS NOT NULL OR (source_template_id IS NULL AND draft_json IS NULL AND last_reviewed_entry_id IS NULL))
   );
   CREATE TABLE sessions (
     id TEXT PRIMARY KEY,
@@ -86,7 +90,7 @@
 
   CREATE INDEX session_memories_project_idx ON session_memories(project_id, updated_at);
   CREATE INDEX sessions_project_idx ON sessions(project_id, created_at);
-  CREATE TRIGGER session_memories_owner_immutable BEFORE UPDATE OF project_id ON session_memories WHEN NEW.project_id IS NOT OLD.project_id BEGIN SELECT RAISE(ABORT,'memory ownership is immutable'); END;
+  CREATE TRIGGER session_memories_owner_immutable BEFORE UPDATE OF project_id,workspace_id ON session_memories WHEN NEW.project_id IS NOT OLD.project_id OR NEW.workspace_id IS NOT OLD.workspace_id BEGIN SELECT RAISE(ABORT,'memory ownership is immutable'); END;
   CREATE TRIGGER sessions_owner_immutable BEFORE UPDATE OF session_memory_id, project_id ON sessions WHEN NEW.session_memory_id IS NOT OLD.session_memory_id OR NEW.project_id IS NOT OLD.project_id BEGIN SELECT RAISE(ABORT,'session ownership is immutable'); END;
-  CREATE TRIGGER memory_template_insert BEFORE INSERT ON session_memories WHEN NEW.source_template_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM session_memories WHERE id=NEW.source_template_id AND project_id IS NULL) BEGIN SELECT RAISE(ABORT,'source must be a template'); END;
-  CREATE TRIGGER memory_template_update BEFORE UPDATE OF source_template_id ON session_memories WHEN NEW.source_template_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM session_memories WHERE id=NEW.source_template_id AND project_id IS NULL) BEGIN SELECT RAISE(ABORT,'source must be a template'); END;
+  CREATE TRIGGER memory_template_insert BEFORE INSERT ON session_memories WHEN NEW.source_template_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM session_memories WHERE id=NEW.source_template_id AND project_id IS NULL AND workspace_id IS NULL) BEGIN SELECT RAISE(ABORT,'source must be a template'); END;
+  CREATE TRIGGER memory_template_update BEFORE UPDATE OF source_template_id ON session_memories WHEN NEW.source_template_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM session_memories WHERE id=NEW.source_template_id AND project_id IS NULL AND workspace_id IS NULL) BEGIN SELECT RAISE(ABORT,'source must be a template'); END;

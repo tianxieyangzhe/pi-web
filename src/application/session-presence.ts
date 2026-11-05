@@ -15,6 +15,11 @@ export class SessionPresence {
   renew = (id: string, leaseId: string) => { this.assertLease(id, leaseId); this.leases.get(leaseId)!.expires = this.now() + 120_000; this.schedule(id); };
   release = (id: string, leaseId: string) => { if (this.leases.get(leaseId)?.id === id) { this.leases.delete(leaseId); this.schedule(id); } };
   settled(id: string) { this.schedule(id); }
+  forget(id: string) {
+    const timer = this.timers.get(id); if (timer) clearTimeout(timer);
+    this.timers.delete(id); this.detachedAt.delete(id);
+    for (const [key, lease] of this.leases) if (lease.id === id) this.leases.delete(key);
+  }
   private schedule(id: string) {
     const previous = this.timers.get(id); if (previous) clearTimeout(previous); this.timers.delete(id);
     const now = this.now();

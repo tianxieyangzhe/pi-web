@@ -1,5 +1,5 @@
 import { ChevronRight, FileCode2, Folder, GitCompare, LoaderCircle, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../../api/client";
 import type { FileEntry, FilePreview, ProjectChanges } from "../../domain/models";
 
@@ -109,7 +109,10 @@ export function FileBrowser({ projectId, projectName, rootPath, onOpenFile }: { 
   );
 }
 
-export function FilePreviewPane({ projectName, rootPath, preview, onClose }: { projectName: string; rootPath: string; preview: FilePreview; onClose: () => void }) {
+export function FilePreviewPane({ projectName, rootPath, preview, line, onClose }: { projectName: string; rootPath: string; preview: FilePreview; line?: number; onClose: () => void }) {
+  const contentRef=useRef<HTMLPreElement>(null);
+  const lines=line?preview.content.split('\n'):[];
+  useEffect(()=>{if(line)contentRef.current?.querySelector(`[data-line="${line}"]`)?.scrollIntoView?.({block:'center'});},[preview,line]);
   const normalizedRootPath = rootPath.replace(/[\\/]+$/, "");
   const separator = rootPath.includes("\\") ? "\\" : "/";
   const absolutePath = `${normalizedRootPath || separator}${normalizedRootPath ? separator : ""}${preview.path.split(/[\\/]/).join(separator)}`;
@@ -121,7 +124,7 @@ export function FilePreviewPane({ projectName, rootPath, preview, onClose }: { p
         <button aria-label="关闭文件预览" onClick={onClose}><X size={15} /></button>
       </header>
       <div className="file-preview-column__path" title={absolutePath}>{absolutePath}</div>
-      <pre className="file-preview-column__content">{preview.content}</pre>
+      <pre ref={contentRef} className="file-preview-column__content">{line?lines.map((text,index)=><span className={index+1===line?'bg-amber-100':''} data-line={index+1} key={index}>{text}{index<lines.length-1?'\n':''}</span>):preview.content}</pre>
     </aside>
   );
 }

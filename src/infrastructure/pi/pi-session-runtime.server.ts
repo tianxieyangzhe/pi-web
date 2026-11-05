@@ -1,3 +1,4 @@
+import { appendWorkspaceRequest, readWorkspaceRequests, type WorkspaceRequestIdentity } from '@/infrastructure/workspaces/request-journal.server';
 import { createPersistentAgentSession } from "./create-session.server";
 import { subscribeNativeSession } from "./native-session-events.server";
 import {requestScopeInstructions} from "@/domain/execution-operation";
@@ -26,7 +27,7 @@ import {
   SettingsManager,
   findCutPoint,
 } from "@earendil-works/pi-coding-agent";
-import type { AgentSession as PiAgentSession } from "@earendil-works/pi-coding-agent";
+import type { AgentSession as PiAgentSession, SessionEntry } from "@earendil-works/pi-coding-agent";
 import type { PiRuntimePort, SessionRuntimeInput } from "@/application/ports/pi-runtime";
 import { createPiProjectTools } from "@/infrastructure/projects/pi-project-tools.server";
 import { createOpenAIModelRuntime } from "@/infrastructure/pi/openai-model-config.server";
@@ -150,6 +151,7 @@ function loaderFor(input: SessionRuntimeInput, referenceScope: ReturnType<typeof
     additionalSkillPaths: [],
     appendSystemPrompt: [
       requestScopeInstructions,
+      ...(input.workspace ? [input.workspace.prompt] : []),
       ...(input.roleInstructions ? [input.roleInstructions] : []),
       ...(isRoleSnapshot(agent)&&!input.roleInstructions?[agent.definition.instructions]:[]),
       
@@ -231,12 +233,13 @@ export function createPiEventMapper(showActionSummary: boolean, workingDirectory
   return (event: unknown) => mapEvent(event as PiEvent, emit, turn, workingDirectory);
 }
 
-class PiSessionRuntime implements PiRuntimePort, PiContextPort {
+export class PiSessionRuntime implements PiRuntimePort, PiContextPort {
+  constructor(private readonly modelSource = createOpenAIModelRuntime) {}
   private readonly handles = new Map<string, Handle>();
   private modelRuntime: ReturnType<typeof createOpenAIModelRuntime> | undefined;
 
   private configuredModel() {
-    this.modelRuntime ??= createOpenAIModelRuntime();
+    this.modelRuntime ??= this.modelSource();
     return this.modelRuntime;
   }
 
@@ -246,8 +249,8 @@ class PiSessionRuntime implements PiRuntimePort, PiContextPort {
     const loader = loaderFor(input, referenceScope);
     await loader.reload();
     const { runtime: modelRuntime, model } = await this.configuredModel();
-    const customTools = [
-      ...(await createPiProjectTools(input, () => !input.independentProjectTools || writeAccess.allowed)),
+    const customTools = input.workspace ? [] : [
+      ...await createPiProjectTools(input, () => !input.independentProjectTools || writeAccess.allowed),
       ...toPiBotTools(input.collaborationTools ?? []),
     ];
     const result = await createPersistentAgentSession({
@@ -257,8 +260,10 @@ class PiSessionRuntime implements PiRuntimePort, PiContextPort {
       resourceLoader: loader,
       settingsManager: SettingsManager.inMemory({ compaction: { enabled: false } }),
       model,
-      noTools: customTools.length ? "builtin" : "all",
-      ...(customTools.length ? { customTools } : {}),
+      ...(input.workspace ? { tools: ['read', 'bash', 'edit', 'write'] } : {
+        noTools: customTools.length ? "builtin" as const : "all" as const,
+        ...(customTools.length ? { customTools } : {}),
+      }),
 
     });
     return {
@@ -280,7 +285,7 @@ class PiSessionRuntime implements PiRuntimePort, PiContextPort {
   }
 
   async initializeProject(input: SessionRuntimeInput, commit: (ref: JsonObject) => JsonObject) {
-    const directory = join(process.cwd(), ".data", "project-pi-sessions");
+    const directory = join(process.cwd(), ".data", input.workspace ? "workspace-pi-sessions" : "project-pi-sessions");
     mkdirSync(directory, { recursive: true, mode: 0o700 });
     const file = join(directory, createHash("sha256").update(input.session.id).digest("hex") + ".jsonl");
     const lock = file + ".lock";
@@ -353,6 +358,33 @@ class PiSessionRuntime implements PiRuntimePort, PiContextPort {
     }
   }
 
+  requestEntries(handle: object) {
+    const value=handle as Handle;
+    const legacy=value.manager.getEntries().flatMap(entry => entry.type === 'custom' && ['workspace_request','workspace_request_result','workspace_request_acknowledged'].includes(entry.customType) ? [{type:entry.customType,data:entry.data}] : []);
+    return [...legacy,...readWorkspaceRequests(this.requestIdentity(value))];
+  }
+
+  requestEntry(handle: object, type: string, data: unknown) {
+    return appendWorkspaceRequest(this.requestIdentity(handle as Handle),type,data);
+  }
+
+  private requestIdentity(handle: Handle): WorkspaceRequestIdentity {
+    const sessionFile=handle.manager.getSessionFile();
+    if(!handle.input.workspace||!sessionFile)throw new DomainError('NO_NATIVE_REF','工作区请求记录缺少原生会话身份',409,true);
+    return {sessionId:handle.input.session.id,workspaceId:handle.input.workspace.id,nativeSessionId:handle.manager.getSessionId(),sessionFile};
+  }
+
+  async readRequestEntries(input: SessionRuntimeInput) {
+    const handle=this.handles.get(input.session.id);
+    if(handle)return this.requestEntries(handle);
+    const ref=input.session.nativeRef;
+    if(!ref)return [];
+    if(!input.workspace||typeof ref.sessionFile!=='string'||typeof ref.sessionId!=='string')throw new DomainError('NO_NATIVE_REF','工作区原生会话身份无效',409,true);
+    const {entries}=readNativeFile(ref.sessionFile,input.workingDirectory,ref.sessionId);
+    const legacy=entries.flatMap(entry=>entry.type==='custom'&&['workspace_request','workspace_request_result','workspace_request_acknowledged'].includes(entry.customType)?[{type:entry.customType,data:entry.data}]:[]);
+    return [...legacy,...readWorkspaceRequests({sessionId:input.session.id,workspaceId:input.workspace.id,nativeSessionId:ref.sessionId,sessionFile:ref.sessionFile})];
+  }
+
   isBusy(handle: object) { return !(handle as Handle).session.isIdle; }
 
   subscribe(handle: object, listener: (event: AgentEvent) => void) {
@@ -420,7 +452,16 @@ class PiSessionRuntime implements PiRuntimePort, PiContextPort {
   }
 
   async history(input: SessionRuntimeInput): Promise<SessionMemoryHistory> {
-    const entries = this.manager(input)?.getBranch() ?? [];
+    let entries: SessionEntry[];
+    if (input.workspace && !this.handles.has(input.session.id)) {
+      const tree = await this.readTree(input);
+      const byId = new Map(tree.entries.map(({entry}) => { const item=entry as SessionEntry; return [item.id,item] as const; }));
+      entries=[];
+      let current=tree.activeLeafId;
+      const seen=new Set<string>();
+      while(current&&!seen.has(current)) {seen.add(current);const entry=byId.get(current);if(!entry)break;entries.push(entry);current=entry.parentId;}
+      entries.reverse();
+    } else entries = this.manager(input)?.getBranch() ?? [];
     const requests: SummaryRequest[] = [];
     let pending: SummaryRequest | undefined;
     for (const entry of entries) {

@@ -89,5 +89,11 @@ export function useProjectSessionNavigation() {
     return session;
   }, []);
 
-  return { expandedProjectIds, sessionsByProject, loadingProjectIds, errorsByProject, toggleProject, loadProjectSessions, updateProjectSessions, createProjectSession };
+  const removeSession = (projectId: string, sessionId: string) => {
+    requestVersions.current.set(projectId, (requestVersions.current.get(projectId) ?? 0) + 1);
+    loadingRequests.current.delete(projectId);
+    setLoadingProjectIds(current => { const next = new Set(current); next.delete(projectId); return next; });
+    setSessionsByProject(current => ({...current, [projectId]: (current[projectId] ?? []).filter(item => item.id !== sessionId)}));
+  };
+  return { removeSession, expandedProjectIds, sessionsByProject, loadingProjectIds, errorsByProject, toggleProject, loadProjectSessions, updateProjectSessions, createProjectSession };
 }

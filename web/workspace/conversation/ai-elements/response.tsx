@@ -44,16 +44,17 @@ function tokenizeInline(value: string): InlineToken[] {
   return tokens;
 }
 
-function InlineMarkdown({ value }: { value: string }) {
+function InlineMarkdown({ value, insideLink = false }: { value: string; insideLink?: boolean }) {
   const nodes: ReactNode[] = [];
   tokenizeInline(value).forEach((token, index) => {
     if (token.kind === "code") nodes.push(<code className="rounded border border-[#e7ebf2] bg-[#f4f6fa] px-1 py-0.5 font-mono text-[.9em] text-[#37517c]" key={index}>{token.value}</code>);
-    else if (token.kind === "strong") nodes.push(<strong className="font-semibold" key={index}>{token.value}</strong>);
-    else if (token.kind === "emphasis") nodes.push(<em key={index}>{token.value}</em>);
-    else if (token.kind === "strike") nodes.push(<del key={index}>{token.value}</del>);
+    else if (token.kind === "strong") nodes.push(<strong className="font-semibold" key={index}><InlineMarkdown value={token.value} insideLink={insideLink} /></strong>);
+    else if (token.kind === "emphasis") nodes.push(<em key={index}><InlineMarkdown value={token.value} insideLink={insideLink} /></em>);
+    else if (token.kind === "strike") nodes.push(<del key={index}><InlineMarkdown value={token.value} insideLink={insideLink} /></del>);
     else if (token.kind === "link") {
+      if (insideLink) { nodes.push(<InlineMarkdown key={index} value={token.value} insideLink />); return; }
       const external = /^https?:\/\//i.test(token.href ?? "");
-      nodes.push(<a className="text-[#2455a3] underline underline-offset-2" key={index} href={token.href} target={external ? "_blank" : undefined} rel={external ? "noreferrer noopener" : undefined}>{token.value}</a>);
+      nodes.push(<a className="text-[#2455a3] underline underline-offset-2" key={index} href={token.href} target={external ? "_blank" : undefined} rel={external ? "noreferrer noopener" : undefined}><InlineMarkdown value={token.value} insideLink /></a>);
     }
     else nodes.push(token.value);
   });

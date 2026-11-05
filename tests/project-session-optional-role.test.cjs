@@ -20,7 +20,7 @@ test('target schema permits a role-less session but rejects invalid selected rol
  const db=new Database(':memory:');db.pragma('foreign_keys=ON');db.exec(targetSchema);
  db.prepare("INSERT INTO projects VALUES('p','P',NULL,'code','/tmp','active','now','now')").run();
  const context=JSON.stringify({summary:'',goal:'',constraints:[],facts:[],decisions:[],nextActions:[],outputs:[]});
- for(const id of ['m1','m2']) db.prepare("INSERT INTO session_memories VALUES(?,'p',NULL,'memory',?,NULL,NULL,'now','now')").run(id,context);
+ for(const id of ['m1','m2']) db.prepare("INSERT INTO session_memories(id,project_id,source_template_id,title,context_json,draft_json,last_reviewed_entry_id,created_at,updated_at) VALUES(?,'p',NULL,'memory',?,NULL,NULL,'now','now')").run(id,context);
  const insert=db.prepare("INSERT INTO sessions(id,session_memory_id,project_id,purpose,agent_id,agent_snapshot_json,state,created_at,updated_at) VALUES(?,?, 'p','test',?,?,'idle','now','now')");
  insert.run('s1','m1',null,null);
  assert.throws(()=>insert.run('s2','m2','missing',JSON.stringify({agentId:'missing',revision:1,contentSha256:'a'.repeat(64)})),/invalid project role/);

@@ -5,4 +5,5 @@ export const botSchema=read("bot-schema.sql");
 export const agentBindingSchema=read("agent-binding-schema.sql");
 export const roleSchema=read("role-schema.sql");
 export const coreSchema=read("core-schema.sql");
-export const targetSchema=coreSchema+botSchema+agentBindingSchema+roleSchema;
+export const workspaceSchema=read("workspace-schema.sql");
+export const targetSchema=coreSchema+botSchema+agentBindingSchema+roleSchema+workspaceSchema;

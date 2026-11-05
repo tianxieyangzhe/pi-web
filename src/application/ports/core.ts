@@ -15,6 +15,7 @@ export interface SessionRepositoryPort {
   ): Session | null;
   setNativeRefIfAbsent(id: string, nativeRef: JsonObject): Session | null;
   markInterruptedAfterRestart(): number;
+  delete(projectId: string, id: string): void;
 }
 
 export type SessionCatalogPort = {

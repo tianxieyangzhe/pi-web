@@ -13,6 +13,7 @@ export type SessionRuntimeInput = {
   roleInstructions?: string;
   collaborationTools?: import("./bot").BotTool[];
   executionIdentity?: string;
+  workspace?: { id: string; defaultProjectId: string; projects: import("@/domain/workspace").WorkspaceProject[]; prompt: string };
 };
 
 export interface PiRuntimePort {

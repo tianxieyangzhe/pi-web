@@ -60,7 +60,7 @@ export function useSessionTree(base: string | null, read: () => Promise<SessionT
       });
     };
     const disconnect = subscribeSession(base, {
-      onReady: async opened => { if (disposed) return; lease.current = opened; setReady(true); setRunning(opened.status === "running"); setError(opened.outcome === "SESSION_BACKGROUND_TIMEOUT" ? "会话离开后运行超时并已停止" : ""); await refresh(); },
+      onReady: async opened => { if (disposed) return; lease.current = opened; setReady(true); setRunning(opened.status === "running"); setError(opened.outcome === "SESSION_BACKGROUND_TIMEOUT" ? "会话离开后运行超时并已停止" : opened.outcome === "REQUEST_UNKNOWN" ? "此前请求结果待核对。请打开检查面板核对 Pi 历史；确认后可解除阻塞。" : ""); await refresh(); },
       onEvent: receive,
       onError: cause => { if (!disposed) setError(cause.message); },
       onDisconnect: () => { if (!disposed) { lease.current = null; setReady(false); } },

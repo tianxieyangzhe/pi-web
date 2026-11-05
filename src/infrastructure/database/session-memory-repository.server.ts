@@ -7,9 +7,13 @@ function map(row: Record<string, unknown>): SessionMemory {
   try { return { id: String(row.id), projectId: row.project_id as string | null, sourceTemplateId: row.source_template_id as string | null, title: String(row.title), contextJson: validateContext(JSON.parse(String(row.context_json)), row.project_id === null), draftJson: row.draft_json ? validateDraft(JSON.parse(String(row.draft_json))) : null, lastReviewedEntryId: row.last_reviewed_entry_id as string | null, createdAt: String(row.created_at), updatedAt: String(row.updated_at) }; }
   catch { throw new DomainError("MEMORY_DATA_CORRUPT", "会话上下文数据损坏，已阻止关联写入", 409, true); }
 }
+function independentOwner() {
+  const columns = database.prepare('PRAGMA table_info(session_memories)').all() as Array<{name:string}>;
+  return columns.some(column => column.name === 'workspace_id') ? ' AND workspace_id IS NULL' : '';
+}
 export const sessionMemoryRepository = {
-  get(id: string): SessionMemory | null { assertSchemaCompatible(); const row = database.prepare('SELECT * FROM session_memories WHERE id=?').get(id) as Record<string, unknown> | undefined; return row ? map(row) : null; },
-  templates(): SessionMemory[] { assertSchemaCompatible(); return (database.prepare('SELECT * FROM session_memories WHERE project_id IS NULL ORDER BY updated_at DESC').all() as Record<string, unknown>[]).map(map); },
+  get(id: string): SessionMemory | null { assertSchemaCompatible(); const row = database.prepare('SELECT * FROM session_memories WHERE id=?' + independentOwner()).get(id) as Record<string, unknown> | undefined; return row ? map(row) : null; },
+  templates(): SessionMemory[] { assertSchemaCompatible(); return (database.prepare('SELECT * FROM session_memories WHERE project_id IS NULL' + independentOwner() + ' ORDER BY updated_at DESC').all() as Record<string, unknown>[]).map(map); },
   insert(memory: SessionMemory) { assertSchemaCompatible(); database.prepare('INSERT INTO session_memories(id,project_id,source_template_id,title,context_json,draft_json,last_reviewed_entry_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)').run(memory.id,memory.projectId,memory.sourceTemplateId,memory.title,JSON.stringify(memory.contextJson),memory.draftJson ? JSON.stringify(memory.draftJson) : null,memory.lastReviewedEntryId,memory.createdAt,memory.updatedAt); return memory; },
   createSession(projectId: string, purpose: string, templateId?: string, templateETag?: string, role?:{stableId?:string;agentId:string;agentSnapshot:import("@/domain/models").AgentSnapshot}) {
     assertSchemaCompatible();

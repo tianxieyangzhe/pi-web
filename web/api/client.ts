@@ -92,6 +92,7 @@ export const api = {
   deleteMcp: (id: string) => request<{ deleted: boolean }>(`/api/mcps/${id}`, mutation("DELETE")),
   testMcp: (id: string) => request<never>(`/api/mcps/${id}/test`, mutation("POST")),
   configureSessionRole:(projectId:string,s:Session,agentId:string,revision?:number,contentSha256?:string)=>request<Session>(`/api/projects/${projectId}/sessions/${s.id}/role`,{...mutation("POST",{agentId,revision,contentSha256}),headers:{...jsonHeaders,"if-match":s.writeETag}}),
+  deleteSession: (projectId: string, sessionId: string) => request<{deleted: boolean; sessionId: string}>(`/api/projects/${projectId}/sessions/${sessionId}`, mutation("DELETE")),
   listSessions: (projectId: string) => request<Session[]>(`/api/projects/${projectId}/sessions`),
   createSession: (projectId: string, body: Record<string, unknown> = {}) => request<Session>(`/api/projects/${projectId}/sessions`, mutation("POST", body)),
   openSession: (projectId:string,sessionId:string) => request<{leaseId:string;status:string;outcome:string|null}>(`/api/projects/${projectId}/sessions/${sessionId}/runtime/open`, mutation("POST")),

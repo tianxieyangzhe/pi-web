@@ -29,7 +29,7 @@ export function ReferencePicker({ selected, onChange, disabled, projectCount = 0
   </div>;
 }
 
-export function ProjectReferencePicker({ projects, workspace, selected, onChange, disabled, uploadCount, onDone }: { projects: Project[]; workspace?: BotWorkspace; selected: DirectoryReference[]; onChange: (references: DirectoryReference[]) => void; disabled?: boolean; uploadCount: number; onDone?: () => void }) {
+export function ProjectReferencePicker({ projects, workspace, selected, onChange, disabled, uploadCount, onDone, listFiles }: { projects: Project[]; workspace?: BotWorkspace; selected: DirectoryReference[]; onChange: (references: DirectoryReference[]) => void; disabled?: boolean; uploadCount: number; onDone?: () => void; listFiles?:(projectId:string,path:string)=>Promise<import('../../domain/models').ProjectFileListing> }) {
   const [open, setOpen] = useState(false);
   const [projectId, setProjectId] = useState("");
   const [path, setPath] = useState("");
@@ -42,10 +42,10 @@ export function ProjectReferencePicker({ projects, workspace, selected, onChange
     if (!open || !projectId) return;
     let live = true;
     setEntries([]); setError(""); setTruncated(false);
-    const listing = projectId === "bot:" && workspace ? botApi.referenceFiles(workspace.botId, workspace.conversationId, path) : api.listFiles(projectId.slice(8), path);
+    const listing = projectId === "bot:" && workspace ? botApi.referenceFiles(workspace.botId, workspace.conversationId, path) : (listFiles??api.listFiles)(projectId.slice(8), path);
     listing.then(result => { if (live) { setEntries(result.entries); setTruncated(result.truncated); } }).catch(cause => { if (live) setError(cause instanceof Error ? cause.message : "无法读取目录"); });
     return () => { live = false; };
-  }, [open, projectId, path, workspace?.botId, workspace?.conversationId]);
+  }, [open, projectId, path, workspace?.botId, workspace?.conversationId, listFiles]);
   function toggle(item: DirectoryReference) {
     const exists = selected.some(value => sameReference(value, item));
     if (!exists && selected.length + uploadCount >= 10) { setError("最多选择 10 个参考文件"); return; }

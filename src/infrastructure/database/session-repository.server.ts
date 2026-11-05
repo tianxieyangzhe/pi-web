@@ -1,3 +1,4 @@
+import { deleteSessionRecord } from "./delete-session.server";
 import {DomainError} from "@/domain/errors";
 import type { JsonObject, Mcp, Session } from "@/domain/models";
 import { hydrateAgentSnapshot, serializeAgentSnapshot } from "./agent-snapshot.server";
@@ -118,6 +119,11 @@ export const sessionRepository = {
     assertSchemaCompatible();
     database.prepare("UPDATE sessions SET native_ref_json = ? WHERE id = ? AND native_ref_json IS NULL AND ended_at IS NULL").run(stringifyJson(nativeRef), id);
     return this.get(id);
+  },
+
+  delete(projectId: string, id: string) {
+    assertSchemaCompatible();
+    deleteSessionRecord(database, "project", projectId, id);
   },
 
   markInterruptedAfterRestart(): number {

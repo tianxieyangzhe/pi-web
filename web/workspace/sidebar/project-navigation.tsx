@@ -1,11 +1,13 @@
 import {isSelected,type WorkspaceSelection} from "./workspace-selection";
-import { ChevronDown, ChevronRight, FolderKanban, Plus, Settings2, Sparkles } from "lucide-react";
+import { ChevronDown, ChevronRight, FolderKanban, Plus, Settings2, Sparkles, Trash2 } from "lucide-react";
 import type { Project } from "../../domain/models";
 import { useProjectSessionNavigation } from "./use-project-session-navigation";
 
 type ResourceKind = "agent" | "mcp";
 
-export function ProjectNavigation({ projects, selection, navigation, creatingSessionProjectId, onNewProject, onOpenTemplates, onNewProjectSession, botNavigation, onCreateSession, onProjectSelect, onSessionSelect, onEditProject, onOpenResource }: {
+export function ProjectNavigation({ deletingSessionId, onDeleteSession, projects, selection, navigation, creatingSessionProjectId, onNewProject, onOpenTemplates, onNewProjectSession, workspaceNavigation, onCreateSession, onProjectSelect, onSessionSelect, onEditProject, onOpenResource }: {
+  deletingSessionId: string | null;
+  onDeleteSession: (projectId: string, sessionId: string, label: string) => void;
   projects: Project[];
   selection:WorkspaceSelection|null;
   navigation: ReturnType<typeof useProjectSessionNavigation>;
@@ -13,7 +15,7 @@ export function ProjectNavigation({ projects, selection, navigation, creatingSes
   onNewProject: () => void;
   onOpenTemplates:()=>void;
   onNewProjectSession: () => void;
-  botNavigation: import("react").ReactNode;
+  workspaceNavigation?: import("react").ReactNode;
   onCreateSession: (projectId: string) => void;
   onProjectSelect: (projectId: string) => void;
   onSessionSelect: (projectId: string, sessionId: string) => void;
@@ -28,7 +30,7 @@ export function ProjectNavigation({ projects, selection, navigation, creatingSes
           <button onClick={onOpenTemplates}><Sparkles size={14}/>记忆模板库</button>
         </div>
         <nav className="sidebar__nav" aria-label="项目导航">
-          {botNavigation}
+          {workspaceNavigation}
           <div className="sidebar__label project-navigation__section-heading"><span>项目</span><button className="nav-icon" type="button" aria-label="新建项目" title="新建项目" onClick={onNewProject}><Plus size={14}/></button></div>
           {projects.map((project) => (
             <div className="project-nav-entry" key={project.id}>
@@ -75,9 +77,9 @@ export function ProjectNavigation({ projects, selection, navigation, creatingSes
                     const label = summary || "新会话";
                     const active = isSelected(selection,"project-session",session.id);
                     return (
+                      <div className="flex min-w-0 items-center gap-1" key={session.id}>
                       <button
-                        className={`project-session-link${active ? " active" : ""}`}
-                        key={session.id}
+                        className={`project-session-link flex-1${active ? " active" : ""}`}
                         title={label+(session.botParent?' · '+session.botParent.conversationTitle:'')}
                         aria-current={active ? "page" : undefined}
                         onClick={() => {
@@ -87,6 +89,8 @@ export function ProjectNavigation({ projects, selection, navigation, creatingSes
                         <span className={`project-session-link__dot project-session-link__dot--${session.state}`} aria-hidden="true" />
                         <span className="project-session-link__label">{label}</span>
                       </button>
+                      <button type="button" className="nav-icon shrink-0" aria-label={`删除会话：${label}`} title="删除会话" disabled={deletingSessionId !== null} onClick={() => onDeleteSession(project.id, session.id, label)}><Trash2 size={13}/></button>
+                      </div>
                     );
                   })}
                 </div>

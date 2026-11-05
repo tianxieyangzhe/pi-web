@@ -41,7 +41,7 @@ export function errorResponse(error: unknown): Response {
   );
 }
 
-export async function jsonBody(request: Request,maxBytes=65536): Promise<Record<string, unknown>> {
+export async function jsonBody(request: Request,maxBytes=65536,allowEmpty=false): Promise<Record<string, unknown>> {
   try {
     const length = Number(request.headers.get("content-length"));
     if (Number.isFinite(length) && length > maxBytes) throw new DomainError("INVALID_INPUT","请求内容超过容量上限",413,true);
@@ -57,6 +57,7 @@ export async function jsonBody(request: Request,maxBytes=65536): Promise<Record<
         chunks.push(value);
       }
     }
+    if (size === 0 && allowEmpty) return {};
     const bytes = new Uint8Array(size);
     let offset = 0;
     for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }

@@ -46,6 +46,7 @@ export function createSessionExecutionService(dependencies: {
   assertSessionAllowed?: (sessionId:string)=>void;
   coordinatorExecutionIds?: (sessionId:string)=>ReadonlySet<string>;
   backgroundInUse?: (sessionId: string) => boolean;
+  memoryBusy?: (sessionId: string) => boolean;
 }) {
   const { sessions, catalog, projects, runtime } = dependencies;
   const controls = new Map<string, {
@@ -56,6 +57,7 @@ export function createSessionExecutionService(dependencies: {
     complete: () => void;
   }>();
 
+  const deleting = new Set<string>();
   const openings = new Map<string, Promise<object | null>>();
   const leases = new Map<string, { sessionId: string; expires: number }>();
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -146,6 +148,8 @@ export function createSessionExecutionService(dependencies: {
   return {
     referenceContractVersion: 6,
     async open(sessionId: string, key: string) {
+      if (deleting.has(sessionId)) throw new DomainError('SESSION_BUSY', '会话正在删除', 409, true);
+      session(sessionId);
       const now = Date.now();
       for (const [storedKey, record] of idempotency) if (record.expires <= now) idempotency.delete(storedKey);
       const existing = idempotency.get(key);
@@ -331,6 +335,27 @@ export function createSessionExecutionService(dependencies: {
       if (!project) throw new DomainError("NOT_FOUND", "项目不存在", 404, true);
       if (!runtime.readTree) throw new DomainError("SESSION_TREE_READ_FAILED", "原生树读取不可用", 500, true);
       return runtime.readTree({session:value,workingDirectory:project.rootPath,allowProjectWrite:false,projectSession:true});
+    },
+    async deleteSession(projectId: string, sessionId: string) {
+      const value = session(sessionId);
+      if (value.projectId !== projectId) throw new DomainError('NOT_FOUND', '项目会话不存在', 404, true);
+      if (value.botConversationId) throw new DomainError('SESSION_REFERENCED', '此会话关联历史 Bot，不能删除', 409, true);
+      if (openings.has(sessionId) || controls.has(sessionId) || dependencies.memoryBusy?.(sessionId) || ['starting','running','interrupting'].includes(value.state)) throw new DomainError('SESSION_BUSY', '请等待会话和记忆处理结束后删除', 409, true);
+      if (value.state === 'unavailable') throw new DomainError('REQUEST_UNKNOWN', '请先核对并恢复会话', 409, true);
+      acquireSession(sessionId);
+      deleting.add(sessionId);
+      try {
+        const handle = runtime.getHandle(sessionId);
+        if (handle && runtime.isBusy?.(handle)) throw new DomainError('SESSION_BUSY', '会话正在运行', 409, true);
+        if (handle) await runtime.close(handle);
+        if (dependencies.memoryBusy?.(sessionId)) throw new DomainError('SESSION_BUSY', '记忆正在处理', 409, true);
+        sessions.delete(projectId, sessionId);
+        observed.get(sessionId)?.unsubscribe(); observed.delete(sessionId); clearTimer(sessionId);
+        for (const [key, lease] of leases) if (lease.sessionId === sessionId) leases.delete(key);
+        for (const [key, record] of idempotency) if (record.sessionId === sessionId) idempotency.delete(key);
+        timeouts.delete(sessionId); lastTimeouts.delete(sessionId);
+        return { deleted: true, sessionId };
+      } finally { deleting.delete(sessionId); locks.delete(sessionId); }
     },
     async close(sessionId: string) {
       if(openings.has(sessionId) || locks.has(sessionId))throw new DomainError("SESSION_BUSY","Session 正在打开、回答或压缩",409,true);

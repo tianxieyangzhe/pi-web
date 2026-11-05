@@ -78,6 +78,7 @@ function createServices() {
     readProjectReference,
     sessionMemories: sessionMemoryRepository,
     onCompleted: id => sessionMemories.completed(id),
+    memoryBusy: id => sessionMemories.busy(id),
     assertSessionAllowed: id => bots.assertSessionAllowed(id),
     coordinatorExecutionIds: () => new Set<string>(),
     backgroundInUse: id => { const parent = botRepository.parentForSession(id); return !!parent && botRepository.projectCalls(parent).some(call => call.sessionId === id && ["accepted", "working", "unknown"].includes(call.status)); }

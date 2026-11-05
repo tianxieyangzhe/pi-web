@@ -4,7 +4,8 @@ import {api} from "../../api/client";
 import type {NativeContextInspection} from "../../domain/native-context";
 
 const stateLabels={not_started:"未启动",starting:"正在启动",idle:"空闲",running:"正在回答",interrupting:"正在停止",ended:"已结束",unavailable:"需要恢复"};
-export function NativeContextSection({projectId,sessionId,onBusy,onRestore,running}:{projectId:string;sessionId:string|null;onBusy:(busy:boolean)=>void;onRestore:()=>Promise<void>;running:boolean}) {
+export type NativeContextApi = {inspect:()=>Promise<NativeContextInspection>;compact:()=>Promise<NativeContextInspection>;cancel:()=>Promise<NativeContextInspection>};
+export function NativeContextSection({projectId,sessionId,onBusy,onRestore,running,contextApi}:{projectId:string;sessionId:string|null;onBusy:(busy:boolean)=>void;onRestore:()=>Promise<void>;running:boolean;contextApi?:NativeContextApi}) {
   const [value,setValue]=useState<NativeContextInspection|null>(null);
   const [error,setError]=useState("");
   const [pending,setPending]=useState<"refresh"|"compact"|"cancel"|"restore"|null>(null);
@@ -17,11 +18,11 @@ export function NativeContextSection({projectId,sessionId,onBusy,onRestore,runni
   useEffect(()=>{
     mounted.current=true;current.current=null;setValue(null);setError("");setPending(null);
     if(!sessionId)return()=>{mounted.current=false;};
-    const loop=createAdaptivePoller({request:()=>api.getNativeContext(projectId,sessionId),receive:result=>{accept(result);setError("");},error:cause=>setError(cause instanceof Error?cause.message:"无法取得最新上下文状态"),delay:()=>current.current?.compactionState==="running"?2000:30000,visible:()=>!document.hidden});
+    const loop=createAdaptivePoller({request:()=>contextApi?contextApi.inspect():api.getNativeContext(projectId,sessionId),receive:result=>{accept(result);setError("");},error:cause=>setError(cause instanceof Error?cause.message:"无法取得最新上下文状态"),delay:()=>current.current?.compactionState==="running"?2000:30000,visible:()=>!document.hidden});
     poller.current=loop;void loop.refresh();
     const show=()=>{if(document.hidden)loop.pause();else void loop.refresh();};document.addEventListener("visibilitychange",show);
     return()=>{mounted.current=false;loop.dispose();if(poller.current===loop)poller.current=null;document.removeEventListener("visibilitychange",show);};
-  },[projectId,sessionId,accept]);
+  },[projectId,sessionId,accept,contextApi]);
   const wasRunning=useRef(running);
   useEffect(()=>{if(wasRunning.current&&!running)void refresh();wasRunning.current=running;},[running,refresh]);
   async function act(action:"refresh"|"compact"|"cancel"|"restore"){
@@ -30,7 +31,7 @@ export function NativeContextSection({projectId,sessionId,onBusy,onRestore,runni
     try{
       if(action==="refresh"){await refresh();return;}
       if(action==="restore"){await onRestore();await refresh();return;}
-      const result=action==="compact"?await api.compactNativeContext(projectId,sessionId):await api.cancelNativeCompaction(projectId,sessionId);
+      const result=contextApi?await (action==='compact'?contextApi.compact():contextApi.cancel()):action==="compact"?await api.compactNativeContext(projectId,sessionId):await api.cancelNativeCompaction(projectId,sessionId);
       if(mounted.current&&identity.current===key){accept(result);poller.current?.reschedule();}
     }catch(cause){if(mounted.current&&identity.current===key)setError(cause instanceof Error?cause.message:"Pi 上下文操作失败");}
     finally{if(mounted.current&&identity.current===key)setPending(null);}

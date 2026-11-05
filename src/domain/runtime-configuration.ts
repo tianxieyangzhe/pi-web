@@ -5,6 +5,7 @@ type RuntimeConfiguration = {
   independentProjectTools?: boolean;
   roleInstructions?: string;
   executionIdentity?: string;
+  workspace?: unknown;
   session: {
     agentSnapshot: unknown;
   };
@@ -14,7 +15,7 @@ type RuntimeConfiguration = {
   }>;
 };
 export function sameRuntimeConfiguration(a: RuntimeConfiguration, b: RuntimeConfiguration) {
-  return a.workingDirectory === b.workingDirectory && a.allowProjectWrite === b.allowProjectWrite && a.allowProjectRead === b.allowProjectRead && a.independentProjectTools === b.independentProjectTools && a.roleInstructions === b.roleInstructions && a.executionIdentity === b.executionIdentity && JSON.stringify(a.session.agentSnapshot) === JSON.stringify(b.session.agentSnapshot) && JSON.stringify((a.collaborationTools ?? []).map(t => ({
+  return JSON.stringify(a.workspace) === JSON.stringify(b.workspace) && a.workingDirectory === b.workingDirectory && a.allowProjectWrite === b.allowProjectWrite && a.allowProjectRead === b.allowProjectRead && a.independentProjectTools === b.independentProjectTools && a.roleInstructions === b.roleInstructions && a.executionIdentity === b.executionIdentity && JSON.stringify(a.session.agentSnapshot) === JSON.stringify(b.session.agentSnapshot) && JSON.stringify((a.collaborationTools ?? []).map(t => ({
     name: t.name,
     parameters: t.parameters
   }))) === JSON.stringify((b.collaborationTools ?? []).map(t => ({

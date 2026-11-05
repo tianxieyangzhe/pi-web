@@ -19,7 +19,7 @@ export function useProjectSession(project: Project | null, preferredSessionId?: 
   const load = useCallback(async (nextProject: Project, preferred?: string | null) => {
     const version = ++loadVersion.current, nextSessions = await api.listSessions(nextProject.id);
     if (version !== loadVersion.current) return;
-    setSessions(nextSessions); setSessionId(preferred && nextSessions.some(item => item.id === preferred) ? preferred : nextSessions.at(-1)?.id ?? null); setLoadedProjectId(nextProject.id);
+    setSessions(nextSessions); setSessionId(preferred && nextSessions.some(item => item.id === preferred) ? preferred : null); setLoadedProjectId(nextProject.id);
   }, []);
   useEffect(() => {
     if (!project) { loadVersion.current++; setLoadedProjectId(null); setSessionId(null); return; }
@@ -48,5 +48,6 @@ export function useProjectSession(project: Project | null, preferredSessionId?: 
   async function restore() { if (!project || !sessionId) return; try { await api.restoreProjectSession(project.id, sessionId); state.retryOpen(); } catch (cause) { state.setError(cause instanceof Error ? cause.message : "无法恢复项目会话"); } }
   async function end() { if (!project || !sessionId) return; try { await api.endProjectSession(project.id, sessionId); await load(project, null); } catch (cause) { state.setError(cause instanceof Error ? cause.message : "无法结束项目会话"); } }
   const messages: ConversationMessage[] = state.tree.entries.flatMap(({ entry }) => (entry.message as { role?: string } | undefined)?.role === "user" ? [{ id: entry.id, sessionId: sessionId ?? "", role: "user" as const, content: "", createdAt: entry.timestamp }] : []);
-  return { ...state, sessions, sessionId, messages, activities: [], liveEntries: [], streamingText: "", canStop: state.running, stopping, compacting, setCompacting, loadedProjectId, memory, selectSession: async (id: string) => { setSessionId(id); setStopping(false); setCompacting(false); }, send, interrupt, restore, end };
+  const removeDeletedSession = (id: string) => { loadVersion.current++; setSessions(current => current.filter(item => item.id !== id)); setSessionId(current => current === id ? null : current); };
+  return { ...state, removeDeletedSession, sessions, sessionId, messages, activities: [], liveEntries: [], streamingText: "", canStop: state.running, stopping, compacting, setCompacting, loadedProjectId, memory, selectSession: async (id: string) => { setSessionId(id); setStopping(false); setCompacting(false); }, send, interrupt, restore, end };
 }

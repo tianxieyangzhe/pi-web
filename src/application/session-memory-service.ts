@@ -97,6 +97,7 @@ export function createSessionMemoryService(deps:{memories:SessionMemoryRepositor
     }catch(error){fail(state,error);throw error;}
   }
   return {
+    busy: (id: string) => ["queued", "generating"].includes(jobs.get(id)?.state ?? "idle"),
     inspect,
     async regenerate(projectId:string,sessionId:string,expected:string|null,body:Record<string,unknown>){
       const result=writable(projectId,sessionId);deps.memories.update(result.memory.id,expected,()=>{});

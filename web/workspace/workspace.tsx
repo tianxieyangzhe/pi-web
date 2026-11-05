@@ -1,285 +1,99 @@
-import {selectedProjectId as selectionProjectId,type WorkspaceSelection} from "./sidebar/workspace-selection";
-import {RoleDirectory} from './roles/role-directory';
-import {RoleEditor,type RoleTarget} from './roles/role-editor';
-import {BotHome} from './roles/bot-home';
-import {RoleSelector} from './roles/role-selector';
-import { PanelLeftClose, PanelLeftOpen, Trash2, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
-import type { FilePreview } from "../domain/models";
-import { FilePreviewPane } from "./files/file-browser";
-import { ProjectSessionCreateDialog } from "./sidebar/project-session-create-dialog";
-import { ProjectSessionView } from "./conversation/project-session/project-session-view";
-import { ProjectDialog } from "./sidebar/project-dialog";
-import { ProjectNavigation } from "./sidebar/project-navigation";
-import { ContextPanel } from "./inspector/context-panel";
-import { useWorkspaceState } from "./use-workspace-state";
-import { useProjectSession } from "./conversation/project-session/use-project-session";
-import {BotNavigation} from "./sidebar/bot-navigation";
-import {BotCreateDialog} from "./sidebar/bot-create-dialog";
-import {BotConversationView} from "./conversation/bot-conversation/bot-conversation-view";
-import {useBotConversation} from "./conversation/bot-conversation/use-bot-conversation";
-import {BotPanel} from "./inspector/bot-panel";
-import {botApi} from "../api/bot-client";
-import type {BotOverview} from "../domain/bot";
-import { useProjectSessionNavigation } from "./sidebar/use-project-session-navigation";
-
-type ResourceKind = "project" | "agent" | "mcp";
-
+import { PanelLeftClose, PanelLeftOpen, Trash2, X } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { RoleDirectory } from './roles/role-directory';
+import { RoleEditor, type RoleTarget } from './roles/role-editor';
+import type { FilePreview } from '../domain/models';
+import type { WorkspaceRecord, WorkspaceSessionDTO } from '../../src/domain/workspace';
+import { FilePreviewPane } from './files/file-browser';
+import { ProjectSessionCreateDialog } from './sidebar/project-session-create-dialog';
+import { ProjectSessionView } from './conversation/project-session/project-session-view';
+import { ProjectDialog } from './sidebar/project-dialog';
+import { ProjectNavigation } from './sidebar/project-navigation';
+import { ContextPanel } from './inspector/context-panel';
+import { useWorkspaceState } from './use-workspace-state';
+import { useProjectSession } from './conversation/project-session/use-project-session';
+import { useProjectSessionNavigation } from './sidebar/use-project-session-navigation';
+import { selectedProjectId, type WorkspaceSelection } from './sidebar/workspace-selection';
+import { api } from '../api/client';
+import { resolveFileLink } from './conversation/file-link';
+import { workspaceApi } from '../api/workspace-client';
+import { WorkspaceCreateView } from './workspaces/workspace-create-view';
+import { WorkspaceNavigation } from './workspaces/workspace-navigation';
+import { WorkspaceSessionView } from './workspaces/workspace-session-view';
+type ResourceKind='project'|'agent'|'mcp';
 export function Workspace() {
-  const state = useWorkspaceState();
-  const [rolesOpen,setRolesOpen]=useState(false);
-  const [roleEditorTarget,setRoleEditorTarget]=useState<RoleTarget|null>(null);
+  const state=useWorkspaceState();
   const [selection,setSelection]=useState<WorkspaceSelection|null>(null);
-  const botHomeId=selection?.kind==='bot'?selection.botId:null;
-  const [sessionProjectId,setSessionProjectId]=useState<string|null>(null);
-  const [sessionRoleId,setSessionRoleId]=useState('');
-  const [sessionCreateBody,setSessionCreateBody]=useState<Record<string,unknown>>({});
-  const [resourceKind, setResourceKind] = useState<ResourceKind | null>(null);
-  const [resourceId, setResourceId] = useState<string | null>(null);
-  const [templateLibraryOpen,setTemplateLibraryOpen]=useState(false);
-  const [projectSessionCreateOpen, setProjectSessionCreateOpen] = useState(false);
-  const [creatingSessionProjectId, setCreatingSessionProjectId] = useState<string | null>(null);
-  const creatingSessionProjectIdRef = useRef<string | null>(null);
-  const [botOverview,setBotOverview]=useState<BotOverview|null>(null);
-  const botSelection=selection?.kind==='bot-conversation'?{botId:selection.botId,conversationId:selection.conversationId}:null;
-  const [botCreate,setBotCreate]=useState<string|true|null>(null);
-  const [botPanelView,setBotPanelView]=useState<"sessions"|"files"|"check">("sessions");
-  const botConversationOpen=selection?.kind==='bot-conversation';
-  async function reloadBots(){try{setBotOverview(await botApi.list());}catch(cause){state.setError(cause instanceof Error?cause.message:"无法加载 Bot");}}
-  useEffect(()=>{void reloadBots();},[]);
-  const botConversation=useBotConversation(botSelection?.botId??null,botSelection?.conversationId??null);
-  useEffect(()=>{const detail=botConversation.detail;if(!detail)return;setBotOverview(current=>current?{...current,bots:current.bots.map(b=>b.id===detail.bot.id?detail.bot:b),conversations:current.conversations.map(c=>c.id===detail.conversation.id?detail.conversation:c),participants:[...current.participants.filter(b=>b.botConversationId!==detail.conversation.id),...detail.participants]}:current);},[botConversation.detail]);
-  const [panelOpen, setPanelOpen] = useState(false);
-  const [projectNavCollapsed, setProjectNavCollapsed] = useState(false);
-  const [panelView, setPanelView] = useState<"memory" | "files" | "check">("check");
-  const fileBrowserOpen = panelView === "files";
-  const [filePreview, setFilePreview] = useState<FilePreview | null>(null);
-  const [sessionSelectionByProject, setSessionSelectionByProject] = useState<Record<string, string>>({});
-  const selectedProject = state.projects.find((item) => item.id === selectionProjectId(selection)) ?? null;
-  const sessionNavigation = useProjectSessionNavigation();
-  const preferredSessionId = selection?.kind==='project'&&selection.sessionId?selection.sessionId:selectedProject?sessionSelectionByProject[selectedProject.id]:undefined;
-  useEffect(()=>{if(!state.loading&&state.projects.length)setSelection(current=>current??{kind:'project',projectId:state.projects[0].id});},[state.loading,state.projects]);
-  const projectSession = useProjectSession(botConversationOpen||botHomeId ? null : selectedProject, preferredSessionId, panelOpen && panelView==="memory" && !resourceKind);
-  const activeProjectSession=projectSession.loadedProjectId===selectedProject?.id?projectSession.sessions.find(session=>session.id===projectSession.sessionId)??null:null;
-  const projectSessionParent=activeProjectSession?.botParent??null;
-  useEffect(() => {
-    if (selectedProject && projectSession.loadedProjectId === selectedProject.id && projectSession.sessions.length > 0) {
-      sessionNavigation.updateProjectSessions(selectedProject.id, projectSession.sessions);
-    }
-  }, [projectSession.loadedProjectId, projectSession.sessions, selectedProject, sessionNavigation.updateProjectSessions]);
-  function cancelMemoryEditing(){return window.dispatchEvent(new Event("memory-before-leave",{cancelable:true}));}
-
-  function closeSessionDisplays() {
-    window.dispatchEvent(new Event("memory-before-leave"));
-    setPanelOpen(false);
-    setFilePreview(null);
-    setResourceKind(null);
-    setResourceId(null);
-    setTemplateLibraryOpen(false);
-    setProjectSessionCreateOpen(false);
-    setBotCreate(null);
-    setRolesOpen(false);setSessionProjectId(null);
-  }
-
-  const displayedSession = useRef<string | null>(null);
-  useEffect(() => {
-    const next = selectedProject && projectSession.sessionId ? `${selectedProject.id}:${projectSession.sessionId}` : null;
-    if (next && displayedSession.current && next !== displayedSession.current) closeSessionDisplays();
-    displayedSession.current = next;
-  }, [selectedProject?.id, projectSession.sessionId]);
-
-  function openResource(kind: ResourceKind, id?: string) {
-    if(kind==='agent'){if(!roleEditorTarget)setRolesOpen(true);return;}
-    setResourceKind(kind);
-    setResourceId(id ?? null);
-    setPanelView("check");
-    setFilePreview(null);
-    setPanelOpen(kind !== "project");
-  }
-
-  function closeProjectDialog() {
-    setResourceKind(null);
-    setResourceId(null);
-  }
-
-  function returnToRoleList(){setRoleEditorTarget(null);setRolesOpen(true);}
-
-  function reviewAgentIssue(agentId:string,summary:string){
-    const resource=state.agents.find(agent=>agent.id===agentId);
-    if(!resource?.contentSha256){state.setError('此 Agent.md 版本不可编辑，请先在检查中处理角色版本问题。');return;}
-    setRolesOpen(false);setPanelOpen(false);setFilePreview(null);
-    setRoleEditorTarget({resource,initialFeedback:`请核对当前总对话报告的 Agent.md 疑点：${summary}\n请结合本次证据判断是否需要修订，保留原有职责与能力边界；不要增加或开启能力。`});
-  }
-
-  function openPanel(view: "memory" | "files" | "check") {
-    setResourceKind(null);
-    setResourceId(null);
-    setPanelView(view);
-    setPanelOpen(true);
-  }
-
-  function openFilePanel() { openPanel("files"); }
-
-  async function createProjectSession(projectId: string, body: Record<string,unknown> = {}) {
-    if(!cancelMemoryEditing())return;
-    const project = state.projects.find((item) => item.id === projectId && item.status === "active");
-    if (!project || creatingSessionProjectIdRef.current) return;
-
-    creatingSessionProjectIdRef.current = projectId;
-    setCreatingSessionProjectId(projectId);
+  const selectionRef=useRef(selection);selectionRef.current=selection;
+  const deleting=useRef(false),sessionLoadVersions=useRef(new Map<string,number>());
+  const [deletingSessionId,setDeletingSessionId]=useState<string|null>(null);
+  const [rolesOpen,setRolesOpen]=useState(false),[roleTarget,setRoleTarget]=useState<RoleTarget|null>(null);
+  const [resourceKind,setResourceKind]=useState<ResourceKind|null>(null),[resourceId,setResourceId]=useState<string|null>(null);
+  const [panelOpen,setPanelOpen]=useState(false),[panelView,setPanelView]=useState<'memory'|'files'|'check'>('check'),[collapsed,setCollapsed]=useState(false);
+  const [filePreview,setFilePreview]=useState<FilePreview|null>(null),[templatesOpen,setTemplatesOpen]=useState(false),[createProjectSessionOpen,setCreateProjectSessionOpen]=useState(false),[creatingProjectId,setCreatingProjectId]=useState<string|null>(null);
+  const previewRequest=useRef(0);
+  const [previewLocation,setPreviewLocation]=useState<{name:string;rootPath:string;line?:number}|null>(null);
+  const creating=useRef(false);
+  const navigation=useProjectSessionNavigation();
+  const [workspaces,setWorkspaces]=useState<WorkspaceRecord[]>([]),[workspaceSessions,setWorkspaceSessions]=useState<Record<string,WorkspaceSessionDTO[]>>({}),[workspaceError,setWorkspaceError]=useState('');
+  const [workspaceEditor,setWorkspaceEditor]=useState<WorkspaceRecord|'new'|null>(null),[newSessionWorkspace,setNewSessionWorkspace]=useState<WorkspaceRecord|null>(null),[defaultProject,setDefaultProject]=useState(''),[creatingWorkspaceSession,setCreatingWorkspaceSession]=useState(false),[sessionError,setSessionError]=useState('');
+  const loadWorkspaces=useCallback(async()=>{try{setWorkspaces(await workspaceApi.list());setWorkspaceError('');}catch(cause){setWorkspaceError(cause instanceof Error?cause.message:'无法加载工作区');}},[]);
+  const loadSessions=useCallback(async(id:string)=>{const version=(sessionLoadVersions.current.get(id)??0)+1;sessionLoadVersions.current.set(id,version);const sessions=await workspaceApi.sessions(id);if(sessionLoadVersions.current.get(id)===version)setWorkspaceSessions(current=>({...current,[id]:sessions}));},[]);
+  useEffect(()=>{void loadWorkspaces();},[loadWorkspaces]);
+  useEffect(()=>{if(selection?.kind==='workspace')void loadSessions(selection.workspaceId).catch(cause=>setWorkspaceError(cause.message));},[selection,loadSessions]);
+  const project=state.projects.find(item=>item.id===selectedProjectId(selection))??null;
+  const projectSession=useProjectSession(project,selection?.kind==='project'?selection.sessionId:undefined,panelOpen&&panelView==='memory');
+  useEffect(()=>{if(project&&projectSession.loadedProjectId===project.id)navigation.updateProjectSessions(project.id,projectSession.sessions);},[project,projectSession.loadedProjectId,projectSession.sessions,navigation.updateProjectSessions]);
+  const workspace=selection?.kind==='workspace'?workspaces.find(item=>item.id===selection.workspaceId):undefined;
+  const workspaceSession=selection?.kind==='workspace'?workspaceSessions[selection.workspaceId]?.find(item=>item.id===selection.sessionId):undefined;
+  function closeDisplays(){previewRequest.current++;setPreviewLocation(null);window.dispatchEvent(new Event('memory-before-leave'));setPanelOpen(false);setFilePreview(null);setResourceKind(null);setResourceId(null);setTemplatesOpen(false);setCreateProjectSessionOpen(false);setRolesOpen(false);setRoleTarget(null);setWorkspaceEditor(null);setNewSessionWorkspace(null);}
+  function select(next:WorkspaceSelection){closeDisplays();setSelection(next);}
+  function openResource(kind:ResourceKind,id?:string){closeDisplays();if(kind==='agent'){setRolesOpen(true);return;}setResourceKind(kind);setResourceId(id??null);if(kind==='mcp')setPanelOpen(true);}
+  async function createProjectSession(id:string,body:Record<string,unknown>={}){if(creating.current)return;creating.current=true;setCreatingProjectId(id);try{const session=await navigation.createProjectSession(id,body);select({kind:'project',projectId:id,sessionId:session.id});}catch(cause){state.setError(cause instanceof Error?cause.message:'无法创建会话');}finally{creating.current=false;setCreatingProjectId(null);}}
+  function openWorkspaceSession(value:WorkspaceRecord){closeDisplays();setNewSessionWorkspace(value);setDefaultProject(value.defaultProjectId);setSessionError('');}
+  async function createWorkspaceSession(){if(!newSessionWorkspace||creatingWorkspaceSession)return;setCreatingWorkspaceSession(true);try{const value=await workspaceApi.createSession(newSessionWorkspace.id,defaultProject);await loadSessions(newSessionWorkspace.id);select({kind:'workspace',workspaceId:newSessionWorkspace.id,sessionId:value.id});}catch(cause){setSessionError(cause instanceof Error?cause.message:'无法创建会话');}finally{setCreatingWorkspaceSession(false);}}
+  async function openFileLink(href:string) {
+    const version=++previewRequest.current;
     try {
-      const session = await sessionNavigation.createProjectSession(projectId,body);
-      setSessionSelectionByProject((current) => ({ ...current, [projectId]: session.id }));
-      setPanelView("check");
-      setFilePreview(null);
-      setPanelOpen(false);
-      setResourceKind(null);
-      setResourceId(null);
-      setProjectSessionCreateOpen(false);
-      setSessionProjectId(null);
-      setSelection({kind:'project',projectId,sessionId:session.id});
-    } catch (cause) {
-      state.setError(cause instanceof Error ? cause.message : "无法创建项目会话");
-    } finally {
-      creatingSessionProjectIdRef.current = null;
-      setCreatingSessionProjectId(null);
-    }
+      const projects=workspace?workspace.projects:project?[project]:[];
+      const target=resolveFileLink(href,projects,workspaceSession?.defaultProjectId??project?.id??'');
+      const owner=projects.find(item=>item.id===target.projectId)!;
+      const preview=workspace?await workspaceApi.readFile(workspace.id,owner.id,target.path):await api.readFile(owner.id,target.path);
+      if(version!==previewRequest.current)return;
+      setPreviewLocation({name:owner.name,rootPath:owner.rootPath,line:target.line});setFilePreview(preview);
+    }catch(cause){if(version===previewRequest.current)state.setError(cause instanceof Error?cause.message:'无法预览文件');}
   }
-
-  function openBotPanel(view:"sessions"|"files"|"check"){setBotPanelView(view);setPanelOpen(true);}
-  function selectBotConversation(conversationId:string){const c=botOverview?.conversations.find(x=>x.id===conversationId);if(!c)return;closeSessionDisplays();setSelection({kind:'bot-conversation',botId:c.botId,conversationId:c.id});}
-  function selectBotParticipant(sessionId:string){const binding=botConversation.detail?.participants.find(x=>x.id===sessionId)??botOverview?.participants.find(x=>x.id===sessionId);if(!binding)return;closeSessionDisplays();setSelection({kind:'project',projectId:binding.projectId,sessionId:binding.id});setSessionSelectionByProject(s=>({...s,[binding.projectId]:binding.id}));}
-
-  const activeProjects = state.projects.filter((item) => item.status === "active");
-
-  return (
-    <div className={`app-shell${panelOpen&&!roleEditorTarget ? " app-shell--panel-open" : ""}${filePreview&&!roleEditorTarget ? " app-shell--file-preview-open" : ""}${projectNavCollapsed ? " app-shell--project-nav-collapsed" : ""}${roleEditorTarget ? " app-shell--agent-editor" : ""}`}>
-      <ProjectNavigation
-        projects={state.projects}
-        selection={selection}
-        navigation={sessionNavigation}
-        creatingSessionProjectId={creatingSessionProjectId}
-        onNewProject={() => openResource("project")}
-        onOpenTemplates={()=>setTemplateLibraryOpen(true)}
-        onNewProjectSession={() => {closeSessionDisplays();setProjectSessionCreateOpen(true);}}
-        botNavigation={<BotNavigation onBot={id=>{closeSessionDisplays();setSelection({kind:'bot',botId:id});}} value={botOverview} selection={selection} onCreate={()=>{closeSessionDisplays();setBotCreate(true);}} onNewConversation={async id=>{const b=botOverview?.bots.find(b=>b.id===id);if(!b?.coordinatorAgentSnapshot){closeSessionDisplays();setSelection({kind:'bot',botId:id});return;}try{const c=await botApi.createConversation(id,{});await reloadBots();closeSessionDisplays();setSelection({kind:'bot-conversation',botId:id,conversationId:c.id});}catch(e){state.setError(e instanceof Error?e.message:"无法创建 Bot 对话");}}} onConversation={selectBotConversation} onProjectSession={selectBotParticipant} onDeleteConversation={async conversationId=>{const c=botOverview?.conversations.find(item=>item.id===conversationId);if(!c)return;try{await botApi.updateConversation(c.botId,c,{status:'deleted'});if(selection?.kind==='bot-conversation'&&selection.conversationId===c.id||selection?.kind==='project'&&botOverview?.participants.some(item=>item.id===selection.sessionId&&item.botConversationId===c.id)){closeSessionDisplays();setSelection({kind:'bot',botId:c.botId});}await reloadBots();}catch(e){state.setError(e instanceof Error?e.message:'无法删除协调会话');}}}/>}
-        onCreateSession={(projectId) => void createProjectSession(projectId)}
-        onProjectSelect={(projectId) => {
-          closeSessionDisplays();
-          setSessionSelectionByProject((current) => {
-            if (!current[projectId]) return current;
-            const next = { ...current };
-            delete next[projectId];
-            return next;
-          });
-          setSelection({kind:'project',projectId});
-        }}
-        onSessionSelect={(projectId, sessionId) => {
-          closeSessionDisplays();
-          setSessionSelectionByProject((current) => ({ ...current, [projectId]: sessionId }));
-          setSelection({kind:'project',projectId,sessionId});
-        }}
-        onEditProject={(projectId) => openResource("project", projectId)}
-        onOpenResource={(kind) => openResource(kind)}
-      />
-
-      {roleEditorTarget&&<RoleEditor key={roleEditorTarget.resource?.id??`new-${roleEditorTarget.kind??"coordinator"}`} target={roleEditorTarget} projects={state.projects} onClose={returnToRoleList} onSaved={async()=>{await state.reload();returnToRoleList();}}/>}
-
-      <section className="main-column">
-        <div className="main-toolbar">
-          <div className="main-toolbar__leading">
-            <button
-              className="project-nav-toggle"
-              type="button"
-              aria-label={projectNavCollapsed ? "展开项目导航" : "收起项目导航"}
-              aria-controls="project-navigation"
-              aria-expanded={!projectNavCollapsed}
-              title={projectNavCollapsed ? "展开项目导航" : "收起项目导航"}
-              onClick={() => setProjectNavCollapsed((collapsed) => !collapsed)}
-            >
-              {projectNavCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
-            </button>
-            <span>{botSelection?`${botConversation.detail?.bot.name??"Bot"} / ${botConversation.detail?.conversation.title??"总对话"}`:projectSessionParent?`${botOverview?.bots.find(b=>b.id===projectSessionParent.botId)?.name??"Bot"} / ${projectSessionParent.conversationTitle} / ${activeProjectSession?.agentSnapshot?.name??"项目会话"}`:botHomeId?(botOverview?.bots.find(b=>b.id===botHomeId)?.name??"Bot"):selectedProject?.name??"项目工作台"}</span>
-          </div>
-          <div className="main-toolbar__actions">
-            <nav className="main-toolbar__panel-switcher" aria-label="右侧面板">
-              <button type="button" aria-pressed={panelOpen && !resourceKind && (botConversationOpen?botPanelView==="sessions":panelView === "memory")} disabled={!selectedProject&&!botConversationOpen} onClick={() => botConversationOpen?openBotPanel("sessions"):openPanel("memory")}>{botConversationOpen?"项目":"记忆"}</button>
-              <button type="button" aria-pressed={panelOpen && !resourceKind && (botConversationOpen?botPanelView==="files":panelView === "files") } disabled={!selectedProject&&!botConversationOpen} onClick={()=>botConversationOpen?openBotPanel("files"):openFilePanel()}>文件</button>
-              <button type="button" aria-pressed={panelOpen && !resourceKind && (botConversationOpen?botPanelView==="check":panelView === "check") } onClick={() => botConversationOpen?openBotPanel("check"):openPanel("check")}>检查</button>
-            </nav>
-            {panelOpen && <button className="main-toolbar__close" aria-label="关闭右侧面板" onClick={() => setPanelOpen(false)}><X size={15} /></button>}
-          </div>
-        </div>
-        <div className="main-canvas">
-          {botHomeId&&botOverview?.bots.find(b=>b.id===botHomeId&&b.status!=="archived") ? <BotHome key={botHomeId} bot={botOverview.bots.find(b=>b.id===botHomeId)!} projects={state.projects} agents={state.agents} onRefresh={reloadBots} onConversation={selectBotConversation}/> : botConversationOpen ? (
-            <BotConversationView state={botConversation} projects={state.projects} onRole={selectBotParticipant} onManage={()=>openBotPanel("sessions")} onReviewAgentIssue={reviewAgentIssue}/>
-          ) : selectedProject ? (
-            <ProjectSessionView project={selectedProject} session={projectSession} botParent={projectSessionParent?{title:projectSessionParent.conversationTitle,onReturn:()=>{closeSessionDisplays();setSelection({kind:'bot-conversation',botId:projectSessionParent.botId,conversationId:projectSessionParent.conversationId});}}:undefined} />
-          ) : (
-            <main className="surface">
-              <div className="empty-state">
-                <h1>{state.loading ? "正在加载项目…" : state.error || "暂无项目"}</h1>
-                {!state.loading && <p>从左侧创建项目或 Bot。</p>}
-              </div>
-            </main>
-          )}
-        </div>
-      </section>
-
-      {filePreview && (selectedProject || botConversation.detail) && (
-        <FilePreviewPane
-          projectName={botConversationOpen?botConversation.detail!.bot.name:selectedProject!.name}
-          rootPath={botConversationOpen?botConversation.detail!.bot.workingDirectory:selectedProject!.rootPath}
-          preview={filePreview}
-          onClose={() => setFilePreview(null)}
-        />
-      )}
-
-      <ProjectDialog
-        key={resourceId ?? "new-project"}
-        open={resourceKind === "project"}
-        project={resourceKind === "project" ? state.projects.find((project) => project.id === resourceId) ?? null : null}
-        onClose={closeProjectDialog}
-        onSave={(body) => void state.saveResource("project", resourceId, body)}
-        onDelete={(id) => void state.deleteResource("project", id)}
-      />
-      <RoleDirectory open={rolesOpen&&!roleEditorTarget} roles={state.agents} onRefresh={state.reload} onClose={()=>setRolesOpen(false)} onEdit={target=>{setRolesOpen(false);setRoleEditorTarget(target);}}/>
-
-      {panelOpen && botConversationOpen && botConversation.detail&&!roleEditorTarget && <BotPanel detail={botConversation.detail} view={botPanelView} projects={state.projects} onClose={()=>setPanelOpen(false)} onRefresh={async()=>{await botConversation.refresh();await reloadBots();}} onRole={selectBotParticipant} onOpenFile={setFilePreview}/>}
-      {botCreate&&<BotCreateDialog botId={typeof botCreate==="string"?botCreate:undefined} projects={state.projects} agents={state.agents} onClose={()=>setBotCreate(null)} onSaved={id=>{void reloadBots();setSelection(typeof botCreate==="string"?{kind:'bot-conversation',botId:botCreate,conversationId:id}:{kind:'bot',botId:id});}}/>}
-      {panelOpen && !botConversationOpen && <ContextPanel
-        visible={panelOpen&&!roleEditorTarget}
-        panelView={panelView}
-        selectedProject={selectedProject}
-                session={projectSession}
-        resourceKind={resourceKind}
-        resourceId={resourceId}
-        selectedResource={resourceKind === "agent" ? state.agents.find((item) => item.id === resourceId) ?? null : resourceKind === "mcp" ? state.mcps.find((item) => item.id === resourceId) ?? null : null}
-        projects={state.projects}
-        agents={state.agents}
-        mcps={state.mcps}
-        onClose={() => setPanelOpen(false)}
-        onOpenFile={setFilePreview}
-        onOpenResource={openResource}
-        onSaveResource={(kind, id, body) => void state.saveResource(kind, id, body)}
-        onDeleteResource={(kind, id) => void state.deleteResource(kind, id)}
-      />}
-
-      {templateLibraryOpen&&<ProjectSessionCreateDialog libraryOnly projects={activeProjects} creatingProjectId={null} onClose={()=>setTemplateLibraryOpen(false)} onSelectProject={()=>{}} onCreateProject={()=>{}}/>}
-      {projectSessionCreateOpen && (
-        <ProjectSessionCreateDialog
-          projects={activeProjects}
-          creatingProjectId={creatingSessionProjectId}
-          onClose={() => setProjectSessionCreateOpen(false)}
-          onSelectProject={(projectId,template) => void createProjectSession(projectId,template)}
-          onCreateProject={() => {
-            setProjectSessionCreateOpen(false);
-            openResource("project");
-          }}
-        />
-      )}
-      {sessionProjectId&&<div className="modal-backdrop"><section className="modal" role="dialog" aria-modal="true"><header><h2>选择项目角色</h2><button onClick={()=>setSessionProjectId(null)}>关闭</button></header><RoleSelector kind="project" projectId={sessionProjectId} projects={state.projects} value={sessionRoleId} onChange={setSessionRoleId}/><footer><button disabled={!sessionRoleId||!!creatingSessionProjectId} onClick={()=>{const id=sessionProjectId;void createProjectSession(id,{...sessionCreateBody,agentId:sessionRoleId});}}>创建项目会话</button></footer></section></div>}
-      {state.error && <button className="error-banner" onClick={() => state.setError("")}>{state.error}<Trash2 size={13} /></button>}
-    </div>
-  );
+  async function deleteSession(kind:'project'|'workspace',ownerId:string,id:string,label:string) {
+    if(deleting.current||!window.confirm(`删除会话“${label}”？会话及其专属记忆将移除，磁盘上的 Pi 历史和项目文件会保留。`))return;
+    deleting.current=true;setDeletingSessionId(id);
+    try {
+      if(kind==='workspace'){
+        await workspaceApi.deleteSession(ownerId,id);
+        sessionLoadVersions.current.set(ownerId,(sessionLoadVersions.current.get(ownerId)??0)+1);
+        setWorkspaceSessions(current=>({...current,[ownerId]:(current[ownerId]??[]).filter(item=>item.id!==id)}));
+      }else{
+        await api.deleteSession(ownerId,id);navigation.removeSession(ownerId,id);
+        if(selectionRef.current?.kind==='project'&&selectionRef.current.projectId===ownerId)projectSession.removeDeletedSession(id);
+      }
+      const current=selectionRef.current;
+      if(current?.sessionId===id&&current.kind===kind)select(kind==='workspace'?{kind:'workspace',workspaceId:ownerId}:{kind:'project',projectId:ownerId});
+    }catch(cause){state.setError(cause instanceof Error?cause.message:'无法删除会话');}
+    finally{deleting.current=false;setDeletingSessionId(null);}
+  }
+  const refreshWorkspaceSession=useCallback(async()=>{if(workspace)await loadSessions(workspace.id);},[workspace,loadSessions]);
+  return <div className={`app-shell${panelOpen&&!roleTarget?' app-shell--panel-open':''}${filePreview&&!roleTarget?' app-shell--file-preview-open':''}${collapsed?' app-shell--project-nav-collapsed':''}${roleTarget?' app-shell--agent-editor':''}`}>
+    <ProjectNavigation deletingSessionId={deletingSessionId} onDeleteSession={(ownerId,id,label)=>void deleteSession('project',ownerId,id,label)} projects={state.projects} selection={selection} navigation={navigation} creatingSessionProjectId={creatingProjectId} onNewProject={()=>openResource('project')} onOpenTemplates={()=>setTemplatesOpen(true)} onNewProjectSession={()=>{closeDisplays();setCreateProjectSessionOpen(true);}} workspaceNavigation={<WorkspaceNavigation deletingSessionId={deletingSessionId} onDeleteSession={(ownerId,session)=>void deleteSession('workspace',ownerId,session.id,session.memorySummary||session.purpose||'新会话')} workspaces={workspaces} sessions={workspaceSessions} selectedWorkspaceId={selection?.kind==='workspace'?selection.workspaceId:undefined} selectedSessionId={selection?.kind==='workspace'?selection.sessionId:undefined} error={workspaceError} onRetry={()=>void loadWorkspaces()} onCreate={()=>{closeDisplays();setWorkspaceEditor('new');}} onSelect={id=>select({kind:'workspace',workspaceId:id})} onSession={(id,session)=>select({kind:'workspace',workspaceId:id,sessionId:session.id})} onNewSession={openWorkspaceSession} onEdit={value=>{closeDisplays();setWorkspaceEditor(value);}}/>} onCreateSession={id=>void createProjectSession(id)} onProjectSelect={id=>select({kind:'project',projectId:id})} onSessionSelect={(projectId,sessionId)=>select({kind:'project',projectId,sessionId})} onEditProject={id=>openResource('project',id)} onOpenResource={kind=>openResource(kind)}/>
+    {roleTarget&&<RoleEditor key={roleTarget.resource?.id??'new'} target={roleTarget} projects={state.projects} onClose={()=>{setRoleTarget(null);setRolesOpen(true);}} onSaved={async()=>{await state.reload();setRoleTarget(null);setRolesOpen(true);}}/>}
+    <section className="main-column"><div className="main-toolbar"><div className="main-toolbar__leading"><button className="project-nav-toggle" type="button" aria-label={collapsed?'展开项目导航':'收起项目导航'} aria-controls="project-navigation" aria-expanded={!collapsed} onClick={()=>setCollapsed(value=>!value)}>{collapsed?<PanelLeftOpen size={16}/>:<PanelLeftClose size={16}/>}</button><span>{workspace?.name??project?.name??'工作台'}</span></div>{project&&!workspaceEditor&&<div className="main-toolbar__actions"><nav className="main-toolbar__panel-switcher" aria-label="右侧面板">{(['memory','files','check'] as const).map(view=><button key={view} type="button" aria-pressed={panelOpen&&panelView===view} onClick={()=>{setPanelView(view);setPanelOpen(true);}}>{{memory:'记忆',files:'文件',check:'检查'}[view]}</button>)}</nav>{panelOpen&&<button className="main-toolbar__close" aria-label="关闭右侧面板" onClick={()=>setPanelOpen(false)}><X size={15}/></button>}</div>}</div><div className="main-canvas">
+      {workspaceEditor?<WorkspaceCreateView key={workspaceEditor==='new'?'new':workspaceEditor.id} workspace={workspaceEditor==='new'?undefined:workspaceEditor} onClose={()=>setWorkspaceEditor(null)} onSave={async(body,key)=>{const current=workspaceEditor==='new'?null:workspaceEditor;const saved=await workspaceApi.save(current?.id??null,body,current?.writeETag,key);await loadWorkspaces();select({kind:'workspace',workspaceId:saved.id});}}/>:workspace&&workspaceSession?<WorkspaceSessionView onOpenFileLink={href=>void openFileLink(href)} key={workspaceSession.id} workspace={workspace} session={workspaceSession} onChanged={refreshWorkspaceSession}/>:workspace?<main className="flex flex-1 flex-col gap-4 overflow-auto bg-white p-6"><header className="flex items-center justify-between"><h1 className="text-xl font-semibold text-slate-800">{workspace.name}</h1><button className="rounded-md bg-emerald-700 px-3 py-2 text-sm text-white" onClick={()=>openWorkspaceSession(workspace)}>新建会话</button></header><div className="overflow-hidden rounded-lg border border-slate-200">{workspace.projects.map(item=><div key={item.id} className="flex items-center gap-3 border-b border-slate-100 px-4 py-3 last:border-0"><span className="text-sm font-medium">{item.name}</span>{item.id===workspace.defaultProjectId&&<span className="rounded bg-emerald-50 px-2 py-0.5 text-xs text-emerald-800">默认项目</span>}<span className="min-w-0 break-all font-mono text-xs text-slate-500">{item.rootPath}</span></div>)}</div></main>:project?<ProjectSessionView onOpenFileLink={href=>void openFileLink(href)} project={project} session={projectSession}/>:<main className="surface"><div className="empty-state"><h1>{state.loading?'正在加载…':'选择工作区或独立项目'}</h1><p>从左侧创建工作区，或打开已有会话。</p></div></main>}
+    </div></section>
+    {filePreview&&(previewLocation||project)&&<FilePreviewPane projectName={previewLocation?.name??project!.name} rootPath={previewLocation?.rootPath??project!.rootPath} line={previewLocation?.line} preview={filePreview} onClose={()=>{previewRequest.current++;setFilePreview(null);setPreviewLocation(null);}}/>}
+    <ProjectDialog key={resourceId??'new'} open={resourceKind==='project'} project={state.projects.find(item=>item.id===resourceId)??null} onClose={()=>setResourceKind(null)} onSave={body=>void state.saveResource('project',resourceId,body)} onDelete={id=>void state.deleteResource('project',id)}/>
+    <RoleDirectory open={rolesOpen&&!roleTarget} roles={state.agents} onRefresh={state.reload} onClose={()=>setRolesOpen(false)} onEdit={target=>{setRolesOpen(false);setRoleTarget(target);}}/>
+    {panelOpen&&project&&<ContextPanel visible={!roleTarget} panelView={panelView} selectedProject={project} session={projectSession} resourceKind={resourceKind} resourceId={resourceId} selectedResource={resourceKind==='mcp'?state.mcps.find(item=>item.id===resourceId)??null:null} projects={state.projects} agents={state.agents} mcps={state.mcps} onClose={()=>setPanelOpen(false)} onOpenFile={preview=>{previewRequest.current++;setPreviewLocation(null);setFilePreview(preview);}} onOpenResource={openResource} onSaveResource={(kind,id,body)=>void state.saveResource(kind,id,body)} onDeleteResource={(kind,id)=>void state.deleteResource(kind,id)}/>}
+    {templatesOpen&&<ProjectSessionCreateDialog libraryOnly projects={state.projects.filter(p=>p.status==='active')} creatingProjectId={null} onClose={()=>setTemplatesOpen(false)} onSelectProject={()=>{}} onCreateProject={()=>{}}/>}
+    {createProjectSessionOpen&&<ProjectSessionCreateDialog projects={state.projects.filter(p=>p.status==='active')} creatingProjectId={creatingProjectId} onClose={()=>setCreateProjectSessionOpen(false)} onSelectProject={(id,body)=>void createProjectSession(id,body)} onCreateProject={()=>openResource('project')}/>}
+    {newSessionWorkspace&&<div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/30 p-5"><section role="dialog" aria-modal="true" aria-labelledby="workspace-session-title" className="w-full max-w-lg rounded-xl bg-white p-6 shadow-xl"><h2 id="workspace-session-title" className="text-lg font-semibold">新建工作区会话</h2><label className="mt-4 block text-sm">默认工作目录<select className="mt-2 block w-full rounded-md border border-slate-200 p-2" value={defaultProject} disabled={creatingWorkspaceSession} onChange={event=>setDefaultProject(event.target.value)}>{newSessionWorkspace.projects.map(p=><option key={p.id} value={p.id}>{p.name} · {p.rootPath}</option>)}</select></label>{sessionError&&<p role="alert" className="mt-3 text-sm text-red-700">{sessionError}</p>}<footer className="mt-5 flex justify-end gap-3"><button disabled={creatingWorkspaceSession} onClick={()=>setNewSessionWorkspace(null)}>取消</button><button disabled={creatingWorkspaceSession} className="rounded-md bg-emerald-700 px-4 py-2 text-sm text-white disabled:opacity-40" onClick={()=>void createWorkspaceSession()}>{creatingWorkspaceSession?'创建中…':'创建会话'}</button></footer></section></div>}
+    {state.error&&<button className="error-banner" onClick={()=>state.setError('')}>{state.error}<Trash2 size={13}/></button>}
+  </div>;
 }
