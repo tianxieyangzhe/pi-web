@@ -88,6 +88,10 @@ AI Elements 不承担 API、NDJSON 解析、持久状态或权限校验。Tailwi
 
 ## 6. 持久化与运行边界
 
+OPS-003：Next配置采用next.config.mjs，构建manifest插件采用显式.cjs导入，不依赖配置加载阶段的TypeScript扩展解析或SWC原生二进制；保留开发manifest原子替换行为。旧glibc平台的SWC回退与后续原生模块兼容性由部署环境验证，不自动升级系统库。
+
+OPS-002：开发、生产及systemd默认监听localhost:3000；可显式指定0.0.0.0、任意本机IPv4或IPv6监听地址，不设来源IP白名单。监听由Next CLI与启动脚本配置，不新增跨域API或修改业务归属校验。
+
 OPS-001：Linux systemd以单实例长驻Node运行生产Next服务。scripts/start-systemd.sh定位仓库根作为WorkingDirectory与INIT_CWD，exec已选Node的next start，保持配置、.data及Pi恢复身份，不调用Pi或迁移数据库。scripts/systemd.cjs仅生成/安装unit（user默认，system显式指定非root运行用户），安装只写unit并daemon-reload，不自动构建/启动/enable。服务保留运行用户HOME与可执行PATH，不启用会遮蔽用户项目/家目录/临时文件的沙箱；停止信号传给Node进程组，stdout/stderr交journald。使用说明在scripts/systemd-guide.md；版本升级构建与服务启停由操作者单独执行，不由应用启动隐式完成。
 
 SLIST-002由application的SessionOpenHistory端口、infrastructure/sessions/session-open-history.server.ts版本化原子文件实现持久最近打开时间；bootstrap为两类会话注入同一端口，按scope/owner/session隔离。不调用Pi或增改SQL。

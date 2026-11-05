@@ -1,7 +1,8 @@
 require('./register.cjs');
 const {test}=require('node:test'),assert=require('node:assert/strict');
 const fs=require('node:fs'),path=require('node:path'),os=require('node:os');
-const {atomicManifestFileSystem,AtomicManifestPlugin}=require('../src/infrastructure/build/atomic-manifest-plugin.ts');
+const {atomicManifestFileSystem,AtomicManifestPlugin}=require('../src/infrastructure/build/atomic-manifest-plugin.cjs');
+test('Next configuration imports directly in Node without TypeScript or SWC loaders',async()=>{const config=(await import('../next.config.mjs')).default;assert.equal(config.reactStrictMode,true);const options={plugins:[]};assert.equal(config.webpack(options,{dev:true,nextRuntime:'nodejs'}),options);assert(options.plugins[0] instanceof AtomicManifestPlugin);});
 const write=(system,file,data)=>new Promise((resolve,reject)=>system.writeFile(file,data,error=>error?reject(error):resolve()));
 
 test('manifest readers retain a complete old version until the new file commits',async()=>{

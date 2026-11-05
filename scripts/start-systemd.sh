@@ -6,7 +6,7 @@ cd -- "$app_root"
 export INIT_CWD="$app_root"
 export NODE_ENV=production
 node_binary="${NODE_BINARY:-node}"
-app_host="${APP_HOST:-127.0.0.1}"
+app_host="${APP_HOST:-localhost}"
 app_port="${PORT:-3000}"
 
 if [[ ! "$app_port" =~ ^[0-9]{1,5}$ ]] || (( 10#$app_port < 1 || 10#$app_port > 65535 )); then

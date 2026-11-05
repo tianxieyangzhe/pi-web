@@ -10,6 +10,10 @@
 
 ## 当前规则
 
+OPS-003（已实现，定向测试通过）：修复Linux旧glibc/SWC回退下next.config.ts扩展解析失败；配置与插件直接由Node加载，不启动服务，定向验证配置导入、webpack插件挂载及原子manifest行为。无模型/API或数据库变更。实际运行tests/atomic-manifest.test.cjs（5项，直接Node导入配置、开发插件挂载、manifest原子写/失败保留及真实临时Webpack编译）、tests/systemd-scripts.test.cjs（3项），共8项通过；npm run typecheck、git diff --check通过。未启动用户服务，未在CentOS实机验证SWC WASM或系统原生库兼容性。
+
+OPS-002（已实现，定向测试通过）：启动默认绑定localhost，支持显式绑定任意本机IP；生产CLI与systemd支持指定本机IPv4/IPv6地址，应用不新增IP白名单。定向验证默认地址与显式覆盖，不改防火墙或用户服务。实际运行tests/systemd-scripts.test.cjs三项通过，含默认localhost、指定IPv4/IPv6及启动脚本覆盖；Bash/Node语法、git diff --check通过。未启动服务或做真实网络连通验收。
+
 OPS-001（脚本已实现，受控测试通过；Linux实机待验）：提供可审查systemd unit生成/安装脚本及生产启动脚本；支持user/system作用域，固定cwd/INIT_CWD、明确运行用户HOME/Node/PATH、端口/监听地址可配、异常重启及journald。缺依赖/构建失败时明确退出，不自动构建/迁移/启停；安装不自动enable/start，已有不同unit默认不覆盖。验证参数与systemd转义、安装写入边界、启动参数/工作目录和预检，使用临时目录和假命令，不碰用户服务/数据库。实际运行tests/systemd-scripts.test.cjs三项通过（unit参数/转义、启动前置检查/exec与配置根、临时unit安装及覆盖保护）；bash -n scripts/start-systemd.sh、node --check scripts/systemd.cjs、git diff --check通过。未生产构建，未调用真实systemctl、安装unit或启停服务；Linux systemd实机验收留给部署步骤。
 
 SLIST-002（实现中）：两类侧栏时间显示持久lastOpenedAt；实际新开连接成功时记录，刷新/消息/心跳/打开幂等重试不变，失败不记录；历史无记录明确显示。标题只来自最新用户输入，无消息显示新会话，无文本输入有占位，不再回退purpose。SessionOpenHistory事实与文件在02定义，API在03，Workspace映射06；无SQL迁移、不改旧数据。

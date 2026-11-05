@@ -16,7 +16,7 @@ npm run build
 
 项目不再提供或依赖 `.env` 配置文件。模型使用 `models.json`、`settings.json` 与 Pi 原生认证来源；配置中显式引用环境变量时，通过服务环境提供。unit 不复制任何密钥。不加载交互式 shell 的 `.bashrc`/nvm，生成时固定当前 Node 的绝对路径及 PATH，升级 Node 后需重新生成 unit。
 
-默认地址为 `127.0.0.1:3000`；用 `--host`、`--port` 修改。需要远程访问时，可通过现有反向代理提供访问控制，也可在可信网络内显式传入 `--host 0.0.0.0`。
+默认监听 `localhost:3000`，浏览器使用 `http://localhost:3000` 访问。显式传入 `--host 0.0.0.0` 时监听全部IPv4网卡，可从其他设备使用 `http://服务器IP:3000` 访问。用 `--host`、`--port` 指定本机地址与端口，例如 `--host 192.168.1.10`，IPv6可用 `--host ::`。远程连通还取决于宿主机防火墙、云安全组与路由配置。
 
 ## 用户服务（默认，不需要 sudo）
 
@@ -57,8 +57,8 @@ sudo journalctl -u ai-workspace.service -f
 ## 自定义与升级
 
 ```bash
-npm run systemd -- render --name my-workspace --port 3100 --host 127.0.0.1
-npm run systemd -- install --name my-workspace --port 3100 --host 127.0.0.1
+npm run systemd -- render --name my-workspace --port 3100 --host 0.0.0.0
+npm run systemd -- install --name my-workspace --port 3100 --host 0.0.0.0
 ```
 
 可用 `--app-dir /absolute/path` 指定安装位置（该位置须有完整项目与脚本）。默认是脚本所在仓库。路径含空格、`%`、`$` 时由生成器做 systemd 转义。

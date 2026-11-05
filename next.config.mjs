@@ -1,10 +1,11 @@
-import type { NextConfig } from "next";
 import path from "node:path";
-import { AtomicManifestPlugin } from "./src/infrastructure/build/atomic-manifest-plugin";
+import manifestPlugin from "./src/infrastructure/build/atomic-manifest-plugin.cjs";
+const { AtomicManifestPlugin } = manifestPlugin;
 
 const runtimeRecoveryStub = path.resolve(process.cwd(), "src/infrastructure/bots/runtime-recovery.stub.ts");
 
-const nextConfig: NextConfig = {
+/** @type {import("next").NextConfig} */
+const nextConfig = {
   ...(process.env.AI_WORKSPACE_BUILD_DIR ? {distDir:process.env.AI_WORKSPACE_BUILD_DIR} : {}),
   devIndicators: false,
   reactStrictMode: true,
