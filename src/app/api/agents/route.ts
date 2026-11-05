@@ -1,16 +1,5 @@
-import { services } from "@/bootstrap/composition-root.server";
-import { dataResponse, errorResponse, jsonBody } from "@/shared/protocol/api";
-import { idempotentMutation } from "@/shared/protocol/idempotency.server";
-
-export const runtime = "nodejs";
-
-export async function GET() {
-  try { return dataResponse(services.catalog.listAgents()); } catch (error) { return errorResponse(error); }
-}
-
-export async function POST(request: Request) {
-  return idempotentMutation(request, "agents:create", async () => {
-    try { return dataResponse(services.catalog.createAgent(await jsonBody(request,131072)), { status: 201 }); }
-    catch (error) { return errorResponse(error); }
-  });
-}
+import {services} from '@/bootstrap/composition-root.server';
+import {dataResponse,errorResponse,jsonBody} from '@/shared/protocol/api';
+export const runtime='nodejs';
+export function GET(){try{return dataResponse(services.catalog.listAgents(),{headers:{'cache-control':'no-store'}});}catch(error){return errorResponse(error);}}
+export async function POST(request:Request){try{return dataResponse(services.catalog.presentAgent(services.catalog.createAgent(await jsonBody(request))),{status:201});}catch(error){return errorResponse(error);}}

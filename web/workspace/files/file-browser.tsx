@@ -14,6 +14,7 @@ export function FileBrowser({ projectId, projectName, rootPath, onOpenFile }: { 
   const [path, setPath] = useState("");
   const [entries, setEntries] = useState<FileEntry[]>([]);
   const [isGitRepository, setIsGitRepository] = useState(false);
+  const [gitUnavailable,setGitUnavailable]=useState(false),openVersion=useRef(0);
   const [truncated, setTruncated] = useState(false);
   const [changes, setChanges] = useState<ProjectChanges | null>(null);
   const [changesError, setChangesError] = useState("");
@@ -24,7 +25,7 @@ export function FileBrowser({ projectId, projectName, rootPath, onOpenFile }: { 
     setLoading(true);
     setError("");
     setEntries([]);
-    setIsGitRepository(false);
+    setIsGitRepository(false);setGitUnavailable(false);
     setTruncated(false);
     setChanges(null);
     setChangesError("");
@@ -34,7 +35,7 @@ export function FileBrowser({ projectId, projectName, rootPath, onOpenFile }: { 
         const listing = await api.listFiles(projectId, path);
         if (!active) return;
         setEntries(listing.entries);
-        setIsGitRepository(listing.isGitRepository);
+        setIsGitRepository(listing.isGitRepository);setGitUnavailable(listing.gitState==='unavailable');
         setTruncated(listing.truncated);
         setLoading(false);
 
@@ -54,19 +55,21 @@ export function FileBrowser({ projectId, projectName, rootPath, onOpenFile }: { 
     }
 
     void load();
-    return () => { active = false; };
+    return () => { active = false;openVersion.current++; };
   }, [path, projectId]);
 
   async function open(entry: FileEntry) {
     if (entry.type === "directory") {
+      openVersion.current++;
       setPath(entry.path);
       return;
     }
+    const version=++openVersion.current;
     try {
-      setError("");
-      onOpenFile(await api.readFile(projectId, entry.path));
+      setError("");const preview=await api.readFile(projectId, entry.path);
+      if(version===openVersion.current)onOpenFile(preview);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "无法读取文件");
+      if(version===openVersion.current)setError(cause instanceof Error ? cause.message : "无法读取文件");
     }
   }
 
@@ -95,11 +98,13 @@ export function FileBrowser({ projectId, projectName, rootPath, onOpenFile }: { 
             {entry.gitStatus && <small>{entry.gitStatus}</small>}
           </button>
         ))}
-        {truncated && <p className="file-empty">此目录内容较多，仅显示前 1000 项。</p>}
+        {truncated && <p className="file-empty">此目录内容较多，仅显示排序后的前 2000 项。</p>}
+        {gitUnavailable&&<p className="file-empty">Git 状态暂不可用，仍可浏览目录和文件。</p>}
         {isGitRepository && (
           <details className="changes">
             <summary><GitCompare size={13} />变更 {changedFiles.length}</summary>
             {changesError && <p className="file-empty">Git 变更暂不可用：{changesError}</p>}
+            {changes?.truncated&&<p className="file-empty">变更内容超过容量上限，当前展示已截断。</p>}
             {changedFiles.map((change) => <div key={change.path}>{change.path}<small>{change.status}</small></div>)}
           </details>
         )}

@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { DomainError } from "@/domain/errors";
 import { validateDefinition } from "@/domain/agent-definition";
@@ -80,13 +80,14 @@ export function writeAgentVersion(value: AgentMarkdown): { contentSha256: string
   const contentSha256 = createHash("sha256").update(content).digest("hex");
   if (existsSync(target)) {
     const current = readFileSync(target);
-    if (createHash("sha256").update(current).digest("hex") !== contentSha256) throw new DomainError("ROLE_VERSION_CONFLICT", "该角色版本文件已存在且内容不同", 409, true);
+    if (createHash("sha256").update(current).digest("hex") !== contentSha256) throw new DomainError("WRITE_CONFLICT", "该角色版本文件已存在且内容不同", 409, true);
     return { contentSha256, path: target };
   }
   const temp = path.join(directory, `.${value.revision}.${randomUUID()}.tmp`);
   try {
-    writeFileSync(temp, content, { flag: "wx", mode: 0o600 });
-    renameSync(temp, target);
+    const fd=openSync(temp,"wx",0o600);try{writeFileSync(fd,content);fsyncSync(fd);}finally{closeSync(fd);}
+    try{linkSync(temp,target);unlinkSync(temp);}catch(error){if((error as NodeJS.ErrnoException).code!=='EEXIST')throw error;if(createHash('sha256').update(readFileSync(target)).digest('hex')!==contentSha256)throw new DomainError('WRITE_CONFLICT','版本候选冲突，既有文件保持不变',409,true);unlinkSync(temp);}
+    const parent=openSync(directory,"r");try{fsyncSync(parent);}finally{closeSync(parent);}
   } catch (error) {
     try { rmSync(temp, { force: true }); } catch {}
     throw error;
@@ -94,22 +95,21 @@ export function writeAgentVersion(value: AgentMarkdown): { contentSha256: string
   return { contentSha256, path: target };
 }
 
-export function readAgentVersion(agentId: string, revision: number, expectedSha256?: string | null): AgentMarkdown & { contentSha256: string; path: string } {
+export function readAgentVersion(agentId: string, revision: number, expectedSha256?: string | null): AgentMarkdown & { contentSha256: string; path: string; markdown:string } {
   const target = agentVersionPath(agentId, revision);
   try {
     const info = lstatSync(target);
     if (!info.isFile() || info.isSymbolicLink()) throw new Error("not a regular file");
-    const real = realpathSync(target), base = realpathSync(path.dirname(target));
-    if (!real.startsWith(base + path.sep) && real !== base) throw new Error("path escape");
+    const real = realpathSync(target), base = realpathSync(path.dirname(target)),root=realpathSync(rootPath());
+    if ((!base.startsWith(root+path.sep)&&base!==root)||(!real.startsWith(base + path.sep) && real !== base)) throw new Error("path escape");
     const bytes = readFileSync(target);
     const contentSha256 = createHash("sha256").update(bytes).digest("hex");
     if (expectedSha256 && expectedSha256 !== contentSha256) throw new DomainError("ROLE_FILE_HASH_MISMATCH", "Agent.md 版本摘要不匹配", 409, true);
     const parsed = parseAgentMarkdown(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
     if (parsed.agentId !== agentId || parsed.revision !== revision) throw new DomainError("ROLE_FILE_IDENTITY_MISMATCH", "Agent.md 身份或版本不匹配", 409, true);
-    return { ...parsed, contentSha256, path: target };
+    return { ...parsed, contentSha256, path: target, markdown:new TextDecoder("utf-8",{fatal:true}).decode(bytes) };
   } catch (error) {
-    if (error instanceof DomainError) throw error;
-    throw new DomainError("ROLE_FILE_MISSING", "角色 Markdown 版本缺失或不可读", 409, true);
+    throw new DomainError("ROLE_VERSION_MISSING", "Agent Markdown 版本缺失或不可读", 409, true);
   }
 }
 

@@ -1,6 +1,7 @@
 import { DomainError, enumValue, optionalText, requiredText, uniqueStrings } from "@/domain/errors";
 import type { Agent, Mcp, McpConfig, Project } from "@/domain/models";
 import { validateDefinition, roleETag } from "@/domain/agent-definition";
+import {exactFields} from "./project-session-service";
 import type { CatalogDependencies } from "@/application/ports/catalog";
 const resourceStatuses = ["active", "disabled", "archived"] as const;
 const projectKinds = ["code", "knowledge", "general"] as const;
@@ -56,12 +57,14 @@ export function createCatalogService({
   projects: projectRepository,
   mcps: mcpRepository,
   agents: agentRepository,
-  normalizeProjectRoot
+  normalizeProjectRoot, assertProjectMutable
 }: CatalogDependencies) {
   return {
-    listProjects: () => projectRepository.list(),
+    listProjects: () => projectRepository.list().map(value=>({...value,writeETag:roleETag(value)})),
+    presentProject:(value:Project)=>({...value,writeETag:roleETag(value)}),
     getProject: (id: string) => projectRepository.get(id),
     createProject(body: Record<string, unknown>): Project {
+      validateProjectBody(body,false);
       return projectRepository.create({
         name: requiredText(body.name, "name", "项目名称"),
         description: optionalText(body.description),
@@ -70,9 +73,13 @@ export function createCatalogService({
         status: "active"
       });
     },
-    updateProject(id: string, body: Record<string, unknown>): Project {
+    updateProject(id: string, body: Record<string, unknown>, expected?:string): Project {
+      validateProjectBody(body,true);
       const current = projectRepository.get(id);
       if (!current) throw new DomainError("NOT_FOUND", "项目不存在", 404, true);
+      match(current,expected);
+      if(body.rootPath!==undefined&&normalizeProjectRoot(body.rootPath)!==current.rootPath&&projectRepository.isInUse(id))throw new DomainError("PROJECT_REFERENCED","已有会话或其他记录引用此项目目录",409,true);
+      if(body.status!==undefined&&body.status!==current.status)assertProjectMutable?.(id);
       const updated = projectRepository.update(id, {
         ...(body.name !== undefined ? {
           name: requiredText(body.name, "name", "项目名称")
@@ -89,14 +96,15 @@ export function createCatalogService({
         ...(body.status !== undefined ? {
           status: enumValue(body.status, resourceStatuses, "status")
         } : {})
-      });
-      return updated!;
+      },expected);
+      if(!updated)throw new DomainError("NOT_FOUND","项目不存在",404,true);return updated;
     },
-    deleteProject(id: string): void {
+    deleteProject(id: string, expected?:string): void {
+      const current=projectRepository.get(id);if(!current)throw new DomainError("NOT_FOUND","项目不存在",404,true);match(current,expected);assertProjectMutable?.(id);
       if (projectRepository.isInUse(id)) {
-        throw new DomainError("RESOURCE_IN_USE", "项目正在被工作线使用", 423, true);
+        throw new DomainError("PROJECT_REFERENCED", "项目仍被会话或历史记录引用", 409, true);
       }
-      if (!projectRepository.delete(id)) throw new DomainError("NOT_FOUND", "项目不存在", 404, true);
+      if (!projectRepository.delete(id,expected)) throw new DomainError("NOT_FOUND", "项目不存在", 404, true);
     },
     listMcps: () => mcpRepository.list(),
     getMcp: (id: string) => mcpRepository.get(id),
@@ -136,10 +144,8 @@ export function createCatalogService({
       }
       if (!mcpRepository.delete(id)) throw new DomainError("NOT_FOUND", "MCP 不存在", 404, true);
     },
-    listAgents: () => agentRepository.list().map(value => ({
-      ...value,
-      writeETag: roleETag(value)
-    })),
+    listAgents: () => agentRepository.list().map(presentAgent),
+    presentAgent,
     getAgent: (id: string) => agentRepository.get(id),
     getAgentVersion: (id:string,revision:number,sha256:string) => agentRepository.getVersion(id,revision,sha256),
     createAgent(body: Record<string, unknown>): Agent {
@@ -148,9 +154,10 @@ export function createCatalogService({
     updateAgent(id: string, body: Record<string, unknown>): Agent {
       return saveRole(id, body);
     },
-    deleteAgent(id: string): {deleted:boolean;archived:boolean} {
+    deleteAgent(id: string, expected?:string): {deleted:boolean;archived:boolean} {
       const current = agentRepository.get(id);
       if (!current) throw new DomainError("NOT_FOUND", "角色不存在", 404, true);
+      match(current,expected);
       if (agentRepository.isInUse(id)) {
         agentRepository.update(id, { status: "archived" }, roleETag(current));
         return {deleted:false,archived:true};
@@ -159,17 +166,26 @@ export function createCatalogService({
       return {deleted:true,archived:false};
     }
   };
+  function presentAgent(value:Agent) {const {id,name,description,kind,revision,contentSha256,status,createdAt,updatedAt}=value;return {id,name,description,kind,revision,contentSha256,status,createdAt,updatedAt,writeETag:roleETag(value),markdown:value.contentSha256?value.markdown??null:null,definition:value.contentSha256?value.definition:null,legacy:!value.contentSha256};}
+  function match(value:object,expected?:string){if(!expected)throw new DomainError('PRECONDITION_REQUIRED','缺少If-Match',428,true);if(roleETag(value)!==expected)throw new DomainError('WRITE_CONFLICT','资源已变化，请重新读取',409,true);}
+  function validateProjectBody(body:Record<string,unknown>,patch:boolean){
+    exactFields(body,patch?['name','description','kind','rootPath','status']:['name','description','kind','rootPath']);
+    if(patch&&!Object.keys(body).length)throw new DomainError('INVALID_INPUT','至少提供一个修改字段',400,true);
+    if(body.name!==undefined&&(typeof body.name!=='string'||!body.name.trim()||[...body.name.trim()].length>120)||body.description!==undefined&&body.description!==null&&(typeof body.description!=='string'||[...body.description.trim()].length>2000))throw new DomainError('INVALID_INPUT','项目名称或说明无效',400,true);
+  }
   function saveRole(id: string | null, body: Record<string, unknown>): Agent {
     if(Object.keys(body).some(k=>!['name','description','kind','definition','status','writeETag'].includes(k)))throw new DomainError('INVALID_ROLE','角色请求包含未支持字段',422,true);
     const current = id ? agentRepository.get(id) : null;
     if (id && !current) throw new DomainError('NOT_FOUND', '角色不存在', 404, true);
+    if(current)match(current,String(body.writeETag??""));
+    if(current&&(current.botId||current.projectId||current.sourceTemplateId))throw new DomainError("INVALID_ROLE","历史归属资料请创建新的独立Agent",409,true);
+    if(body.description!==undefined&&body.description!==null&&typeof body.description!=="string")throw new DomainError("INVALID_INPUT","Agent说明无效",400,true);
     const kind = enumValue(body.kind ?? current?.kind, ['coordinator', 'project'] as const, 'kind');
     if (current?.kind && kind !== current.kind) throw new DomainError('INVALID_ROLE', '角色用途不可在编辑时改变', 409, true);
     const name = requiredText(body.name ?? current?.name, 'name', '角色名称'),
       description = optionalText(body.description === undefined ? current?.description : body.description);
     if ([...name].length > 120 || description && [...description].length > 2000) throw new DomainError('INVALID_ROLE', '名称或描述超长', 422, true);
     const definition = validateDefinition(body.definition ?? current?.definition, kind);
-    definition.capabilities.readProjects = false;
     const input = {
       name,
       description,

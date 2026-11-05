@@ -74,8 +74,7 @@ export type BotParticipant = {
   collaborationState: 'active' | 'disabled';
   projectId: string;
   projectName?: string;
-  memorySummary?: string;
-  state?: Session['state'];
+  state?: import('../../src/domain/models').SessionState;
 };
 export type BotTask = {
   id: string;

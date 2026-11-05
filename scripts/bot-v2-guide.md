@@ -1,6 +1,8 @@
-# Bot 六表与角色迁移
+# Bot 六表与角色迁移（历史版本）
 
-当前目标包含六张 Bot 运行表，以及 Agent 定义和 Session 直接父归属。原 `bot_conversation_sessions` 保留为只读历史表，不参与新调度。用户已授权本轮自行完成迁移。
+本文仅说明旧六表 Bot 迁移，不是当前 Workspace 或 SessionMemory 退役方案。当前目标与历史库处理以 [06](../docs/06-bot.md) 和 [02](../docs/02-data-model.md) 为准，以下步骤仅适用于明确选择维护的旧版本。
+
+当时目标包含六张 Bot 运行表，以及 Agent 定义和 Session 直接父归属。原 `bot_conversation_sessions` 保留为只读历史表，不参与新调度。此前授权仅覆盖当时迁移，不授权当前或后续数据库操作。
 
 独立脚本默认预览：
 

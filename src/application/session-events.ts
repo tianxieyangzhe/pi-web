@@ -9,7 +9,7 @@ export type SubscriptionFrame = { event: "ready" | "ping" | "message"; data: unk
 export class SessionEvents {
   private connections = new Map<string, { sessionId: string; leaseId: string; challenge: string | null; deadline: number; send: (frame: SubscriptionFrame) => void; close: () => void }>();
   private runs = new Map<string, { id: string; sequence: number; started: boolean }>();
-  constructor(private presence: { assertLease: (id: string, lease: string) => void; renew: (id: string, lease: string) => void; release: (id: string, lease: string) => void }, private clock = () => performance.now()) {}
+  constructor(private presence: { assertLease: (id: string, lease: string) => void; renew: (id: string, lease: string) => void; release: (id: string, lease: string) => void }, private clock = () => performance.now(),private activity:(sessionId:string)=>unknown=()=>null) {}
 
   subscribe(sessionId: string, leaseId: string, send: (frame: SubscriptionFrame) => void, end: () => void) {
     this.presence.assertLease(sessionId, leaseId);
@@ -24,12 +24,13 @@ export class SessionEvents {
     };
     this.connections.set(connectionId, { sessionId, leaseId, challenge: null, deadline: 0, send, close });
     try {
-      send({ event: "ready", data: { connectionId } });
+      send({ event: "ready", data: { connectionId,activity:this.activity(sessionId) } });
       this.ping(connectionId);
       timer = setInterval(() => this.ping(connectionId), 30_000); timer.unref?.();
     } catch (error) { close(); throw error; }
     return close;
   }
+  closeSession(sessionId:string){for(const c of [...this.connections.values()])if(c.sessionId===sessionId){try{c.send({event:"message",data:{sessionId,runId:null,sequence:null,type:"session_closed",entryId:null,temporaryId:null,payload:{status:"closed"}}});}catch{/* A broken transport still releases its lease. */}finally{c.close();}}}
   // Public for controlled-clock lifecycle tests; only the server invokes this.
   ping(connectionId: string) {
     const c = this.connections.get(connectionId); if (!c) return;

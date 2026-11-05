@@ -1,13 +1,11 @@
 import { createHash } from "node:crypto";
 import { DomainError } from "./errors";
 import type { JsonObject, SessionState } from "./models";
-import type { SessionMemoryContext } from "./session-memory";
 
 export type WorkspaceProject = { id: string; workspaceId: string; rootPath: string; name: string };
 export type WorkspaceRecord = { id: string; name: string; defaultProjectId: string; projects: WorkspaceProject[]; createdAt: string; updatedAt: string; writeETag: string };
-export type WorkspaceSession = { id: string; workspaceId: string; defaultProjectId: string; sessionMemoryId: string; purpose: string; nativeRef: JsonObject | null; createdAt: string; endedAt: string | null };
-export type WorkspaceSessionDTO = Omit<WorkspaceSession, "nativeRef" | "sessionMemoryId"> & { state: SessionState; memorySummary: string; allowedActions: string[] };
-export type WorkspaceMemory = { id: string; workspaceId: string; contextJson: SessionMemoryContext; lastReviewedEntryId: string | null; updatedAt: string; createdAt: string; title: string };
+export type WorkspaceSession = { id: string; workspaceId: string; defaultProjectId: string; purpose: string; nativeRef: JsonObject | null; createdAt: string; endedAt: string | null };
+export type WorkspaceSessionDTO = Omit<WorkspaceSession, "nativeRef"|"endedAt"> & import("./session-preview").SessionPreview & {lastOpenedAt:string|null; status:"open"|"closed"; allowedActions: string[] };
 export type WorkspaceConfiguration = { name: string; projects: Array<{ id?: string; rootPath: string }>; defaultProjectIndex: number };
 export const digest = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 export const workspaceETag = (value: unknown) => `"${digest(value)}"`;

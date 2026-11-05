@@ -1,16 +1,7 @@
 require('./register.cjs');
 const {test}=require('node:test');const assert=require('node:assert/strict');
-const {memoryPollingDelay,createAdaptivePoller}=require('../web/workspace/conversation/project-session/session-memory-polling.ts');
+const {createAdaptivePoller}=require('../web/workspace/conversation/project-session/adaptive-polling.ts');
 const settle=()=>new Promise(resolve=>setImmediate(resolve));
-test('memory polling follows pending work and stops synced hidden panels',()=>{
- assert.equal(memoryPollingDelay({syncState:'updating'},false,0,100),2000);
- assert.equal(memoryPollingDelay({syncState:'pending'},true,0,100),2000);
- assert.equal(memoryPollingDelay({syncState:'synced'},false,0,100),null);
- assert.equal(memoryPollingDelay({syncState:'synced'},true,0,100),30000);
- assert.equal(memoryPollingDelay({syncState:'synced'},false,5000,100),2000);
- assert.equal(memoryPollingDelay({syncState:'failed'},false,5000,100),null);
- assert.equal(memoryPollingDelay(null,false,0,100,true),null);
-});
 test('adaptive polling deduplicates refreshes and waits for completion before next timer',async()=>{
  let calls=0,finish;const timers=new Map();let next=0,visible=true,delay=2000;const received=[];
  const loop=createAdaptivePoller({request:()=>{calls++;return new Promise(resolve=>{finish=resolve;});},receive:value=>received.push(value),error:()=>{},delay:()=>delay,visible:()=>visible,setTimer:callback=>{const id=++next;timers.set(id,callback);return id;},clearTimer:id=>timers.delete(id)});

@@ -2,7 +2,7 @@ require('./register.cjs');
 const {test}=require('node:test'),assert=require('node:assert/strict');
 const {createSessionExecutionService}=require('../src/application/session-execution-service.ts');
 function fixture(){
- let value={id:'lifecycle',projectId:'p',sessionMemoryId:'m',state:'idle',agentId:null,agentSnapshot:null,mcpIds:[],nativeRef:null,endedAt:null};
+ let value={id:'lifecycle',projectId:'p',state:'idle',agentId:null,agentSnapshot:null,mcpIds:[],nativeRef:null,endedAt:null};
  let handle,opens=0,sends=0,closed=0,writeAllowed;
  const runtime={getHandle:()=>handle,initializeProject:async(input,commit)=>{opens++;await new Promise(r=>setImmediate(r));commit({sessionId:'native'});handle={};return handle;},restore:async()=>{handle={};return handle;},send:async(_h,_text,_emit,_stream,_refs,allow)=>{sends++;writeAllowed=allow;},close:async()=>{closed++;handle=undefined;},readTree:async()=>({entries:[],activeLeafId:null})};
  const sessions={get:()=>value,setNativeRefIfAbsent:(_,ref)=>(value={...value,nativeRef:value.nativeRef??ref}),updateRuntime:(_,patch)=>(value={...value,...patch})};

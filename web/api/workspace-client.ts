@@ -2,8 +2,6 @@ import type { WorkspaceRecord, WorkspaceSessionDTO, WorkspaceConfiguration } fro
 import type { DirectoryListing } from '../../src/application/ports/workspace';
 import type { SessionTree, ProjectFileListing } from '../domain/models';
 import type { NativeContextInspection } from '../domain/native-context';
-import type { SessionMemoryView } from '../domain/session-memory';
-export type WorkspaceMemoryView=Omit<SessionMemoryView,'pendingAnswerCount'|'completedAnswerCount'|'hasUnreviewedMessages'> & {pendingAnswerCount:null;completedAnswerCount:null;hasUnreviewedMessages:null};
 async function request<T>(url:string,method='GET',body?:unknown,headers?:Record<string,string>):Promise<T> {
   const response=await fetch(url,{method,cache:'no-store',headers:{...(body===undefined?{}:{'content-type':'application/json'}),...(method==='GET'?{}:{'idempotency-key':crypto.randomUUID()}),...headers},...(body===undefined?{}:{body:JSON.stringify(body)})});
   const payload=await response.json().catch(()=>({}));if(!response.ok)throw new Error(payload.error?.message??'工作区请求失败');return payload.data;
@@ -22,11 +20,10 @@ export const workspaceApi={
   messages:(id:string,sid:string)=>request<SessionTree>(`${session(id,sid)}/messages`),
   action:(id:string,sid:string,action:string,body?:unknown)=>request<WorkspaceSessionDTO>(`${session(id,sid)}/${action}`,'POST',body),
   recover:(id:string,sid:string,action:'inspect'|'acknowledge-unknown')=>request<{pending:Array<{key:string;hash:string}>;sessionId:string}>(`${session(id,sid)}/recover`,'POST',{action}),
+  models:(id:string,sid:string,lease?:string)=>request<import('../../src/domain/session-tools').SessionModelView>(`${session(id,sid)}/models`,'GET',undefined,lease?{'x-session-lease-id':lease}:{}),
+  switchModel:(id:string,sid:string,provider:string,modelId:string,lease:string,thinkingLevel?:import('../../src/domain/session-tools').SessionThinkingLevel)=>request<import('../../src/domain/session-tools').SessionModelView>(`${session(id,sid)}/model`,'PUT',{provider,modelId,thinkingLevel},{'x-session-lease-id':lease}),
   context:(id:string,sid:string)=>request<NativeContextInspection>(`${session(id,sid)}/context`),
   compact:async(id:string,sid:string,cancel=false)=>{await request(`${session(id,sid)}/compact${cancel?'/cancel':''}`,'POST');return workspaceApi.context(id,sid);},
-  memory:(id:string,sid:string)=>request<WorkspaceMemoryView>(`${session(id,sid)}/memory`),
-  summarizeMemory:(id:string,sid:string)=>request<WorkspaceMemoryView>(`${session(id,sid)}/memory/summarize`,'POST'),
-  changeMemory:(id:string,sid:string,contextJson:unknown,etag:string)=>request<WorkspaceMemoryView>(`${session(id,sid)}/memory/context`,'PATCH',{contextJson},{'if-match':etag}),
   readFile:(id:string,projectId:string,path:string)=>request<import('../domain/models').FilePreview>(`${base(id)}/projects/${encodeURIComponent(projectId)}/files/content?path=${encodeURIComponent(path)}`),
   files:(id:string,projectId:string,path='')=>request<ProjectFileListing>(`${base(id)}/projects/${projectId}/files?path=${encodeURIComponent(path)}`),
 };

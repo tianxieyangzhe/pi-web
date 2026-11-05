@@ -152,12 +152,11 @@ export function createBotRepository(db: Database.Database): BotRepositoryPort {
     isProjectAgentBound: (conversationId, projectId, agentId) => !!db.prepare("SELECT 1 FROM bot_conversation_project_agents WHERE bot_conversation_id=? AND project_id=? AND agent_id=?").get(conversationId, projectId, agentId),
     deleteConversation(conversationId) {
       assert();
-      const sessions = db.prepare("SELECT id,session_memory_id FROM sessions WHERE bot_conversation_id=?").all(conversationId) as Array<{ id: string; session_memory_id: string }>;
+      const sessions = db.prepare("SELECT id FROM sessions WHERE bot_conversation_id=?").all(conversationId) as Array<{ id: string }>;
       db.prepare("DELETE FROM project_calls WHERE conversation_id=?").run(conversationId);
       db.prepare("DELETE FROM bot_conversation_project_agents WHERE bot_conversation_id=?").run(conversationId);
       db.prepare("DELETE FROM bot_conversation_projects WHERE bot_conversation_id=?").run(conversationId);
       for (const session of sessions) db.prepare("DELETE FROM sessions WHERE id=? AND bot_conversation_id=?").run(session.id, conversationId);
-      for (const session of sessions) db.prepare("DELETE FROM session_memories WHERE id=? AND NOT EXISTS(SELECT 1 FROM sessions WHERE session_memory_id=?)").run(session.session_memory_id, session.session_memory_id);
       if (!db.prepare("DELETE FROM bot_conversations WHERE id=?").run(conversationId).changes) throw new DomainError("NOT_FOUND", "协调会话不存在", 404, true);
     },
     findProjectCall(conversationId, projectId, sourceEntryId, sentContent) {

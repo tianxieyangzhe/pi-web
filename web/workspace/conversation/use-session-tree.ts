@@ -7,13 +7,16 @@ const empty: SessionTree = { entries: [], activeLeafId: null };
 export function useSessionTree(base: string | null, read: () => Promise<SessionTree>, changed?: () => Promise<void>) {
   const [tree, setTree] = useState<SessionTree>(empty), [temporary, setTemporary] = useState<TemporaryNode[]>([]);
   const [ready, setReady] = useState(false), [running, setRunning] = useState(false), [error, setError] = useState("");
+  const [connection,setConnection]=useState<'open'|'closed'>('closed'),[compacting,setCompacting]=useState(false),[eventRevision,setEventRevision]=useState(0),[closed,setClosed]=useState(false);
   const [pendingText, setPendingText] = useState(""), [retry, setRetry] = useState(0);
   const lease = useRef<SessionLease | null>(null), readRef = useRef(read), changedRef = useRef(changed);
   const refreshRef = useRef<() => Promise<void>>(async () => {}), currentBase = useRef(base);
   readRef.current = read; changedRef.current = changed; currentBase.current = base;
+  useEffect(()=>{setTree(empty);setTemporary([]);setClosed(false);},[base]);
   useEffect(() => {
-    setTree(empty); setTemporary([]); setPendingText(""); setReady(false); setRunning(false); setError(""); lease.current = null;
-    if (!base) return;
+    setTemporary([]); setPendingText(""); setReady(false); setRunning(false); setError(""); lease.current = null;
+    setConnection('closed');setCompacting(false);
+    if (!base||closed) return;
     let disposed = false, sync: Promise<void> | null = null, again = false;
     const seen = new Map<string, number>();
     const refresh = (): Promise<void> => {
@@ -41,10 +44,14 @@ export function useSessionTree(base: string | null, read: () => Promise<SessionT
         if (event.sequence <= (seen.get(event.runId) ?? 0)) return;
         seen.set(event.runId, event.sequence);
       }
+      if(event.type==='thinking_level_changed'){setEventRevision(n=>n+1);void refresh();return;}
+      if(event.type==='context_changed'){setCompacting(false);setEventRevision(n=>n+1);void refresh();return;}
+      if(event.type==='compaction_start'){setCompacting(true);setEventRevision(n=>n+1);return;}
+      if(event.type==='compaction_end'){setCompacting(false);setEventRevision(n=>n+1);void refresh();return;}
       if (event.type === "error") { setError((event.payload as { message?: string }).message ?? "会话执行失败"); setRunning(false); void refresh(); return; }
       if (event.type === "session_state") { const state = (event.payload as { state?: string }).state; setRunning(["starting", "running", "interrupting"].includes(state ?? "")); return; }
       if (event.type === "agent_start") { setRunning(true); return; }
-      if (["complete", "agent_settled"].includes(event.type)) { setRunning(false); void refresh(); return; }
+      if (["complete", "agent_settled"].includes(event.type)) { setRunning(false);setEventRevision(n=>n+1); void refresh(); return; }
       if (event.type === "project_call") { void changedRef.current?.().catch(cause => { if (!disposed) setError(cause instanceof Error ? cause.message : "无法同步项目调用"); }); return; }
       if (event.type === "entry_link" && event.temporaryId && event.entryId) {
         const key = `${event.runId}:${event.temporaryId}`;
@@ -60,19 +67,20 @@ export function useSessionTree(base: string | null, read: () => Promise<SessionT
       });
     };
     const disconnect = subscribeSession(base, {
-      onReady: async opened => { if (disposed) return; lease.current = opened; setReady(true); setRunning(opened.status === "running"); setError(opened.outcome === "SESSION_BACKGROUND_TIMEOUT" ? "会话离开后运行超时并已停止" : opened.outcome === "REQUEST_UNKNOWN" ? "此前请求结果待核对。请打开检查面板核对 Pi 历史；确认后可解除阻塞。" : ""); await refresh(); },
+      onReady: async opened => { if (disposed) return; lease.current = opened; setConnection('open');setReady(opened.status !== "unavailable"); setRunning(opened.activity?.running??opened.status === "running");setCompacting(opened.activity?.compacting??false);setEventRevision(n=>n+1); setError(opened.outcome === "SESSION_BACKGROUND_TIMEOUT" ? "会话离开后运行超时并已停止" : opened.outcome === "REQUEST_UNKNOWN" ? "此前请求结果待核对。请打开检查面板核对 Pi 历史；确认后可解除阻塞。" : ""); await refresh(); },
       onEvent: receive,
       onError: cause => { if (!disposed) setError(cause.message); },
-      onDisconnect: () => { if (!disposed) { lease.current = null; setReady(false); } },
+      onDisconnect: () => { if (!disposed) { lease.current = null;setConnection('closed'); setReady(false); } },
+      onClosed:()=>{if(!disposed)setClosed(true);},
     });
     return () => { disposed = true; disconnect(); lease.current = null; refreshRef.current = async () => {}; };
-  }, [base, retry]);
+  }, [base, retry,closed]);
   const send = useCallback(async (content: string, references?: import("../../../src/domain/message-references").MessageReference[]) => {
     const opened = lease.current, selected = currentBase.current;
     if (!base || base !== selected || !opened) throw new Error("请先连接会话");
-    setPendingText(content); setRunning(true); setError("");
+    setPendingText(content);setError("");
     try { await submitSessionMessage(base, opened.leaseId, content, references); }
-    catch (cause) { if (currentBase.current === selected) { setPendingText(""); setRunning(false); } throw cause; }
+    catch (cause) { if (currentBase.current === selected) { setPendingText(""); } throw cause; }
   }, [base]);
-  return { tree, temporary, ready, running, setRunning, pendingText, error, setError, send, refresh: useCallback(() => refreshRef.current(), []), retryOpen: () => setRetry(n => n + 1) };
+  return { tree, temporary, ready,connection,compacting,eventRevision,close:()=>setClosed(true), leaseId: lease.current?.leaseId ?? null, running, setRunning, pendingText, error, setError, send, refresh: useCallback(() => refreshRef.current(), []), retryOpen: () => {setClosed(false);setRetry(n => n + 1);} };
 }

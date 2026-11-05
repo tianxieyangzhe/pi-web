@@ -1,5 +1,6 @@
 import { services } from "@/bootstrap/composition-root.server";
 import { DomainError } from "@/domain/errors";
+import { exactFields } from "@/application/project-session-service";
 import { dataResponse, errorResponse, jsonBody } from "@/shared/protocol/api";
 
 export const runtime = "nodejs";
@@ -10,9 +11,10 @@ export async function POST(request: Request, { params }: Context) {
     services.projectSessions.get(projectId, sessionId);
     if (!services.execution.events) throw new DomainError("SESSION_SUBSCRIPTION_RESTART_REQUIRED", "服务尚未加载会话订阅，请重新启动服务", 503, true);
     if (action === "open") {
-      const key = request.headers.get("idempotency-key")?.trim();
-      if (!key || key.length > 200) throw new DomainError("INVALID_IDEMPOTENCY_KEY", "打开会话需要有效幂等键", 400, true);
-      return dataResponse(await services.execution.open(sessionId, key), { headers: { "cache-control": "no-store" } });
+      exactFields(await jsonBody(request,65536,true),[]);
+      const key = request.headers.get("idempotency-key");
+      if (!key || !/^[\x21-\x7e]{1,128}$/.test(key)) throw new DomainError("INVALID_IDEMPOTENCY_KEY", "打开会话需要有效幂等键", 400, true);
+      return dataResponse(await services.sessionTools.open(projectId, sessionId, key), { headers: { "cache-control": "no-store" } });
     }
     if (action !== "pong" && action !== "close") throw new DomainError("NOT_FOUND", "操作不存在", 404, true);
     const body = await jsonBody(request);

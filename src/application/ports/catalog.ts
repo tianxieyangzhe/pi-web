@@ -7,8 +7,9 @@ export interface ProjectRepositoryPort {
   update(
     id: string,
     patch: Partial<Omit<Project, "id" | "createdAt" | "updatedAt">>,
+    expected?:string,
   ): Project | null;
-  delete(id: string): boolean;
+  delete(id: string,expected?:string): boolean;
   isInUse(id: string): boolean;
 }
 
@@ -43,6 +44,7 @@ export type CatalogDependencies = {
   mcps: McpRepositoryPort;
   agents: AgentRepositoryPort;
   normalizeProjectRoot(value: unknown): string;
+  assertProjectMutable?:(id:string)=>void;
   normalizeBotOwner?:(id:string)=>void;
   getAgentVersion?:(id:string,revision:number,sha256:string)=>Agent|null;
 };

@@ -1,6 +1,6 @@
 require('./register.cjs');
 const {test}=require('node:test'),assert=require('node:assert/strict'),Database=require('better-sqlite3'),fs=require('node:fs'),os=require('node:os'),path=require('node:path');
-const {coreSchema}=require('../src/infrastructure/database/schema.server.ts');
+const coreSchema=require('./fixtures/legacy-schema.cjs').split('CREATE TABLE bots (')[0];
 const {migrateAgentMarkdown}=require('../scripts/migrate-agent-markdown-v3.cjs');
 
 test('Agent Markdown v3 adds the file index, preserves legacy rows, and snapshots historical Project scope',async()=>{
@@ -8,7 +8,7 @@ test('Agent Markdown v3 adds the file index, preserves legacy rows, and snapshot
   db.pragma('foreign_keys=ON');
   const oldCore=coreSchema.replace(/\s+content_sha256 TEXT CHECK\(content_sha256 IS NULL OR length\(content_sha256\)=64\),\n/,"\n");
   assert.notEqual(oldCore,coreSchema);
-  db.exec(oldCore+fs.readFileSync(path.join(__dirname,'../scripts/bot-schema-v1.sql'),'utf8'));
+  db.exec(oldCore+fs.readFileSync(path.join(__dirname,'../scripts/historical-schema/workspace-schema.sql'),'utf8')+fs.readFileSync(path.join(__dirname,'../scripts/bot-schema-v1.sql'),'utf8'));
   db.prepare("INSERT INTO projects(id,name,description,kind,root_path,status,created_at,updated_at) VALUES('p','Project',NULL,'code','/tmp/project','active','t','t')").run();
   db.prepare("INSERT INTO bots(id,name,working_directory,workspace_kind,instructions,max_parallel_executions,status,created_at,updated_at) VALUES('b','Bot','/tmp/bot','managed','legacy',4,'active','t','t')").run();
   db.prepare("INSERT INTO agents(id,name,description,kind,bot_id,project_id,source_template_id,definition_json,extension_json,policy_json,revision,status,created_at,updated_at) VALUES('coord','Coordinator',NULL,'coordinator','b',NULL,NULL,'{\"instructions\":\"legacy coordinator\"}','{}','{}',1,'active','t','t')").run();

@@ -8,6 +8,7 @@ export type Project = {
   rootPath: string;
   createdAt?: string;
   updatedAt?: string;
+  writeETag?: string;
 };
 
 export type AgentDefinition={instructions:string;capabilities:{readFiles:boolean;writeFiles:boolean;readProjects:boolean;dispatchTasks:boolean;dispatchProjectWrites:boolean;exchangeMessages:boolean}};
@@ -25,21 +26,15 @@ export type Mcp = {
 
 export type RoleState={configured:boolean;available:boolean;boundRevision:number|null;currentRevision:number|null;name:string|null;status:ResourceStatus|null;canAdoptLatest:boolean;reason:string|null};
 
-export type Session = {
-  roleState?:RoleState|null;
-  writeETag:string;agentId:string|null;agentSnapshot?:AgentSnapshot|null;
-  botParent?:{botId:string;conversationId:string;conversationTitle:string;sessionId:string;schedulingMode?:'enabled'|'paused';available?:boolean;reason?:string|null}|null;
-  memorySummary?: string;
-  sessionMemoryId: string;
-  id: string;
-  projectId: string;
-  purpose: string;
-  state: "not_started" | "starting" | "idle" | "running" | "interrupting" | "ended" | "unavailable";
-  createdAt: string;
-  lastActivityAt: string | null;
-  endedAt: string | null;
-  agent: { name: string; revision: number; thinkingLevel: string | null; skills: string[] } | null;
-  mcps: Array<{ id: string; name: string; accessPolicy: "read_only" | "approval" | "allow" }>;
+export type Session = import("../../src/domain/session-preview").SessionPreview & {
+  lastOpenedAt:string|null;
+  id:string;projectId:string;purpose:string;agentId:string|null;
+  agentSnapshot?:Omit<AgentSnapshot,'definition'>|{agentId:string;revision:number;legacy:true}|null;
+  status:'open'|'closed';
+  createdAt:string;updatedAt:string;writeETag:string;
+  allowedActions:import('../../src/domain/session-tools').SessionActions;
+  pendingOperations:Array<{operationId:string;operation:string;status:'running'|'unknown'}>;
+  botParent?:{conversationTitle:string}|null;
 };
 
 export type ConversationEntry = {
@@ -82,6 +77,6 @@ export type AgentEvent =
 
 export type GitFileStatus = "added" | "modified" | "deleted" | "renamed" | "untracked" | "conflicted";
 export type FileEntry = { name: string; path: string; parentPath: string; type: "file" | "directory"; gitStatus?: GitFileStatus };
-export type ProjectFileListing = { entries: FileEntry[]; isGitRepository: boolean; truncated: boolean };
+export type ProjectFileListing = { path?:string;entries: FileEntry[]; isGitRepository: boolean; gitState?:'available'|'not_repository'|'unavailable';truncated: boolean };
 export type FilePreview = { path: string; content: string; size: number };
-export type ProjectChanges = { isGitRepository: boolean; status: string; workingPatch: string; stagedPatch: string };
+export type ProjectChanges = { isGitRepository: boolean; status: string; workingPatch: string; stagedPatch: string; truncated:boolean };

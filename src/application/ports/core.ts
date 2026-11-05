@@ -3,7 +3,7 @@ import type {Agent,JsonObject,Mcp,Session} from "@/domain/models";
 export type CreateSessionRecord = Pick<
   Session,
   "projectId" | "purpose" | "agentId" | "agentSnapshot" | "mcpIds" | "mcpSnapshots"
-> & { sessionMemoryId: string;stableId?:string };
+> & { stableId?: string; nativeRef?: JsonObject; createRequestKeyHash?: string; createRequestSha256?: string };
 
 export interface SessionRepositoryPort {
   listForProject(projectId: string): Session[];
@@ -16,6 +16,7 @@ export interface SessionRepositoryPort {
   setNativeRefIfAbsent(id: string, nativeRef: JsonObject): Session | null;
   markInterruptedAfterRestart(): number;
   delete(projectId: string, id: string): void;
+  adoptAgent?(id: string, expected: Session, snapshot: import("@/domain/models").AgentSnapshot): Session;
 }
 
 export type SessionCatalogPort = {

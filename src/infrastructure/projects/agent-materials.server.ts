@@ -3,7 +3,8 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { DomainError } from "@/domain/errors";
 import { projectRepository } from "../database/project-repository.server";
-const excluded = /^(?:\.env(?:\.|$)|\.git$|\.ssh$|\.aws$|\.codex$|node_modules$|dist$|build$|\.next$|\.data$|vendor$|credentials?|id_(rsa|ed25519)|\.npmrc|\.pypirc)/i;
+import {isProjectPathForbidden} from './project-file-policy';
+import {readProjectBytes} from './project-files.server';
 export async function collectMaterialsFromRoot(rootPath: string, signal?: AbortSignal, requirements = '') {
   const root = await fs.realpath(rootPath),
     sources: Array<{
@@ -31,7 +32,7 @@ export async function collectMaterialsFromRoot(rootPath: string, signal?: AbortS
         warnings.push('目录概览达到 300 条上限，未遍历其余路径');
         return;
       }
-      if (excluded.test(entry.name) || entry.isSymbolicLink()) continue;
+      if (isProjectPathForbidden(entry.name) || entry.isSymbolicLink()) continue;
       const rel = relative ? relative + '/' + entry.name : entry.name;
       structure.push(rel + (entry.isDirectory() ? '/' : ''));
       if (entry.isDirectory() && depth < 2) await list(rel, depth + 1);else if (entry.isFile()) found.add(rel);
@@ -60,20 +61,8 @@ export async function collectMaterialsFromRoot(rootPath: string, signal?: AbortS
       break;
     }
     try {
-      const candidate = path.join(root, relative),
-        actual = await fs.realpath(candidate);
-      if (!(actual === root || actual.startsWith(root + path.sep)) || path.relative(root, actual).split(path.sep).some(n => excluded.test(n))) {
-        warnings.push(relative + ' 排除：路径范围');
-        continue;
-      }
-      const stat = await fs.stat(actual);
-      if (!stat.isFile() || stat.size > 65536 || bytes + stat.size > 262144) {
-        warnings.push(relative + ' 未读取：文件预算');
-        continue;
-      }
-      const buffer = await fs.readFile(actual, {
-        signal
-      });
+      const buffer=readProjectBytes(root,relative,65536);
+      if(bytes+buffer.length>262144){warnings.push(relative+' 未读取：文件预算');continue;}
       bytes += buffer.length;
       check();
       let content: string;
@@ -88,14 +77,6 @@ export async function collectMaterialsFromRoot(rootPath: string, signal?: AbortS
       if (content.includes('\0')) continue;
       if (/(?:sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9]{20,}|-----BEGIN .*PRIVATE KEY-----|Bearer\s+\S{12,}|(?:API_KEY|PASSWORD|SECRET|ACCESS_TOKEN)\s*[:=]\s*["']?[^\s"'$<{]{8,})/.test(content)) {
         warnings.push(relative + ' 未纳入：可能包含凭据');
-        continue;
-      }
-      const projected = JSON.stringify([...sources, {
-        path: relative,
-        content
-      }]);
-      if (Buffer.byteLength(projected) > 8800) {
-        warnings.push(relative + ' 未纳入：模型预算（保留完整文件）');
         continue;
       }
       add(relative, content);

@@ -1,6 +1,8 @@
-# Agent Markdown / Bot 绑定迁移 v3
+# Agent Markdown / Bot 绑定迁移 v3（历史版本）
 
-该迁移把当前六表 Bot 库升级为独立 Markdown Agent 目录和 Bot 项目角色关系。应用启动不会自动执行；用户库已于 2026-10-13 经用户明确授权完成离线迁移。
+本文记录旧 Bot 与 Agent 存储升级及其执行证据，不定义当前 Workspace 或 SessionMemory 退役目标。当前模型与迁移边界以 [02](../docs/02-data-model.md) 和 [06](../docs/06-bot.md) 为准；历史记忆记录数量仅为当时核验事实，不是保留该功能的要求，也不授权新迁移。
+
+该迁移把当时六表 Bot 库升级为独立 Markdown Agent 目录和 Bot 项目角色关系。应用启动不会自动执行；用户库已于 2026-10-13 经用户明确授权完成离线迁移。
 
 迁移新增 agents.content_sha256 目录索引列和四张关系表：bot_projects、bot_project_agents、bot_conversation_projects、bot_conversation_project_agents。Agent 定义正文仍留在历史 definition_json/extension_json 列中作为只读材料；迁移不生成 Agent.md，不调用 LLM，不创建正式 Agent，也不启用旧工具权限。
 

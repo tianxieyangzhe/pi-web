@@ -8,17 +8,15 @@ const {sessionLocks}=require('../src/application/session-lock.ts');
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
 function projectFixture(f){
  f.db.prepare("INSERT INTO projects VALUES('p','P',NULL,'code',?,'active','now','now')").run(f.a);
- const context=JSON.stringify({summary:'',goal:'',constraints:[],facts:[],decisions:[],nextActions:[],outputs:[]});
  const values=new Map();
  function add(id,state='idle'){
-  f.db.prepare("INSERT INTO session_memories(id,project_id,title,context_json,created_at,updated_at) VALUES(?,'p','memory',?,'now','now')").run('m-'+id,context);
-  f.db.prepare("INSERT INTO sessions(id,session_memory_id,project_id,purpose,state,created_at,updated_at) VALUES(?,?,'p','test',?,'now','now')").run(id,'m-'+id,state);
-  const value={id,projectId:'p',sessionMemoryId:'m-'+id,state,agentSnapshot:null,mcpIds:[],nativeRef:null};values.set(id,value);return value;
+  f.db.prepare("INSERT INTO sessions(id,project_id,purpose,created_at,updated_at) VALUES(?,'p','test','now','now')").run(id);
+  const value={id,projectId:'p',state,agentSnapshot:null,mcpIds:[],nativeRef:null};values.set(id,value);return value;
  }
- let memoryBusy=false,closeAction=async()=>{};
+ let closeAction=async()=>{};
  const runtime={getHandle:()=>({}),isBusy:()=>false,close:()=>closeAction()};
- const service=createSessionExecutionService({sessions:{get:id=>values.get(id),delete(owner,id){deleteSessionRecord(f.db,'project',owner,id);values.delete(id);}},projects:{get:()=>({id:'p',rootPath:f.a,status:'disabled'})},catalog:{},sessionMemories:{},runtime,memoryBusy:()=>memoryBusy});
- return {add,values,service,setBusy:value=>{memoryBusy=value;},setClose:value=>{closeAction=value;}};
+ const service=createSessionExecutionService({sessions:{get:id=>values.get(id),delete(owner,id){deleteSessionRecord(f.db,'project',owner,id);values.delete(id);}},projects:{get:()=>({id:'p',rootPath:f.a,status:'disabled'})},catalog:{},runtime});
+ return {add,values,service,setClose:value=>{closeAction=value;}};
 }
 test('Next workspace route exports DELETE and forwards owner/session to the application API',async()=>{
  const f=fixture();try{
@@ -32,7 +30,7 @@ test('Next workspace route exports DELETE and forwards owner/session to the appl
   assert.equal(f.repository.session(w.id,s.id),null);
  }finally{f.close();}
 });
-test('workspace DELETE enforces scope and removes exactly session + memory, preserving native/project files',async()=>{
+test('workspace DELETE enforces scope and removes exactly session metadata, preserving native/project files',async()=>{
  const f=fixture();try{
   const {createWorkspaceApi}=require('../src/shared/protocol/workspace-api.server.ts'),handle=createWorkspaceApi(f.service);
   const w=await f.service.save(null,{name:'Work',projects:[{rootPath:f.a}],defaultProjectIndex:0},'w');
@@ -43,7 +41,7 @@ test('workspace DELETE enforces scope and removes exactly session + memory, pres
   assert.equal((await call('wrong',s.id)).status,404);
   assert.equal((await call(w.id,s.id,{force:true})).status,400);
   const response=await call(w.id,s.id);assert.equal(response.status,200);assert.equal(response.headers.get('cache-control'),'no-store');assert.deepEqual((await response.json()).data,{deleted:true,sessionId:s.id});
-  assert.equal(f.repository.session(w.id,s.id),null);assert.equal(f.db.prepare('SELECT 1 FROM session_memories WHERE id=?').get(value.sessionMemoryId),undefined);
+  assert.equal(f.repository.session(w.id,s.id),null);assert.equal(f.db.prepare("SELECT 1 FROM sqlite_master WHERE name='session_memories'").get(),undefined);
   assert.equal(f.repository.sessions(w.id)[0].id,other.id);assert(f.repository.get(w.id));assert.equal(f.handles.has(s.id),false);
   assert.throws(()=>f.service.assertLease(s.id,lease.leaseId),e=>e.code==='RUNTIME_NOT_OPEN');
   assert.equal(fs.readFileSync(file,'utf8'),'native history');assert.equal(fs.readFileSync(file+'.workspace-requests.jsonl','utf8'),'journal');assert.equal(fs.readFileSync(path.join(f.a,'keep'),'utf8'),'project');
@@ -71,48 +69,33 @@ test('workspace deletion rejects live requests, unknown evidence, compaction and
   finishClose();await deletion;
  }finally{f.close();}
 });
-test('workspace deletion waits for memory generation and leaves rows on close failure',async()=>{
- const f=fixture();try{
-  const w=await f.service.save(null,{name:'Work',projects:[{rootPath:f.a}],defaultProjectIndex:0},'w'),s=f.service.createSession(w.id,{},'s');await f.service.open(w.id,s.id);
-  f.runtime.history=async()=>({entryIds:['u','a'],requests:[{afterId:'u',throughId:'a',completed:true,user:'question',assistant:'answer'}]});
-  let finish;f.runtime.summarize=()=>new Promise(resolve=>{finish=resolve;});
-  const summary=f.service.summarizeMemory(w.id,s.id);await tick();
-  await assert.rejects(f.service.deleteSession(w.id,s.id),e=>e.code==='SESSION_BUSY');
-  finish({context:{summary:'summary',goal:'',constraints:[],facts:[],decisions:[],nextActions:[],outputs:[]}});await summary;
-  f.runtime.close=async()=>{throw Error('cannot close');};
-  await assert.rejects(f.service.deleteSession(w.id,s.id),/cannot close/);assert(f.repository.session(w.id,s.id));assert(f.service.memory(w.id,s.id));
+test('workspace deletion leaves session rows on runtime-close failure',async()=>{
+ const f=fixture();try{const w=await f.service.save(null,{name:'Work',projects:[{rootPath:f.a}],defaultProjectIndex:0},'w'),s=f.service.createSession(w.id,{},'s');await f.service.open(w.id,s.id);f.runtime.close=async()=>{throw Error('cannot close');};await assert.rejects(f.service.deleteSession(w.id,s.id),/cannot close/);assert(f.repository.session(w.id,s.id));}finally{f.close();}
+});
+test('repository deletion rolls back when historical session references remain',async()=>{
+ const f=fixture();try{const p=projectFixture(f);p.add('s');const w=await f.service.save(null,{name:'Work',projects:[{rootPath:f.a}],defaultProjectIndex:0},'w'),s=f.service.createSession(w.id,{},'s');
+ f.db.exec('CREATE TABLE retained_project_session(id TEXT REFERENCES sessions(id) ON DELETE RESTRICT);CREATE TABLE retained_workspace_session(id TEXT REFERENCES workspace_sessions(id) ON DELETE RESTRICT)');
+ for(const [kind,owner,id,reference] of [['project','p','s','retained_project_session'],['workspace',w.id,s.id,'retained_workspace_session']]){f.db.prepare('INSERT INTO '+reference+' VALUES(?)').run(id);assert.throws(()=>deleteSessionRecord(f.db,kind,owner,id),e=>e.code==='SESSION_REFERENCED');assert(f.db.prepare('SELECT 1 FROM '+(kind==='project'?'sessions':'workspace_sessions')+' WHERE id=?').get(id));}
  }finally{f.close();}
 });
-test('both repository deletions roll back the session when memory is referenced',async()=>{
- const f=fixture();try{
-  const p=projectFixture(f);p.add('s');
-  const w=await f.service.save(null,{name:'Work',projects:[{rootPath:f.a}],defaultProjectIndex:0},'w'),s=f.service.createSession(w.id,{},'s'),ws=f.repository.session(w.id,s.id);
-  f.db.exec('CREATE TABLE retained_memory(id TEXT REFERENCES session_memories(id) ON DELETE RESTRICT)');
-  for(const [kind,owner,id,memory] of [['project','p','s','m-s'],['workspace',w.id,s.id,ws.sessionMemoryId]]){
-   f.db.prepare('INSERT INTO retained_memory VALUES(?)').run(memory);
-   assert.throws(()=>deleteSessionRecord(f.db,kind,owner,id),e=>e.code==='SESSION_REFERENCED');
-   assert(f.db.prepare(`SELECT 1 FROM ${kind==='project'?'sessions':'workspace_sessions'} WHERE id=?`).get(id));assert(f.db.prepare('SELECT 1 FROM session_memories WHERE id=?').get(memory));
-  }
- }finally{f.close();}
-});
-test('project deletion guards scope, running/unknown/summary/locks and close failures; route returns safe DTO',async()=>{
+test('project deletion guards scope, running/unknown/locks and close failures; route returns safe DTO',async()=>{
  const f=fixture();try{
   const p=projectFixture(f);p.add('s');p.add('other','ended');
   await assert.rejects(p.service.deleteSession('wrong','s'),e=>e.code==='NOT_FOUND');
   for(const state of ['starting','running','interrupting','unavailable']){p.values.get('s').state=state;await assert.rejects(p.service.deleteSession('p','s'),e=>e.code===(state==='unavailable'?'REQUEST_UNKNOWN':'SESSION_BUSY'));}
-  p.values.get('s').state='idle';p.setBusy(true);await assert.rejects(p.service.deleteSession('p','s'),e=>e.code==='SESSION_BUSY');p.setBusy(false);
+  p.values.get('s').state='idle';
   sessionLocks.add('s');await assert.rejects(p.service.deleteSession('p','s'),e=>e.code==='SESSION_BUSY');sessionLocks.delete('s');
   p.setClose(async()=>{throw Error('cannot close');});await assert.rejects(p.service.deleteSession('p','s'),/cannot close/);assert(f.db.prepare("SELECT 1 FROM sessions WHERE id='s'").get());assert(!sessionLocks.has('s'));
   let finishClose;p.setClose(()=>new Promise(resolve=>{finishClose=resolve;}));const deletion=p.service.deleteSession('p','other');
   await assert.rejects(p.service.open('other','open'),e=>e.code==='SESSION_BUSY');finishClose();await deletion;
   p.setClose(async()=>{});
   const original=Module._load;let route;
-  Module._load=function(name,...args){if(name==='@/bootstrap/composition-root.server')return {services:{execution:p.service}};return original.call(this,name,...args);};
+  Module._load=function(name,...args){if(name==='@/bootstrap/composition-root.server')return {services:{sessionTools:{delete:(owner,id)=>p.service.deleteSession(owner,id)}}};return original.call(this,name,...args);};
   try{route=require('../src/app/api/projects/[projectId]/sessions/[sessionId]/route.ts');}finally{Module._load=original;}
   const context={params:Promise.resolve({projectId:'p',sessionId:'s'})};
   const response=await route.DELETE(new Request('http://localhost/api/projects/p/sessions/s',{method:'DELETE'}),context);
   assert.equal(response.status,200);assert.deepEqual((await response.json()).data,{deleted:true,sessionId:'s'});
-  assert.equal(f.db.prepare("SELECT 1 FROM sessions WHERE id='s'").get(),undefined);assert.equal(f.db.prepare("SELECT 1 FROM session_memories WHERE id='m-s'").get(),undefined);
+  assert.equal(f.db.prepare("SELECT 1 FROM sessions WHERE id='s'").get(),undefined);assert.equal(f.db.prepare("SELECT 1 FROM sqlite_master WHERE name='session_memories'").get(),undefined);
   assert.equal((await route.DELETE(new Request('http://localhost/api/projects/p/sessions/s',{method:'DELETE'}),context)).status,404);
  }finally{sessionLocks.delete('s');f.close();}
 });

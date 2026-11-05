@@ -204,11 +204,7 @@ export function createBotConfiguration<T>(d: BotServiceDependencies, context: {
           const version=d.catalog?.getAgentVersion(binding.agentId,binding.revision,binding.contentSha256)??null,
             selected= requireRole(version,'project',p.id);
           if(selected.contentSha256!==binding.contentSha256||selected.revision!==binding.revision)throw new DomainError('ROLE_BINDING_INVALID','项目 Agent 版本与 Bot 绑定不一致',409,true);
-          s = d.memories.createSession(p.id, '项目会话', typeof body.sessionMemoryTemplateId === 'string' ? body.sessionMemoryTemplateId : undefined, typeof body.templateWriteETag === 'string' ? body.templateWriteETag : undefined, {
-            agentId: selected.agentId,
-            agentSnapshot: selected,
-            stableId
-          });
+          s = d.sessions.create({projectId:p.id,purpose:'项目会话',agentId:selected.agentId,agentSnapshot:selected,mcpIds:[],mcpSnapshots:[]});
         }
         r.updateParticipant(s.id, {
           botConversationId: conversationId,

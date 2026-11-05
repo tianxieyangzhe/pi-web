@@ -1,3 +1,5 @@
+import {sessionLocks} from '@/application/session-lock';
+import {DomainError} from '@/domain/errors';
 import { roleState } from "@/domain/role-state";
 import { createAgentPreparationService } from "@/application/agent-service";
 import { collectAgentMaterials } from "@/infrastructure/projects/agent-materials.server";
@@ -6,19 +8,19 @@ import "server-only";
 import { requireRole } from "@/domain/agent-definition";
 import { createCatalogService } from "@/application/catalog-service";
 import { createSessionExecutionService } from "@/application/session-execution-service";
+import {sessionOpenHistory} from "@/infrastructure/sessions/session-open-history.server";
 import { createProjectSessionService } from "@/application/project-session-service";
-import { createSessionMemoryService } from "@/application/session-memory-service";
+import { createSessionToolsService } from "@/application/session-tools-service";
+import { createProjectOperationStore } from "@/infrastructure/projects/operation-journal.server";
 import { createNativeContextService } from "@/application/native-context-service";
 import { agentRepository } from "@/infrastructure/database/agent-repository.server";
 import { mcpRepository } from "@/infrastructure/database/mcp-repository.server";
 import { projectRepository } from "@/infrastructure/database/project-repository.server";
 import { sessionRepository } from "@/infrastructure/database/session-repository.server";
-import { sessionMemoryRepository } from "@/infrastructure/database/session-memory-repository.server";
 import { schemaCompatible, assertSchemaCompatible } from "@/infrastructure/database/database.server";
 import { database } from "@/infrastructure/database/database.server";
 import { piSessionRuntime } from "@/infrastructure/pi/pi-session-runtime.server";
 import { normalizeProjectRoot } from "@/infrastructure/projects/project-path.server";
-import { validateSessionMemoryPaths } from "@/infrastructure/projects/session-memory-path.server";
 import { createBotRepository } from "@/infrastructure/database/bot-repository";
 import { botWorkspace } from "@/infrastructure/bots/bot-workspace.server";
 import { readProjectReference } from "@/infrastructure/projects/project-files.server";
@@ -29,25 +31,13 @@ import { createBotService } from "@/application/bot-service";
 import type { SessionRuntimeInput } from "@/application/ports/pi-runtime";
 import { botRuntimeInstanceId } from "@/infrastructure/bots/runtime-instance.server";
 function createServices() {
-  const sessionMemories = createSessionMemoryService({
-    memories: sessionMemoryRepository,
-    sessions: sessionRepository,
-    projects: projectRepository,
-    runtime: piSessionRuntime,
-    validatePaths: validateSessionMemoryPaths
-  });
-  const processState = globalThis as typeof globalThis & {
-    __recoveredMemorySessions?: boolean;
-  };
-  if (schemaCompatible && !processState.__recoveredMemorySessions) {
-    sessionRepository.markInterruptedAfterRestart();
-    processState.__recoveredMemorySessions = true;
-  }
+  const operations = createProjectOperationStore();
   const catalog = createCatalogService({
     projects: projectRepository,
     mcps: mcpRepository,
     agents: agentRepository,
-    normalizeProjectRoot
+    normalizeProjectRoot,
+    assertProjectMutable(id){for(const session of sessionRepository.listForProject(id)){if(execution.hasLease(session.id)||sessionLocks.has(session.id)||['starting','running','interrupting'].includes(session.state))throw new DomainError('SESSION_BUSY','项目仍有打开或活动操作',409,true);}const pending=operations.list(id).filter(record=>!['completed','failed','acknowledged'].includes(record.phase));if(pending.length)throw new DomainError(pending.some(record=>sessionTools.running(record.operationId))?'SESSION_BUSY':'REQUEST_UNKNOWN','项目仍有活动或待核对操作',409,true);}
   });
   const botRepository = createBotRepository(database);
   const bots = createBotService({
@@ -66,59 +56,33 @@ function createServices() {
     readBotReference,
     sessions: sessionRepository,
     projects: projectRepository,
-    memories: sessionMemoryRepository,
-    catalog,
-    onCompleted: id => sessionMemories.completed(id)
+    catalog
   });
-  const execution = createSessionExecutionService({
+  const execution = createSessionExecutionService({openHistory:sessionOpenHistory,
     sessions: sessionRepository,
     catalog,
     projects: projectRepository,
     runtime: piSessionRuntime,
     readProjectReference,
-    sessionMemories: sessionMemoryRepository,
-    onCompleted: id => sessionMemories.completed(id),
-    memoryBusy: id => sessionMemories.busy(id),
     assertSessionAllowed: id => bots.assertSessionAllowed(id),
     coordinatorExecutionIds: () => new Set<string>(),
     backgroundInUse: id => { const parent = botRepository.parentForSession(id); return !!parent && botRepository.projectCalls(parent).some(call => call.sessionId === id && ["accepted", "working", "unknown"].includes(call.status)); }
   });
+  let sessionTools: ReturnType<typeof createSessionToolsService>;
+  const nativeContext = createNativeContextService({changed:id=>execution.events.agent(id,{type:"context_changed"}),sessions:sessionRepository,projects:projectRepository,runtime:piSessionRuntime,assertWritable:assertSchemaCompatible,operations,assertLease:execution.assertLease,assertKnown:(p,id)=>sessionTools.assertKnown(p,id)});
+  const projectSessions = createProjectSessionService({openHistory:sessionOpenHistory,preview:value=>piSessionRuntime.preview(value),projects:projectRepository,sessions:sessionRepository,operations,role:(id,p)=>requireRole(catalog.getAgent(id),"project",p),hasLease:execution.hasLease,operationRunning:id=>(sessionTools?.running(id)??false)||nativeContext.running(id),writable:()=>schemaCompatible,releaseHandle:id=>execution.close(id)});
+  sessionTools = createSessionToolsService({sessions:sessionRepository,projects:projectRepository,operations,runtime:piSessionRuntime,execution,assertWritable:assertSchemaCompatible,present:projectSessions.present,catalog,externalRunning:nativeContext.running});
   return {
     agentPreparation: createAgentPreparationService({
       collect: collectAgentMaterials,
       generate: generateAgentDefinition
     }),
     catalog,
-    sessionMemories,
+    sessionTools,
     execution,
     bots,
-    projectSessions: createProjectSessionService({
-      projects: projectRepository,
-      sessions: sessionRepository,
-      memories: sessionMemoryRepository,
-      roleStatus: s => roleState(catalog.getAgent(s.agentId ?? ''), s.agentSnapshot, !!s.nativeRef || botRepository.available() && botRepository.list('bot_conversations').some(conversation => botRepository.projectCalls(conversation.id).some(call => call.sessionId === s.id)), ['starting', 'running', 'interrupting'].includes(s.state) || botRepository.available() && botRepository.list('bot_conversations').some(conversation => botRepository.projectCalls(conversation.id).some(call => call.sessionId === s.id && ['accepted','working','unknown'].includes(call.status)))),
-      role: (agentId, projectId) => requireRole(catalog.getAgent(agentId), 'project', projectId),
-      parent: id => {
-        const parent = botRepository.parentForSession(id);
-        if (!parent) return null;
-        const c = botRepository.get('bot_conversations', parent);
-        const session=sessionRepository.get(id),parentBot=c?botRepository.get('bots',c.botId):null,projectAgent=session?catalog.getAgent(session.agentId??''):null;
-        return c ? {
-          botId: c.botId,
-          conversationId: c.id,
-          conversationTitle: c.title,
-          sessionId: id,
-          available: parentBot?.status==='active'&&projectAgent?.status==='active'&&session?.collaborationState==='active',
-          reason: parentBot?.status!=='active'?'Bot 已停用':session?.collaborationState!=='active'?'此项目参与已停用':projectAgent?.status!=='active'?'项目 Agent 尚未配置或停用':null
-        } : null;
-      }
-    }),
-    nativeContext: createNativeContextService({
-      sessions: sessionRepository,
-      projects: projectRepository,
-      runtime: piSessionRuntime,
-      assertWritable: assertSchemaCompatible
-    })
+    projectSessions,
+    nativeContext
   };
 }
 export function listBotReferenceFiles(botId: string, conversationId: string, path: string) {
@@ -127,6 +91,6 @@ export function listBotReferenceFiles(botId: string, conversationId: string, pat
 }
 
 const state = globalThis as typeof globalThis & {
-  __memoryOnlyServices?: ReturnType<typeof createServices>;
+  __sessionServicesV2?: ReturnType<typeof createServices>;
 };
-export const services = state.__memoryOnlyServices ??= createServices();
+export const services = state.__sessionServicesV2 ??= createServices();

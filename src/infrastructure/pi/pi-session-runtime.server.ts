@@ -6,7 +6,6 @@ import { appendMessageReferences } from "./message-references.server";
 import { createMessageReferenceScope } from "./message-reference-scope.server";
 import {sameRuntimeConfiguration} from "@/domain/runtime-configuration";
 import {isRoleSnapshot} from "@/domain/agent-definition";
-import {sessionMemorySummaryPrompt,prepareSessionMemorySummaryInput} from "./session-memory-summary-prompt";
 import type {PiContextPort} from "@/application/ports/pi-context";
 import type {
   AgentEvent,
@@ -30,12 +29,15 @@ import {
 import type { AgentSession as PiAgentSession, SessionEntry } from "@earendil-works/pi-coding-agent";
 import type { PiRuntimePort, SessionRuntimeInput } from "@/application/ports/pi-runtime";
 import { createPiProjectTools } from "@/infrastructure/projects/pi-project-tools.server";
-import { createOpenAIModelRuntime } from "@/infrastructure/pi/openai-model-config.server";
+import { loadModelConfiguration, resolveConfiguredModel, resolveSessionModel } from "./model-config.server";
+import { branchEntries, fileDigest, persistManager, prepareFork, renderSessionExport } from "./session-artifacts.server";
 
+import {canonical,hash} from "@/domain/project-operations";
 import { DomainError } from "@/domain/errors";
+import {sessionPreview,type SessionPreview} from "@/domain/session-preview";
+import { getSupportedThinkingLevels } from '@earendil-works/pi-ai';
+import { sessionThinkingLevels, type SessionThinkingLevel, type SessionModelSelection } from '@/domain/session-tools';
 import { emptyInspection, type NativeContextInspection } from "@/domain/native-context";
-import type { SessionMemoryHistory, SummaryRequest } from "@/application/ports/session-memory-runtime";
-import { validateContext, type SessionMemoryContext } from "@/domain/session-memory";
 import {toPiBotTools} from "./pi-bot-tools.server";
 import {projectTranscriptEntries} from "./transcript-projection";
 
@@ -47,6 +49,7 @@ type Handle = {
   isProjectSession: boolean;
   input: SessionRuntimeInput;
   writeAccess: { allowed: boolean };
+  useConfiguration:(configuration:Awaited<ReturnType<typeof loadModelConfiguration>>)=>void;
 };
 
 type PiEvent = {
@@ -234,21 +237,21 @@ export function createPiEventMapper(showActionSummary: boolean, workingDirectory
 }
 
 export class PiSessionRuntime implements PiRuntimePort, PiContextPort {
-  constructor(private readonly modelSource = createOpenAIModelRuntime) {}
+  constructor(private readonly modelSource: () => Promise<Awaited<ReturnType<typeof loadModelConfiguration>> & { model?: import("@earendil-works/pi-ai").Model<import("@earendil-works/pi-ai").Api> }> = loadModelConfiguration) {}
   private readonly handles = new Map<string, Handle>();
-  private modelRuntime: ReturnType<typeof createOpenAIModelRuntime> | undefined;
 
-  private configuredModel() {
-    this.modelRuntime ??= this.modelSource();
-    return this.modelRuntime;
-  }
+  private configuredModel() { return this.modelSource(); }
 
   private async create(input: SessionRuntimeInput, manager: SessionManager): Promise<Handle> {
     const referenceScope = createMessageReferenceScope();
     const writeAccess = { allowed: false };
     const loader = loaderFor(input, referenceScope);
     await loader.reload();
-    const { runtime: modelRuntime, model } = await this.configuredModel();
+    const configuration = await this.configuredModel();
+    const selected = input.selectedModel ?? manager.getBranch().findLast(entry => entry.type === "model_change");
+    const model = input.selectedModel ? await resolveConfiguredModel(configuration,input.selectedModel) : await resolveSessionModel(configuration,selected&&'provider' in selected?{provider:selected.provider,modelId:selected.modelId}:configuration.model?{provider:configuration.model.provider,modelId:configuration.model.id}:undefined);
+    let currentConfiguration=configuration;
+    const modelRuntime=new Proxy(configuration.runtime,{get(_target,property){const value=Reflect.get(currentConfiguration.runtime,property,currentConfiguration.runtime);return typeof value==='function'?value.bind(currentConfiguration.runtime):value;}});
     const customTools = input.workspace ? [] : [
       ...await createPiProjectTools(input, () => !input.independentProjectTools || writeAccess.allowed),
       ...toPiBotTools(input.collaborationTools ?? []),
@@ -266,6 +269,8 @@ export class PiSessionRuntime implements PiRuntimePort, PiContextPort {
       }),
 
     });
+    const effective=manager.getBranch().findLast(entry=>entry.type==='model_change');
+    if(effective?.provider!==model.provider||effective?.modelId!==model.id)await result.session.setModel(model);
     return {
       session: result.session,
       referenceScope,
@@ -274,8 +279,21 @@ export class PiSessionRuntime implements PiRuntimePort, PiContextPort {
       isProjectSession: input.projectSession !== false,
       input,
       writeAccess,
+      useConfiguration:configuration=>{currentConfiguration=configuration;},
     };
   }
+
+  private async refreshHandle(handle:Handle,selected?:{provider:string;modelId:string}){
+    const configuration=await this.configuredModel();
+    const branchModel=handle.manager.getBranch().findLast(entry=>entry.type==='model_change');
+    const model=selected?await resolveConfiguredModel(configuration,selected):await resolveSessionModel(configuration,branchModel?{provider:branchModel.provider,modelId:branchModel.modelId}:undefined);
+    handle.useConfiguration(configuration);
+    const previous=handle.session.model;
+    if(previous?.provider===model.provider&&previous.id===model.id){if(JSON.stringify(previous)!==JSON.stringify(model))handle.session.agent.state.model=model;}
+    else{await handle.session.setModel(model);persistManager(handle.manager);}
+  }
+
+  async refreshModel(handle:object) {await this.refreshHandle(handle as Handle);}
 
   async open(input: SessionRuntimeInput) {
     const manager = SessionManager.create(input.workingDirectory);
@@ -308,22 +326,25 @@ export class PiSessionRuntime implements PiRuntimePort, PiContextPort {
     const manager = SessionManager.open(sessionFile, undefined, input.workingDirectory);
     if(manager.getSessionId()!==reference?.sessionId||manager.getHeader()?.cwd!==input.workingDirectory)throw new DomainError("NO_NATIVE_REF","Pi 原生历史归属不一致",409,true);
     const handle = await this.create(input, manager);
+    persistManager(manager);
     this.handles.set(input.session.id, handle);
     return handle;
   }
 
   async send(handle: object, message: string, emit: (event: AgentEvent) => void, onAssistantStream?: () => void, references?: import("@/domain/message-references").ReferenceContent, allowProjectWrite = false) {
     const piHandle = handle as Handle;
+    await this.refreshHandle(piHandle);
     piHandle.writeAccess.allowed = allowProjectWrite;
     const turn: TurnState = {
       publicText: "",
       toolDetails: new Map(),
     };
-    let assistantStreamSeen = false;
+    let assistantStreamSeen = false,settled=false,settledAborted=false,promptStarted=false;
     const temporary = new WeakMap<object, string>();
     let currentTemporary: string | null = null;
     const pendingLinks: Promise<void>[] = [];
     const unsubscribe = piHandle.session.subscribe((event) => {
+      if(event.type==='agent_settled'){settled=true;settledAborted=event.aborted;}
       const message = "message" in event && event.message && typeof event.message === "object" ? event.message : null;
       if (event.type === "message_start" && message) { currentTemporary = randomUUID(); temporary.set(message, currentTemporary); }
       const temporaryId = message ? temporary.get(message) ?? currentTemporary : currentTemporary;
@@ -346,15 +367,21 @@ export class PiSessionRuntime implements PiRuntimePort, PiContextPort {
       piHandle.session.setAutoCompactionEnabled(false);
       const referenceTurnId = piHandle.referenceScope.begin();
       await appendMessageReferences(piHandle.session, references, referenceTurnId);
+      promptStarted=true;
       await piHandle.session.prompt(message, { expandPromptTemplates: false });
+      await piHandle.session.waitForIdle();
+      if(!settled||!piHandle.session.isIdle)throw new DomainError('REQUEST_UNKNOWN','模型或工具循环终结尚未确认',409,true);
+      if(settledAborted)throw new DomainError('REQUEST_ABORTED','请求已停止',409,true);
       const last=piHandle.session.messages.filter(item=>item.role==="assistant").at(-1) as {stopReason?:string;errorMessage?:string} | undefined;
       if(last?.stopReason==="error") { if(/context|token.*limit|maximum.*length/i.test(last.errorMessage??""))throw new DomainError("CONTEXT_LIMIT_REACHED","原生上下文已满，请在检查中手动压缩后重新发送",409,true);throw new DomainError("RUNTIME_ERROR", references?.some(item => item.type === "image") ? "模型请求失败；模型或服务可能不支持图片输入" : "模型请求失败，请检查配置或恢复状态",503,true); }
       if(last?.stopReason==="aborted")throw new DomainError("REQUEST_ABORTED","请求已停止",409,true);
     } finally {
+      if(promptStarted)await piHandle.session.waitForIdle();
       await Promise.all(pendingLinks);
       piHandle.referenceScope.end();
       piHandle.writeAccess.allowed = false;
       unsubscribe();
+      persistManager(piHandle.manager);
     }
   }
 
@@ -366,6 +393,13 @@ export class PiSessionRuntime implements PiRuntimePort, PiContextPort {
 
   requestEntry(handle: object, type: string, data: unknown) {
     return appendWorkspaceRequest(this.requestIdentity(handle as Handle),type,data);
+  }
+
+  recordRequest(input:SessionRuntimeInput,type:string,data:unknown) {
+    const ref=input.session.nativeRef;
+    if(!input.workspace||!ref||typeof ref.sessionFile!=='string'||typeof ref.sessionId!=='string')throw new DomainError('NO_NATIVE_REF','工作区请求缺少精确原生身份',409,true);
+    readNativeFile(ref.sessionFile,input.workingDirectory,ref.sessionId);
+    return appendWorkspaceRequest({sessionId:input.session.id,workspaceId:input.workspace.id,nativeSessionId:ref.sessionId,sessionFile:ref.sessionFile},type,data);
   }
 
   private requestIdentity(handle: Handle): WorkspaceRequestIdentity {
@@ -425,7 +459,7 @@ export class PiSessionRuntime implements PiRuntimePort, PiContextPort {
 
   async readTree(input: SessionRuntimeInput) {
     const live = this.handles.get(input.session.id);
-    if (live) return snapshotTree(live.manager);
+    if (live) {this.snapshot(input);return structuredClone(snapshotTree(live.manager));}
     const ref = input.session.nativeRef;
     if (typeof ref?.sessionFile !== "string" || typeof ref.sessionId !== "string") throw new DomainError("NO_NATIVE_REF", "Pi 原生历史缺失", 409, true);
     return readTreeFile(ref.sessionFile, input.workingDirectory, ref.sessionId);
@@ -451,59 +485,104 @@ export class PiSessionRuntime implements PiRuntimePort, PiContextPort {
     return typeof file === "string" ? SessionManager.open(file, undefined, input.workingDirectory) : null;
   }
 
-  async history(input: SessionRuntimeInput): Promise<SessionMemoryHistory> {
-    let entries: SessionEntry[];
-    if (input.workspace && !this.handles.has(input.session.id)) {
-      const tree = await this.readTree(input);
-      const byId = new Map(tree.entries.map(({entry}) => { const item=entry as SessionEntry; return [item.id,item] as const; }));
-      entries=[];
-      let current=tree.activeLeafId;
-      const seen=new Set<string>();
-      while(current&&!seen.has(current)) {seen.add(current);const entry=byId.get(current);if(!entry)break;entries.push(entry);current=entry.parentId;}
-      entries.reverse();
-    } else entries = this.manager(input)?.getBranch() ?? [];
-    const requests: SummaryRequest[] = [];
-    let pending: SummaryRequest | undefined;
-    for (const entry of entries) {
-      if (entry.type !== "message") continue;
-      const msg = entry.message as { role?: string; content?: unknown; stopReason?: string };
-      const safeText = textContent(msg.content).replaceAll(input.workingDirectory, "项目根目录").replace(/\b(?:sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9]{20,}|Bearer\s+\S+)/gi, "[已隐藏]").replace(/((?:OPENAI|API|ACCESS|SECRET|TOKEN|PASSWORD)[A-Z0-9_]*\s*[:=]\s*)[^\s,;]+/gi,"$1[已隐藏]");
-      if (msg.role === "user") { pending = { afterId: entry.id, throughId: entry.id, user: safeText, assistant: "", completed: false, createdAt: entry.timestamp }; requests.push(pending); }
-      else if (msg.role === "assistant" && pending) {
-        pending.throughId = entry.id;
-        const blocks = Array.isArray(msg.content) ? msg.content as Array<{type?:string}> : [];
-        const parsed = extractPublicSummary(safeText).text;
-        if (parsed) pending.assistant += (pending.assistant ? "\n" : "") + parsed;
-        pending.completed = !!parsed && !blocks.some(block => block.type === "toolCall") && msg.stopReason === "stop";
-      }
-    }
-    return { entryIds: entries.map(entry => entry.id), requests };
+  private snapshot(input: SessionRuntimeInput) {
+    const handle = this.handles.get(input.session.id);
+    const ref = input.session.nativeRef;
+    if (!ref || typeof ref.sessionFile !== 'string' || typeof ref.sessionId !== 'string') throw new DomainError('NO_NATIVE_REF', '会话没有可读取的原生历史', 409, true);
+    const native = readNativeFile(ref.sessionFile, input.workingDirectory, ref.sessionId);
+    if (!native.endsWithNewline) throw new DomainError('SESSION_TREE_READ_FAILED', '原生历史末尾不完整', 500, true);
+    const entries = handle ? structuredClone(handle.manager.getEntries()) : native.entries.slice(1) as SessionEntry[];
+    if(handle&&(canonical(handle.manager.getHeader())!==canonical(native.header)||canonical(entries)!==canonical(native.entries.slice(1))))throw new DomainError('REQUEST_UNKNOWN','内存树与原生文件不一致，不能生成快照',409,true);
+    const leaf = handle ? handle.manager.getLeafId() : entries.at(-1)?.id ?? null;
+    return { header: structuredClone(handle?.manager.getHeader() ?? native.header), entries, leaf, sessionFile: ref.sessionFile, cwd: input.workingDirectory };
   }
 
-  async summarize(context: SessionMemoryContext, requests: SummaryRequest[], cwd: string) {
-    const input=prepareSessionMemorySummaryInput(context,requests);
-    const {runtime: modelRuntime, model} = await this.configuredModel();
-    const loader = new DefaultResourceLoader({cwd, agentDir:getAgentDir(), noExtensions: true, noSkills: true, noContextFiles: true, noPromptTemplates: true, noThemes: true, systemPrompt: sessionMemorySummaryPrompt});
-    await loader.reload();
-    const {session} = await createAgentSession({cwd, modelRuntime, model: {...model,maxTokens:4000}, resourceLoader:loader, sessionManager:SessionManager.inMemory(cwd), settingsManager:SettingsManager.inMemory({compaction:{enabled:false}}), noTools:"all", tools:[], thinkingLevel:"off"});
-    const timer = setTimeout(() => void session.abort(),45000);
-    try {
-      await session.prompt(input,{expandPromptTemplates:false});
-      const answer = session.messages.filter(msg => msg.role === "assistant").at(-1) as {content?:unknown;usage?:{input?:number;output?:number};stopReason?:string} | undefined;
-      if (!answer || answer.stopReason !== "stop") throw new Error("summary failed");
-      const raw = textContent(answer.content).trim().replace(/^```(?:json)?\s*|\s*```$/g,"");
-      return {context:validateContext(JSON.parse(raw)), inputTokens:answer.usage?.input ?? null, outputTokens:answer.usage?.output ?? null};
-    } finally {clearTimeout(timer);session.dispose();}
+  operationEvidence(input: SessionRuntimeInput): JsonObject {
+    if (!input.session.nativeRef) return {};
+    const snapshot = this.snapshot(input);
+    return { nativeRef: structuredClone(input.session.nativeRef), fileSha256: fileDigest(snapshot.sessionFile), leafId: snapshot.leaf, entryIds: snapshot.entries.map(entry => entry.id) };
+  }
+
+  preview(session:{nativeRef:JsonObject|null;createdAt:string}):SessionPreview {
+    if(!session.nativeRef)return sessionPreview([],session.createdAt);
+    try{const ref=session.nativeRef;if(typeof ref.sessionFile!=='string'||typeof ref.cwd!=='string'||typeof ref.sessionId!=='string')throw new Error('invalid identity');const snapshot=readTreeFile(ref.sessionFile,ref.cwd,ref.sessionId);return sessionPreview(snapshot.entries.map(item=>item.entry),session.createdAt);}
+    catch{return {lastUserInput:null,lastActivityAt:null,previewUnavailable:true};}
+  }
+
+  async models(input: SessionRuntimeInput): Promise<import('@/domain/session-tools').SessionModelView> {
+    const configuration = await this.configuredModel();
+    const available = new Set((await configuration.runtime.getAvailable()).map(model => model.provider + '\0' + model.id));
+    let selected: { provider: string; modelId: string } | null = null;
+    let thinkingLevel:SessionThinkingLevel|null=null;
+    if (input.session.nativeRef) {
+      const snapshot = this.snapshot(input);
+      const entry = branchEntries(snapshot.entries, snapshot.leaf).findLast(entry => entry.type === 'model_change');
+      if (entry?.type === 'model_change') selected = { provider: entry.provider, modelId: entry.modelId };
+      const thinking=branchEntries(snapshot.entries,snapshot.leaf).findLast(entry=>entry.type==='thinking_level_change');
+      if(thinking?.type==='thinking_level_change'&&sessionThinkingLevels.includes(thinking.thinkingLevel as SessionThinkingLevel))thinkingLevel=thinking.thinkingLevel as SessionThinkingLevel;
+    }
+    const live = this.handles.get(input.session.id)?.session.model;
+    selected = live ? { provider: live.provider, modelId: live.id } : selected;
+    const currentAvailable = !!selected && available.has(selected.provider + '\0' + selected.modelId) && (configuration.models??configuration.runtime.getModels()).some(model=>model.provider===selected!.provider&&model.id===selected!.modelId);
+    return {
+      thinkingLevel:this.handles.get(input.session.id)?.session.thinkingLevel??thinkingLevel,
+      current: selected ? { ...selected, available: currentAvailable, unavailableReason: currentAvailable ? null : 'MODEL_UNAVAILABLE' } : null,
+      defaults: configuration.defaults ?? {provider:null,modelId:null},
+      models: (configuration.models??configuration.runtime.getModels()).map(model => ({ provider: model.provider, modelId: model.id, name: model.name, reasoning: model.reasoning, thinkingLevels:getSupportedThinkingLevels(model), input: [...model.input], contextWindow: model.contextWindow > 0 ? model.contextWindow : null, maxTokens: model.maxTokens > 0 ? model.maxTokens : null, available: available.has(model.provider + '\0' + model.id), unavailableReason: available.has(model.provider + '\0' + model.id) ? null : 'MODEL_UNAVAILABLE' })),
+      sources: configuration.configuration ?? { models: 'native', settings: 'native' },
+      canSwitch: true,
+      unavailableReason: null,
+    };
+  }
+
+  async switchModel(input: SessionRuntimeInput, identity: SessionModelSelection) {
+    try{const configuration=await this.configuredModel();const target=await resolveConfiguredModel(configuration,identity);if(identity.thinkingLevel!==undefined&&!getSupportedThinkingLevels(target).includes(identity.thinkingLevel))throw new DomainError('INVALID_INPUT','所选模型不支持该思考等级',400,true);}catch(error){if(error instanceof DomainError)Object.assign(error,{noSideEffects:true});throw error;}
+    let handle = this.handles.get(input.session.id);
+    if (handle && !handle.session.isIdle) throw new DomainError('SESSION_BUSY', '会话正在执行', 409, true);
+    if (!handle) handle = await this.restore({ ...input, selectedModel: identity }) as Handle;
+    await this.refreshHandle(handle,identity);
+    if(identity.thinkingLevel!==undefined){
+      if(!handle.session.getAvailableThinkingLevels().includes(identity.thinkingLevel))throw new DomainError('REQUEST_UNKNOWN','模型支持等级在应用期间发生变化，请核对当前设置',409,true);
+      handle.session.setThinkingLevel(identity.thinkingLevel);
+      if(handle.session.thinkingLevel!==identity.thinkingLevel)throw new DomainError('REQUEST_UNKNOWN','思考等级结果尚未确认',409,true);
+    }
+    persistManager(handle.manager);
+    return this.models(input);
+  }
+
+  async fork(input: SessionRuntimeInput, entryId: string, directory: string) {
+    const snapshot = this.snapshot(input);
+    const digest = fileDigest(snapshot.sessionFile), leaf = this.handles.get(input.session.id)?.manager.getLeafId();
+    if (!snapshot.entries.some(entry => entry.id === entryId)) throw new DomainError('NOT_FOUND', '节点不属于该会话树', 404, true);
+    const result = prepareFork(snapshot, entryId, directory);
+    if (fileDigest(snapshot.sessionFile) !== digest || this.handles.get(input.session.id)?.manager.getLeafId() !== leaf) throw new DomainError('REQUEST_UNKNOWN', '派生期间源会话发生变化', 409, true);
+    return result;
+  }
+
+  validateForkCandidate(input:SessionRuntimeInput,candidate:JsonObject,entryId:string):JsonObject {
+    const source=this.snapshot(input),expected=branchEntries(source.entries,entryId);
+    if(typeof candidate.sessionFile!=='string'||typeof candidate.sessionId!=='string'||candidate.cwd!==input.workingDirectory||candidate.sessionFile===source.sessionFile||candidate.sessionId===source.header?.id)throw new DomainError('REQUEST_UNKNOWN','候选原生身份无效',409,true);
+    const native=readNativeFile(candidate.sessionFile,input.workingDirectory,candidate.sessionId);
+    if(!native.endsWithNewline||native.header.parentSession!==source.sessionFile||canonical(native.entries.slice(1))!==canonical(expected))throw new DomainError('REQUEST_UNKNOWN','候选内容与源节点路径不一致',409,true);
+    const reopened=SessionManager.open(candidate.sessionFile);
+    if(reopened.getLeafId()!==entryId||canonical(reopened.getBranch())!==canonical(expected))throw new DomainError('REQUEST_UNKNOWN','候选无法恢复精确分支',409,true);
+    return {fileSha256:fileDigest(candidate.sessionFile),entryIds:expected.map(entry=>entry.id),sourcePathSha256:hash(canonical(expected))};
+  }
+
+  async export(input: SessionRuntimeInput, format: 'html'|'jsonl', scope: 'tree'|'branch') {
+    const snapshot = this.snapshot(input);
+    const entries = scope === 'tree' ? snapshot.entries : branchEntries(snapshot.entries, snapshot.leaf);
+    return renderSessionExport(snapshot.header!, entries, format, input.session.id + ' · ' + scope);
   }
 
   async inspect(input: SessionRuntimeInput): Promise<NativeContextInspection> {
     if (!input.session.nativeRef) return emptyInspection("Session 尚未启动");
     const handle = this.handles.get(input.session.id);
-    if (!handle) return emptyInspection("请先打开 Session 后读取用量");
+    if (!handle) return emptyInspection("会话尚未连接，暂无实时用量");
     const branch=handle.manager.getBranch();
     const usage=handle.session.getContextUsage();
     const tokens=usage?.tokens ?? null;
-    const window=(await this.configuredModel()).knownContextWindow;
+    const window=handle.session.model?.contextWindow && handle.session.model.contextWindow > 0 ? handle.session.model.contextWindow : null;
     const result=emptyInspection("暂无可靠用量");
     result.runtimeReady=true;
     result.sessionState=input.session.state;
@@ -522,10 +601,16 @@ export class PiSessionRuntime implements PiRuntimePort, PiContextPort {
   }
 
   async compact(handle: object) {
+    await this.refreshHandle(handle as Handle);
     const pi = (handle as Handle).session;
     if (!pi.isIdle) throw new DomainError("SESSION_BUSY","Session 正在运行",409,true);
     pi.setAutoCompactionEnabled(false);
-    try { await pi.compact(); } catch(error) { const message=error instanceof Error?error.message:"";if(/Nothing to compact|Already compacted/i.test(message))throw new DomainError("NOTHING_TO_COMPACT","原生会话较短或已经压缩，无需压缩",409,true);throw error; }
+    const manager=(handle as Handle).manager,before=new Set(manager.getEntries().filter(entry=>entry.type==='compaction').map(entry=>entry.id));
+    let settled=false,aborted=false;
+    const unsubscribe=pi.subscribe(event=>{if(event.type==='compaction_end'){settled=true;aborted=event.aborted;}});
+    try { await pi.compact();if(!settled||aborted||!pi.isIdle||!manager.getEntries().some(entry=>entry.type==='compaction'&&!before.has(entry.id)))throw new DomainError('REQUEST_UNKNOWN','压缩缺少可靠终结或新增原生结果',409,true);persistManager(manager); }
+    catch(error) {if(settled&&aborted&&pi.isIdle){persistManager(manager);throw new DomainError('REQUEST_ABORTED','压缩已取消',409,true);}const message=error instanceof Error?error.message:"";if(/Nothing to compact|Already compacted/i.test(message))throw new DomainError("NOTHING_TO_COMPACT","原生会话较短或已经压缩，无需压缩",409,true);throw error; }
+    finally{unsubscribe();}
   }
 
   cancelCompaction(handle:object) { (handle as Handle).session.abortCompaction(); }

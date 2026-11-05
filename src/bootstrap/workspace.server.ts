@@ -5,12 +5,13 @@ import { database } from '@/infrastructure/database/database.server';
 import { createWorkspaceRepository } from '@/infrastructure/database/workspace-repository';
 import { workspaceDirectories } from '@/infrastructure/workspaces/directories.server';
 import { piSessionRuntime } from '@/infrastructure/pi/pi-session-runtime.server';
+import {sessionOpenHistory} from '@/infrastructure/sessions/session-open-history.server';
 import { createWorkspaceService } from '@/application/workspace-service';
 import { readWorkspaceFile } from '@/infrastructure/workspaces/file-preview.server';
 import { DomainError } from '@/domain/errors';
 function create() {
   const repository=createWorkspaceRepository(database);
-  return createWorkspaceService({repository,directories:workspaceDirectories,runtime:piSessionRuntime,readFile:(workspaceId,projectId,relative)=>readWorkspaceFile(repository.get(workspaceId)!.projects,projectId,relative),listFiles:async(workspaceId,projectId,relative)=>{
+  return createWorkspaceService({openHistory:sessionOpenHistory,preview:value=>piSessionRuntime.preview(value),repository,directories:workspaceDirectories,runtime:piSessionRuntime,readFile:(workspaceId,projectId,relative)=>readWorkspaceFile(repository.get(workspaceId)!.projects,projectId,relative),listFiles:async(workspaceId,projectId,relative)=>{
     const {workspaceReferenceTarget}=await import('@/infrastructure/workspaces/reference-path.server');
     const workspace=repository.get(workspaceId)!;
     const {target}=await workspaceReferenceTarget(workspace.projects,projectId,relative);

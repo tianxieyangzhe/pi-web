@@ -10,7 +10,6 @@ import { botText, botETag, safeBotContent, type BotConversation, type BotLiveEve
 import type { BotRepositoryPort, BotWorkspacePort, BotRuntimePort, BotRuntimeInput, BotTool } from "./ports/bot";
 import type { SessionRepositoryPort, SessionCatalogPort } from "./ports/core";
 import type { ProjectRepositoryPort } from "./ports/catalog";
-import type { SessionMemoryRepositoryPort } from "./ports/session-memory";
 import { sessionLocks } from "./session-lock";
 import { emptyInspection, type NativeContextInspection } from "@/domain/native-context";
 import { coordinatorProjectPresenceTools } from "@/infrastructure/pi/coordinator-project-tools";
@@ -30,9 +29,7 @@ export type BotServiceDependencies = {
   projects: ProjectRepositoryPort;
   readProjectReference?: (reference: ProjectMessageReference) => { name: string; data: string };
   readBotReference?: (root: string, path: string) => { name: string; data: string };
-  memories: SessionMemoryRepositoryPort;
   catalog?: SessionCatalogPort;
-  onCompleted?: (sessionId: string) => void;
   compactions?: Map<string, { state: "running" | "cancelled" | "failed"; error: string | null }>;
 };
 
@@ -91,7 +88,7 @@ export function createBotService(d: BotServiceDependencies) {
     const binding = r.conversationConfiguration(c.id).find(item => item.projectId === projectId)?.agents[0];
     if (!binding) throw new DomainError("NOT_FOUND", "项目不在当前协调会话范围", 404, true);
     const selected = requireRole(d.catalog?.getAgentVersion(binding.agentId, binding.revision, binding.contentSha256) ?? null, "project", projectId);
-    const created = d.memories.createSession(projectId, "项目会话", undefined, undefined, { agentId: selected.agentId, agentSnapshot: selected });
+    const created = d.sessions.create({projectId, purpose:"项目会话", agentId:selected.agentId, agentSnapshot:selected, mcpIds:[], mcpSnapshots:[]});
     r.updateParticipant(created.id, { botConversationId: c.id, participantName: selected.name, assignment: null, collaborationState: "active", botJoinedAt: stamp() });
     return d.sessions.get(created.id)!;
   }

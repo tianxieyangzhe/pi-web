@@ -20,17 +20,18 @@ const legacyMemory = `CREATE TABLE session_memories (
  UNIQUE(id, project_id),
  CHECK(project_id IS NOT NULL OR (source_template_id IS NULL AND draft_json IS NULL AND last_reviewed_entry_id IS NULL))
  );`;
+function contextForLegacy(){return JSON.stringify({summary:'',goal:'',constraints:[],facts:[],decisions:[],nextActions:[],outputs:[]});}
 function fixture() {
  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'workspace-migration-'));
  const file = path.join(directory, 'history.sqlite');
  const db = new Database(file);
- let core = fs.readFileSync(path.join(__dirname, '../src/infrastructure/database/core-schema.sql'), 'utf8');
+ let core = fs.readFileSync(path.join(__dirname, '../scripts/historical-schema/core-schema.sql'), 'utf8');
  core = core.replace(/CREATE TABLE session_memories \([\s\S]*?\n  \);/, legacyMemory)
    .replace('UPDATE OF project_id,workspace_id ON session_memories', 'UPDATE OF project_id ON session_memories')
    .replace(' OR NEW.workspace_id IS NOT OLD.workspace_id', '')
    .replaceAll(' AND workspace_id IS NULL', '');
  db.exec(core);
- for (const name of ['bot-schema.sql', 'agent-binding-schema.sql', 'role-schema.sql']) db.exec(fs.readFileSync(path.join(__dirname, '../src/infrastructure/database', name), 'utf8'));
+ for (const name of ['bot-schema.sql', 'agent-binding-schema.sql', 'role-schema.sql']) db.exec(fs.readFileSync(path.join(__dirname, '../scripts/historical-schema', name), 'utf8'));
  db.pragma('foreign_keys=ON');
  const context = JSON.stringify({summary:'保留摘要',goal:'',constraints:[],facts:[],decisions:[],nextActions:[],outputs:[]});
  db.exec("INSERT INTO projects VALUES('p','Project',NULL,'code','/tmp/example','active','now','now')");
@@ -52,8 +53,9 @@ test('offline upgrade retains every historical value, backup and custom objects;
    assert.deepEqual(db.prepare('SELECT id,project_id,source_template_id,title,context_json,draft_json,last_reviewed_entry_id,created_at,updated_at FROM session_memories ORDER BY id').all(),memory);
    assert.deepEqual(db.prepare('SELECT * FROM sessions').all(),sessions);assert.equal(db.prepare('SELECT count(*) n FROM session_memories WHERE workspace_id IS NOT NULL').get().n,0);
    assert(db.prepare("SELECT 1 FROM sqlite_master WHERE name='memory_custom_idx'").get());
-   const r=createWorkspaceRepository(db),w=r.save(null,{name:'New workspace',projects:[{rootPath:'/tmp/example'}],defaultProjectIndex:0},'w');
-   const s=r.createSession(w.id,undefined,'New session','s');assert.equal(r.memory(w.id,s.sessionMemoryId).workspaceId,w.id);
+   const r=createWorkspaceRepository(db);assert.throws(()=>r.save(null,{name:'New workspace',projects:[{rootPath:'/tmp/example'}],defaultProjectIndex:0},'blocked'),e=>e.code==='SCHEMA_INCOMPATIBLE');
+   const w={id:'w'},s={id:'ws',sessionMemoryId:'wm'};db.transaction(()=>{db.exec("INSERT INTO workspaces VALUES('w','Old target','wp','w','hash','now','now');INSERT INTO workspace_projects VALUES('wp','w','/tmp/example',0);");db.prepare("INSERT INTO session_memories(id,workspace_id,title,context_json,created_at,updated_at) VALUES('wm','w','Historical target',?,'now','now')").run(contextForLegacy());db.exec("INSERT INTO workspace_sessions(id,workspace_id,default_project_id,purpose,session_memory_id,create_request_key,create_request_sha256,created_at) VALUES('ws','w','wp','History','wm','ws','hash','now')");})();
+   assert.equal(db.prepare("SELECT workspace_id FROM session_memories WHERE id='wm'").get().workspace_id,w.id);
    assert.throws(()=>db.prepare("UPDATE session_memories SET workspace_id=? WHERE id='m'").run(w.id),/immutable/);
    assert.throws(()=>db.prepare("UPDATE session_memories SET source_template_id=? WHERE id='m'").run(s.sessionMemoryId),/template/);
    assert.throws(()=>db.prepare("UPDATE workspace_sessions SET session_memory_id='m' WHERE id=?").run(s.id),/immutable/);

@@ -1,0 +1,27 @@
+{
+  "providers": {
+    "example": {
+      "baseUrl": "https://api.example.com/v1",
+      "api": "openai-completions",
+      "apiKey": "PI_EXAMPLE_API_KEY",
+      "models": [
+        {
+          "id": "replace-with-model-id",
+          "name": "Example model — set actual provider limits",
+          "reasoning": false,
+          "input": [
+            "text"
+          ],
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          },
+          "contextWindow": 128000,
+          "maxTokens": 16384
+        }
+      ]
+    }
+  }
+}

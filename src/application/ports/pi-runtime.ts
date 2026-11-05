@@ -4,6 +4,7 @@ export type PiSessionHandle = object;
 
 export type SessionRuntimeInput = {
   session: Session;
+  selectedModel?: { provider: string; modelId: string };
   workingDirectory: string;
   allowProjectWrite: boolean;
   allowProjectRead?:boolean;
@@ -19,6 +20,7 @@ export type SessionRuntimeInput = {
 export interface PiRuntimePort {
   getHandle(sessionId: string, input?: SessionRuntimeInput): PiSessionHandle | undefined;
   isBusy?(handle: PiSessionHandle): boolean;
+  refreshModel?(handle: PiSessionHandle): Promise<void>;
   subscribe?(handle: PiSessionHandle, listener: (event: AgentEvent) => void): () => void;
   open(input: SessionRuntimeInput): Promise<{ handle: PiSessionHandle; nativeRef: JsonObject }>;
   restore(input: SessionRuntimeInput): Promise<PiSessionHandle>;

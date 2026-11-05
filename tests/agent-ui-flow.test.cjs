@@ -23,7 +23,7 @@ test('new Project action is placed in the Project section header',()=>{
  assert(actionsIndex>=0&&projectHeaderIndex>actionsIndex);assert(html.includes('aria-label="新建项目"'));assert(!html.slice(actionsIndex,projectHeaderIndex).includes('aria-label="新建项目"'));
 });
 test('Bot-created Project Sessions are excluded from the Project navigation tree',()=>{
- const botSession={id:'bot-session',memorySummary:'',agent:{name:'管理面 Agent'},botParent:{conversationTitle:'跨项目协调'},state:'not_started'},independentSession={id:'independent',memorySummary:'独立工作',agent:{name:'项目 Agent'},botParent:null,state:'not_started'},noop=()=>{};
+ const botSession={id:'bot-session',purpose:'',agent:{name:'管理面 Agent'},botParent:{conversationTitle:'跨项目协调'},state:'not_started'},independentSession={id:'independent',purpose:'独立工作',agent:{name:'项目 Agent'},botParent:null,state:'not_started'},noop=()=>{};
  const navigation={expandedProjectIds:new Set(['p']),sessionsByProject:{p:[botSession,independentSession]},loadingProjectIds:new Set(),errorsByProject:{},toggleProject:noop,loadProjectSessions:noop};
  const html=render(ProjectNavigation,{projects:[project],selection:{kind:'project',projectId:'p',sessionId:botSession.id},navigation,creatingSessionProjectId:null,botNavigation:null,onNewProject:noop,onOpenTemplates:noop,onNewProjectSession:noop,onCreateSession:noop,onProjectSelect:noop,onSessionSelect:noop,onEditProject:noop,onOpenResource:noop});
  assert(html.includes('独立工作'));assert(!html.includes('管理面 Agent'));assert(!html.includes('跨项目协调'));assert.equal((html.match(/aria-current="page"/g)||[]).length,0);

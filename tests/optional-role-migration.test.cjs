@@ -1,7 +1,7 @@
 require('./register.cjs');
 const {test}=require('node:test'),assert=require('node:assert/strict'),Database=require('better-sqlite3');
 const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),{spawnSync}=require('node:child_process');
-const {targetSchema}=require('../src/infrastructure/database/schema.server.ts');
+const targetSchema=require('./fixtures/legacy-schema.cjs');
 const script=path.resolve('scripts/migrate-optional-session-role.cjs');
 test('offline migration preserves existing records and allows role-less session inserts',()=>{
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'role-migration-')),file=path.join(dir,'test.sqlite');

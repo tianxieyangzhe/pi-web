@@ -1,0 +1,5 @@
+{
+  "defaultProvider": "example",
+  "defaultModel": "replace-with-model-id",
+  "enabledModels": ["example/*"]
+}

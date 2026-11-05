@@ -4,7 +4,7 @@ const fs=require('node:fs');
 const path=require('node:path');
 const Database=require('better-sqlite3');
 const {spawnSync}=require('node:child_process');
-const root=path.resolve(__dirname,'..'),schemaDir=path.join(root,'src/infrastructure/database');
+const root=path.resolve(__dirname,'..'),schemaDir=path.join(__dirname,'historical-schema');
 const bindingSchema=fs.readFileSync(path.join(schemaDir,'agent-binding-schema.sql'),'utf8');
 const roleSchema=fs.readFileSync(path.join(schemaDir,'role-schema.sql'),'utf8');
 const relationTables=['bot_projects','bot_project_agents','bot_conversation_projects','bot_conversation_project_agents'];

@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import {canonical} from "./project-operations";
 import { DomainError } from "./errors";
 import type { Agent, AgentSnapshot, AgentSnapshotRef, AgentDefinition } from "./models";
 export const capabilityNames = ["readFiles", "writeFiles", "readProjects", "dispatchTasks", "dispatchProjectWrites", "exchangeMessages"] as const;
@@ -16,7 +17,9 @@ export function validateDefinition(value: unknown, kind: "coordinator" | "projec
   };
 }
 export function roleETag(value: object) {
-  return '"' + createHash('sha256').update(JSON.stringify(value)).digest('hex') + '"';
+  const agent=value as Partial<Agent>;
+  const persisted="contentSha256" in agent && "id" in agent ? {id:agent.id,name:agent.name,description:agent.description,kind:agent.kind,revision:agent.revision,contentSha256:agent.contentSha256,status:agent.status,createdAt:agent.createdAt,updatedAt:agent.updatedAt} : value;
+  return '"' + createHash('sha256').update(canonical(persisted)).digest('hex') + '"';
 }
 export function snapshot(agent: Agent): AgentSnapshot {
   if (!agent.kind || !agent.definition || !agent.contentSha256) throw new DomainError("ROLE_NOT_CONFIGURED", "请先配置正式角色 Markdown 版本", 409, true);

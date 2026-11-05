@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { closeSync, fstatSync, openSync, readFileSync, statSync } from "node:fs";
 import { CURRENT_SESSION_VERSION, SessionManager, type FileEntry, type SessionEntry } from "@earendil-works/pi-coding-agent";
 import { DomainError } from "@/domain/errors";
 
@@ -20,8 +20,8 @@ export function snapshotTree(manager: Pick<SessionManager, "getEntries" | "getTr
       while (current && !done.has(current.id)) {
         if (visited.has(current.id)) throw failure();
         visited.add(current.id);
-        if (current.parentId === null || current.parentId === current.id) break;
-        current = byId.get(current.parentId);
+        if (current.parentId === null) break;
+        current = byId.get(current.parentId);if(!current)throw failure();
       }
       for (const id of visited) done.add(id);
     }
@@ -45,7 +45,8 @@ export function snapshotTree(manager: Pick<SessionManager, "getEntries" | "getTr
 export function readNativeFile(file: string, cwd: string, expectedId?: string) {
   let text: string;
   let bytes: Buffer;
-  try { bytes = readFileSync(file); } catch { throw missing(); }
+  let fd:number|undefined;
+  try {fd=openSync(file,'r');const before=fstatSync(fd);if(!before.isFile())throw missing();bytes=readFileSync(fd);const after=fstatSync(fd),current=statSync(file);if(bytes.length!==before.size||after.size!==before.size||after.mtimeMs!==before.mtimeMs||after.ctimeMs!==before.ctimeMs||current.dev!==before.dev||current.ino!==before.ino||current.size!==after.size||current.mtimeMs!==after.mtimeMs)throw failure();} catch(error) {if(error instanceof DomainError)throw error;throw missing();}finally{if(fd!==undefined)closeSync(fd);}
   try { text = new TextDecoder("utf-8", { fatal: true }).decode(bytes); } catch { throw failure(); }
   if (!text) throw missing();
   try {

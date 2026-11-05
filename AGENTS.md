@@ -36,7 +36,7 @@
 
 ### 3.1 模型
 
-- 在 `02` 定位独立项目或通用持久对象 Session、SessionMemory、Agent、Project；Bot 专属对象与关系在 `06` 定位。
+- 在 `02` 定位独立项目或通用持久对象 Session、Agent、Project；Bot 专属对象与关系在 `06` 定位。
 - 写清职责、身份、归属、生命周期、不可变字段和关系。运行句柄、锁、订阅、流式文本、草稿和 UI 阶段不是持久模型。
 - 派生状态必须标明来源和计算规则，不能新增含糊状态字段代替事实。
 - 在 `03`（Bot 专属流程为 `06`）按时间写清触发者、读取记录、事务写入、成功、失败和 unknown 分别留下什么。
@@ -97,20 +97,19 @@
 
 ## 6. 运行边界
 
-- Pi Agent 是唯一 Runtime。固定服务端模型只兼容 OpenAI Chat Completions，只读取项目根目录 `.env.local` 的 `OPENAI_BASE_URL`、`OPENAI_API_KEY`、`OPENAI_MODEL_ID`。SessionMemory、Session、Agent 和 UI 均不覆盖。
-- SessionMemory 只用 `session_memories` 一张表。`projectId=null` 且 `workspaceId=null` 表示模板；工作区 SessionMemory 归属按 `06`，不属于模板；项目 SessionMemory 的 `projectId` 必填，模板复制后成为独立项目副本。`Session.sessionMemoryId` 必填、唯一、不可变，并与记忆所属 Project 保持组合外键一致。
-- SessionMemory 只保存 `02` 定义的摘要、目标、约束、事实、决策、下一步和产出摘要。不保存工具、扩展、Agent、MCP、Skill 的 ID、配置、快照或启用选择。
-- SessionMemory 当前只独立总结、展示和人工校正，不进入主 Pi 提示词或消息。自动和手动总结经 LLM 校验后直接更新 `contextJson`，无确认流程。历史 `draftJson` 仅保留，不阻塞、不自动采用、不静默删除。
-- Pi 原生 transcript、Runtime 句柄、原始 thinking、未脱敏工具结果、执行锁、订阅和 Client 不进入 SessionMemory。
+- SessionMemory 功能整体退役：删除模型、模板、后台总结、API、DTO、会话绑定及页面依赖，不建立替代摘要；持久会话名称保留已有 purpose；侧栏标题只读所属Pi最新用户输入，时间使用持久lastOpenedAt，契约见02/03/04及06的SLIST-002。历史库退役与授权边界见 `02`、`06`，不自动改写或删除旧数据。
+- 会话辅助入口统一为“文件”和“会话检查”两个独立非模态浮窗（不阻止继续对话，左侧任意单击关闭）；会话检查只含树标题预览和 Session 设置，投影见 `04`。
+
+- Pi Agent 是唯一 Runtime。模型配置与默认设置遵循 `01`“应用级 Pi 配置来源”：以 npm 启动目录为本地配置根，models.json 和 settings.json 各自整份优先于全局文件；模型参数完整交给 Pi 解析，支持会话级模型切换，容量以当前模型的 contextWindow 为准。Agent 不覆盖配置。
 - Agent 就是角色。页面称“Agent”，内部分别称 Agent 和 agents，不另建 Role。正式定义是应用管理的版本化 Markdown；数据库只保留目录索引、状态、摘要及 Project 和会话关系，不保存新版本正文。
 - 独立项目 Agent 没有 Project owner。参考项目和文件仅用于本次生成或修订，不形成永久绑定或目录授权。
 - 用户上传的 Markdown，包括 OpenCode、Claude 和普通 Markdown，都交给独立无工具 LLM 转换为规范 Agent.md。knowledge-v2 的 OpenCode 定义只是参考样本，不自动加载、执行或授予旧工具和目录权限。
 - 独立项目 Agent 能力开关由用户明确选择，默认关闭。LLM 不授予能力。用户不手工编辑 Agent.md；创建和修改通过独立对话接收自然语言意见，右侧只读展示版本化 Markdown。
-- 无 Project 的其他项目执行资源只作为模板，复制成 Project 独立实例后使用。其他资源模型另行设计，不借 SessionMemory 临时实现。
+- 无 Project 的其他项目执行资源只作为模板，复制成 Project 独立实例后使用。其他资源模型另行设计，不借会话任意 JSON 临时实现。
 
 ## 7. 当前设计入口
 
-- 独立项目、SessionMemory 与通用能力按 `01`～`05` 各自职责维护。
+- 独立项目与通用能力按 `01`～`05` 各自职责维护。
 - Bot 全部专属设计只维护于 [docs/06-bot.md](docs/06-bot.md)。该文档只保留当前目标，不保留旧设计与归档副本；被取代的规则以单行清单说明去向，追溯旧结论以 git 历史为准。
 - 设计拆分和目标调整不代表运行时已经实现，也不授权历史数据迁移。
 

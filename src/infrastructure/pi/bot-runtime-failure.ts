@@ -3,7 +3,7 @@ import { DomainError } from '@/domain/errors';
 export function botModelFailure(errorMessage: unknown): DomainError {
   const raw = typeof errorMessage === 'string' ? errorMessage : '';
   if (/model_not_found|No available channel for model/i.test(raw)) {
-    return new DomainError('BOT_MODEL_UNAVAILABLE', '配置的模型没有可用渠道，请检查 .env.local 的 OPENAI_MODEL_ID 或恢复模型服务。', 503, true);
+    return new DomainError('BOT_MODEL_UNAVAILABLE', '配置的模型没有可用渠道，请检查 Pi 模型配置与认证，或恢复模型服务。', 503, true);
   }
   if (/\b401\b|invalid_api_key|authentication_error/i.test(raw)) {
     return new DomainError('BOT_MODEL_AUTH_FAILED', '模型服务认证失败，请检查 .env.local 的 API Key。', 503, true);

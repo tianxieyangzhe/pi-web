@@ -53,7 +53,7 @@ export type AgentDefinition = {
 export type Agent = {
   id: EntityId; kind: "coordinator"|"project"|null; botId:string|null; projectId:string|null; sourceTemplateId:string|null;
   name:string; description:string|null; definition:AgentDefinition|null;legacySource?:string|null;
-  contentSha256:string|null;
+  contentSha256:string|null; markdown?:string|null;
   revision:number;status:ResourceStatus;createdAt:string;updatedAt:string;
 };
 export type AgentSnapshotRef = {agentId:string;revision:number;kind:"coordinator"|"project";botId:null;projectId:null;contentSha256:string;name:string;description:string|null};
@@ -74,7 +74,8 @@ export type SessionState =
 
 export type Session = {
   id: EntityId;
-  sessionMemoryId: EntityId;
+  createRequestKeyHash?: string | null;
+  createRequestSha256?: string | null;
   projectId: EntityId;
   status: "open" | "closed";
   purpose: string;
@@ -119,6 +120,7 @@ export type ActivityEvent = {
 };
 
 export type AgentEvent =
+  | {type:"context_changed"}
   | { type: "pi_event"; piType: string; payload: unknown; temporaryId: string | null }
   | { type: "entry_link"; entryId: string; temporaryId: string }
   | { type: "message_delta"; text: string }

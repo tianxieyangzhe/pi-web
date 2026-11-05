@@ -25,7 +25,7 @@ export function RoleEditor({target,projects,onClose,onSaved}:{target:RoleTarget;
     [name,setName]=useState(target.resource?.name??""),
     [description,setDescription]=useState(target.resource?.description??""),
     [instructions,setInstructions]=useState(target.resource?.definition?.instructions??target.resource?.legacySource??""),
-    [capabilities,setCapabilities]=useState<AgentDefinition["capabilities"]>(()=>({...blankCapabilities(),...(target.resource?.definition?.capabilities??{}),readProjects:false})),
+    [capabilities,setCapabilities]=useState<AgentDefinition["capabilities"]>(()=>({...blankCapabilities(),...(target.resource?.definition?.capabilities??{})})),
     [status,setStatus]=useState<Agent["status"]>(target.resource?.status??"active"),
     [projectId,setProjectId]=useState(""),
     [references,setReferences]=useState<ReferenceFile[]>([]),
@@ -63,7 +63,7 @@ export function RoleEditor({target,projects,onClose,onSaved}:{target:RoleTarget;
   }
   function accept(value:Candidate) {
     setName(value.name);setDescription(value.description??"");setInstructions(value.definition.instructions);
-    setWarnings(value.warnings);setSources(value.sources);setCapabilities(current=>({...current,...value.definition.capabilities,readProjects:false}));setDirty(true);setShowSaved(false);
+    setWarnings(value.warnings);setSources(value.sources);setDirty(true);setShowSaved(false);
     const summary=value.warnings.length?`已整理出新草稿。${value.warnings.slice(0,3).join("；")}`:"已整理出新草稿。右侧显示完整 Agent.md；你可以继续提出修改意见。";
     setMessages(current=>[...current,{role:"assistant",content:summary}]);
   }
@@ -82,7 +82,7 @@ export function RoleEditor({target,projects,onClose,onSaved}:{target:RoleTarget;
       setReferences(next);
       const isFirst=!instructions.trim();
       const prompt=isFirst?`请识别这份材料并整理出适合的${activeKind==="coordinator"?"协调":"项目"}角色定义。` : "请结合新上传的参考文件修订当前角色草稿，保留未冲突的职责和边界。";
-      await prepare({mode:isFirst?"import":"revise",projectId:projectId||undefined,...(isFirst?{}:{currentDraft:{name,description:description||null,instructions},feedback:prompt}),referenceFiles:next},prompt);
+      await prepare({mode:isFirst?"generate":"revise",projectId:projectId||undefined,...(isFirst?{requirements:prompt}:{currentDraft:{name,description:description||null,instructions},feedback:prompt}),referenceFiles:next},prompt);
     } catch(cause){setError(cause instanceof Error?cause.message:"无法读取参考文件");}
   }
   async function sendFeedback() {
@@ -97,8 +97,8 @@ export function RoleEditor({target,projects,onClose,onSaved}:{target:RoleTarget;
     if(pending||!instructions.trim()||!name.trim())return;
     abort.current?.abort();setPending(true);setError("");
     try {
-      const body={name,description:description||null,kind:activeKind,status,definition:{instructions,capabilities:{...capabilities,readProjects:false}},writeETag:target.resource?.writeETag};
-      const saved=target.resource?.contentSha256?await api.updateAgent(target.resource.id,body):await api.createAgent(body);
+      const body={name,description:description||null,kind:activeKind,status,definition:{instructions,capabilities}};
+      const saved=target.resource?.contentSha256?await api.updateAgent(target.resource.id,{...body,writeETag:target.resource.writeETag}):await api.createAgent(body);
       if(!alive.current)return;
       window.dispatchEvent(new Event("roles-updated"));onSaved(saved);
     } catch(cause) {if(alive.current)setError(cause instanceof Error?cause.message:"保存角色失败");}

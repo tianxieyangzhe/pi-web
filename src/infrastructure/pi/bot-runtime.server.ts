@@ -14,7 +14,7 @@ import { createPiEventMapper, piSessionRuntime } from "./pi-session-runtime.serv
 import { projectTranscriptEntries } from "./transcript-projection";
 import { appendMessageReferences } from "./message-references.server";
 import { createMessageReferenceScope } from "./message-reference-scope.server";
-import { createOpenAIModelRuntime } from "./openai-model-config.server";
+import { createConfiguredModelRuntime as createOpenAIModelRuntime } from "./model-config.server";
 import { createPiProjectTools } from "../projects/pi-project-tools.server";
 import { toPiBotTools } from "./pi-bot-tools.server";
 import { buildBotRuntimeToolInstructions } from "./bot-runtime-instructions";

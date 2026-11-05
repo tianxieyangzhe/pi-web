@@ -1,5 +1,5 @@
 import type {NativeContextInspection} from "../domain/native-context";
-import type { SessionMemoryView, SessionMemory } from "../domain/session-memory";
+import type { SessionModelView, RecoveryView } from "../../src/domain/session-tools";
 import type { Agent, AgentEvent, ConversationMessage, FilePreview, Mcp, Project, ProjectChanges, ProjectFileListing, Session } from "../domain/models";
 
 type ApiEnvelope<T> = { data?: T; error?: { message?: string; code?: string } };
@@ -67,24 +67,31 @@ function readNativeContext(projectId:string,sessionId:string){
 }
 
 export const api = {
-  getSessionMemory: (projectId:string,sessionId:string) => request<SessionMemoryView>(`/api/projects/${projectId}/sessions/${sessionId}/memory`),
-  changeSessionMemory: (projectId:string,sessionId:string,action:string,etag:string,body:unknown,signal?:AbortSignal) => request<SessionMemoryView>(`/api/projects/${projectId}/sessions/${sessionId}/memory/${action}`, {...mutation(action === "context" || action === "draft" ? "PATCH" : "POST",body), signal, headers:{...jsonHeaders,"if-match":etag}}),
   getNativeContext: readNativeContext,
-  compactNativeContext: (projectId:string,sessionId:string) => request<NativeContextInspection>(`/api/projects/${projectId}/sessions/${sessionId}/compact`,mutation("POST")),
-  cancelNativeCompaction: (projectId:string,sessionId:string) => request<NativeContextInspection>(`/api/projects/${projectId}/sessions/${sessionId}/compact/cancel`,mutation("POST")),
-  listSessionMemoryTemplates: () => request<Array<{sessionMemory:SessionMemory;writeETag:string}>>("/api/session-memory-templates"),
-  saveSessionMemoryTemplate: (id:string|null,etag:string|null,body:unknown) => request<SessionMemory>(id ? `/api/session-memory-templates/${id}` : "/api/session-memory-templates", {...mutation(id ? "PATCH" : "POST",body),headers:{...jsonHeaders,...(etag ? {"if-match":etag}:{})}}),
+  sessionModels: (projectId:string,id:string,leaseId?:string) => request<SessionModelView>(`/api/projects/${projectId}/sessions/${id}/models`,{headers:leaseId?{"x-session-lease-id":leaseId}:{}}),
+  switchSessionModel: (projectId:string,id:string,provider:string,modelId:string,leaseId:string,thinkingLevel?:import('../../src/domain/session-tools').SessionThinkingLevel) => request<SessionModelView>(`/api/projects/${projectId}/sessions/${id}/model`,{...mutation("PUT",{provider,modelId,thinkingLevel}),headers:{...jsonHeaders,"x-session-lease-id":leaseId}}),
+  forkSession: (projectId:string,id:string,entryId:string) => request<Session>(`/api/projects/${projectId}/sessions/${id}/fork`,mutation("POST",{entryId})),
+  recoverSession: (projectId:string,id:string,operationId:string,action:string) => request<RecoveryView>(`/api/projects/${projectId}/sessions/${id}/recover`,mutation("POST",{operationId,action})),
+  exportSession: async (projectId:string,id:string,format:"html"|"jsonl",scope:"tree"|"branch") => {
+    const response=await fetch(`/api/projects/${projectId}/sessions/${id}/export?format=${format}&scope=${scope}`,{cache:"no-store"});
+    if(!response.ok){const body=await response.json().catch(()=>({}));throw new Error(body.error?.message??"导出失败");}
+    const blob=await response.blob(),length=response.headers.get("content-length");
+    if(length!==null&&blob.size!==Number(length))throw new Error("下载不完整，请重试");
+    const url=URL.createObjectURL(blob),anchor=document.createElement("a");anchor.href=url;anchor.download=`${id}-${scope}.${format}`;anchor.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+  },
+  compactNativeContext: async (projectId:string,sessionId:string,leaseId?:string) => (await request<{inspection:NativeContextInspection}>(`/api/projects/${projectId}/sessions/${sessionId}/compact`,{...mutation("POST"),headers:{...jsonHeaders,"x-session-lease-id":leaseId??""}})).inspection,
+  cancelNativeCompaction: async (projectId:string,sessionId:string) => (await request<{inspection:NativeContextInspection}>(`/api/projects/${projectId}/sessions/${sessionId}/compact/cancel`,mutation("POST"))).inspection,
   listProjects: () => request<Project[]>("/api/projects"),
   getProject: (id: string) => request<Project>(`/api/projects/${id}`),
   createProject: (body: Record<string, unknown>) => request<Project>("/api/projects", mutation("POST", body)),
-  updateProject: (id: string, body: Record<string, unknown>) => request<Project>(`/api/projects/${id}`, mutation("PATCH", body)),
-  deleteProject: (id: string) => request<{ deleted: boolean }>(`/api/projects/${id}`, mutation("DELETE")),
+  updateProject: (id: string, body: Record<string, unknown>,etag?:string) => request<Project>(`/api/projects/${id}`, {...mutation("PATCH", body),headers:{...jsonHeaders,"if-match":etag??""}}),
+  deleteProject: (id: string,etag?:string) => request<{ deleted: boolean }>(`/api/projects/${id}`, {...mutation("DELETE"),headers:{"if-match":etag??""}}),
   prepareAgent:(body:Record<string,unknown>,signal:AbortSignal)=>request<{suggestedStatus?:"active"|"disabled";name:string;description:string|null;definition:import("../domain/models").AgentDefinition;warnings:string[];sources:Array<{path:string;hash:string}>}>("/api/agents/prepare",{...mutation("POST",body),signal}),
   listAgents: () => request<Agent[]>("/api/agents"),
   getAgent: (id: string) => request<Agent>(`/api/agents/${id}`),
   createAgent: (body: Record<string, unknown>,signal?:AbortSignal) => request<Agent>("/api/agents", {...mutation("POST", body),signal}),
-  updateAgent: (id: string, body: Record<string, unknown>,signal?:AbortSignal) => request<Agent>(`/api/agents/${id}`,  {...mutation("PATCH", body),signal,headers:{...jsonHeaders,"if-match":String(body.writeETag??'')}}),
-  deleteAgent: (id: string) => request<{ deleted: boolean; archived:boolean }>(`/api/agents/${id}`, mutation("DELETE")),
+  updateAgent: (id: string, body: Record<string, unknown>,signal?:AbortSignal) => request<Agent>(`/api/agents/${id}`,  {...mutation("PATCH", Object.fromEntries(Object.entries(body).filter(([key])=>key!=="writeETag"))),signal,headers:{...jsonHeaders,"if-match":String(body.writeETag??'')}}),
+  deleteAgent: (id: string,etag?:string) => request<{ deleted: boolean; archived:boolean }>(`/api/agents/${id}`,{...mutation("DELETE"),headers:{"if-match":etag??""}}),
   listMcps: () => request<Mcp[]>("/api/mcps"),
   getMcp: (id: string) => request<Mcp>(`/api/mcps/${id}`),
   createMcp: (body: Record<string, unknown>) => request<Mcp>("/api/mcps", mutation("POST", body)),

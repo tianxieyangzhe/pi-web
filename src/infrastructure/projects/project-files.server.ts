@@ -1,249 +1,72 @@
-import { execFileSync } from "node:child_process";
-import fs from "node:fs";
-import path from "node:path";
-import { DomainError } from "@/domain/errors";
-import { projectRepository } from "@/infrastructure/database/project-repository.server";
-import type { ProjectMessageReference } from "@/domain/message-references";
-
-export type GitFileStatus =
-  | "added"
-  | "modified"
-  | "deleted"
-  | "renamed"
-  | "untracked"
-  | "conflicted";
-
-export type ProjectFileEntry = {
-  path: string;
-  parentPath: string;
-  name: string;
-  type: "file" | "directory";
-  gitStatus?: GitFileStatus;
-};
-
-export type ProjectChanges = {
-  isGitRepository: boolean;
-  status: string;
-  workingPatch: string;
-  stagedPatch: string;
-};
-
-const ignoredDirectories = new Set([
-  ".git",
-  ".next",
-  ".turbo",
-  "coverage",
-  "dist",
-  "build",
-  "node_modules",
-]);
-const sensitiveNames = [
-  /^\.env(?:\.|$)/i,
-  /^\.(?:ssh|aws|codex)$/i,
-  /^\.npmrc$/i,
-  /^\.pypirc$/i,
-  /^credentials?\./i,
-  /^id_(?:rsa|dsa|ecdsa|ed25519)/i,
-];
-const maxDirectoryEntries = 1000;
-const maxPreviewBytes = 512 * 1024;
-const maxDiffBytes = 1024 * 1024;
-
-function projectRoot(projectId: string): string {
-  const project = projectRepository.get(projectId);
-  if (!project) throw new DomainError("NOT_FOUND", "项目不存在", 404, true);
-  if (project.status !== "active") {
-    throw new DomainError("PROJECT_UNAVAILABLE", "项目当前不可用", 409, true);
-  }
-  try {
-    return fs.realpathSync(project.rootPath);
-  } catch {
-    throw new DomainError("PROJECT_UNAVAILABLE", "项目路径当前不可用", 409, true);
-  }
-}
-
-function isSensitive(relativePath: string): boolean {
-  return relativePath
-    .split(path.sep)
-    .some((part) => sensitiveNames.some((pattern) => pattern.test(part)));
-}
-
-function safePath(root: string, relativePath: string): string {
-  if (!relativePath || path.isAbsolute(relativePath)) {
-    throw new DomainError("INVALID_PATH", "文件路径无效", 400, true);
-  }
-  const requested = path.resolve(root, relativePath);
-  if (isSensitive(path.relative(root, requested))) throw new DomainError("SENSITIVE_FILE", "敏感文件不能预览", 403);
-  if (requested !== root && !requested.startsWith(`${root}${path.sep}`)) {
-    throw new DomainError("PATH_OUTSIDE_PROJECT", "文件路径超出项目目录", 403);
-  }
-  let actual: string;
-  try {
-    actual = fs.realpathSync(requested);
-  } catch {
-    throw new DomainError("NOT_FOUND", "文件不存在", 404, true);
-  }
-  if (actual !== root && !actual.startsWith(`${root}${path.sep}`)) {
-    throw new DomainError("PATH_OUTSIDE_PROJECT", "符号链接指向项目目录之外", 403);
-  }
-  if (isSensitive(path.relative(root, actual))) {
-    throw new DomainError("SENSITIVE_FILE", "敏感文件不能预览", 403);
-  }
+import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
+import { DomainError } from '@/domain/errors';
+import { projectRepository } from '@/infrastructure/database/project-repository.server';
+import type { ProjectMessageReference } from '@/domain/message-references';
+export type GitFileStatus='added'|'modified'|'deleted'|'renamed'|'untracked'|'conflicted';
+export type ProjectFileEntry={path:string;parentPath:string;name:string;type:'file'|'directory';gitStatus?:GitFileStatus};
+export type ProjectChanges={isGitRepository:boolean;status:string;workingPatch:string;stagedPatch:string;truncated:boolean};
+import {isProjectPathForbidden as forbidden} from './project-file-policy';
+const inside=(root:string,target:string)=>target===root||target.startsWith(root.endsWith(path.sep)?root:root+path.sep);
+function projectRoot(id:string){const project=projectRepository.get(id);if(!project)throw new DomainError('NOT_FOUND','项目不存在',404,true);try{return fs.realpathSync(project.rootPath);}catch{throw new DomainError('ROOT_UNAVAILABLE','项目目录当前不可用',409,true);}}
+export function resolveProjectFile(root:string,relative:string,allowRoot=false){
+  if(relative.includes('\0')||path.isAbsolute(relative)||relative.split(/[\\/]/).includes('..'))throw new DomainError('PATH_OUTSIDE_PROJECT','路径越出项目范围',403,true);
+  if(!relative&&!allowRoot)throw new DomainError('INVALID_FILE','请选择文件',400,true);
+  if(forbidden(relative))throw new DomainError('FILE_FORBIDDEN','此文件或目录不可读取',403,true);
+  const requested=path.resolve(root,relative);if(!inside(root,requested))throw new DomainError('PATH_OUTSIDE_PROJECT','路径越出项目范围',403,true);
+  let actual:string;try{actual=fs.realpathSync(requested);}catch{throw new DomainError('NOT_FOUND','文件或目录不存在',404,true);}
+  if(!inside(root,actual))throw new DomainError('PATH_OUTSIDE_PROJECT','符号链接越出项目范围',403,true);
+  if(forbidden(path.relative(root,actual)))throw new DomainError('FILE_FORBIDDEN','此文件或目录不可读取',403,true);
   return actual;
 }
-
-function safeDirectory(root: string, relativePath: string): string {
-  if (!relativePath) return root;
-  const absolute = safePath(root, relativePath);
-  if ([relativePath, path.relative(root, absolute)].some(value => value.split(/[\\/]/).some(part => ignoredDirectories.has(part)))) throw new DomainError("INVALID_PATH", "目录不可访问", 403, true);
-  if (!fs.statSync(absolute).isDirectory()) {
-    throw new DomainError("INVALID_PATH", "路径不是目录", 400, true);
-  }
-  return absolute;
+export function readProjectBytes(root:string,relative:string,limit:number){
+  let fd:number|undefined;
+  try{
+    const target=resolveProjectFile(root,relative);fd=fs.openSync(target,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW|fs.constants.O_NONBLOCK);
+    const before=fs.fstatSync(fd),verified=fs.statSync(resolveProjectFile(root,relative));
+    if(before.dev!==verified.dev||before.ino!==verified.ino)throw new DomainError('FILE_CHANGED','文件发生变化，请重试',409,true);
+    if(!before.isFile())throw new DomainError('INVALID_FILE','只能读取普通文件',400,true);
+    if(before.size>limit)throw new DomainError('FILE_TOO_LARGE','文件超过容量上限',413,true);
+    const buffer=Buffer.alloc(before.size);let offset=0;
+    while(offset<buffer.length){const n=fs.readSync(fd,buffer,offset,buffer.length-offset,offset);if(!n)break;offset+=n;}
+    const after=fs.fstatSync(fd),resolved=fs.statSync(resolveProjectFile(root,relative));
+    if(offset!==before.size||after.size!==before.size||after.mtimeMs!==before.mtimeMs||after.ctimeMs!==before.ctimeMs||resolved.dev!==before.dev||resolved.ino!==before.ino)throw new DomainError('FILE_CHANGED','文件发生变化，请重试',409,true);
+    return buffer;
+  }catch(error){if(error instanceof DomainError)throw error;throw new DomainError('FILE_READ_FAILED','无法完整读取文件',500,true);}
+  finally{if(fd!==undefined)fs.closeSync(fd);}
 }
-
-function gitStatuses(root: string): Map<string, GitFileStatus> {
-  const statuses = new Map<string, GitFileStatus>();
-  try {
-    const output = execFileSync(
-      "git",
-      ["-C", root, "status", "--porcelain=v1", "-z", "--untracked-files=all"],
-      { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
-    );
-    const records = output.split("\0");
-    for (let index = 0; index < records.length; index += 1) {
-      const record = records[index];
-      if (!record || record.length < 4) continue;
-      const code = record.slice(0, 2);
-      const filePath = record.slice(3);
-      const status = code === "??"
-        ? "untracked"
-        : code.includes("U")
-          ? "conflicted"
-          : code.includes("R") || code.includes("C")
-            ? "renamed"
-            : code.includes("A")
-              ? "added"
-              : code.includes("D")
-                ? "deleted"
-                : code.includes("M") || code.includes("T")
-                  ? "modified"
-                  : undefined;
-      if (status) statuses.set(filePath, status);
-      if (code.includes("R") || code.includes("C")) index += 1;
-    }
-  } catch {
-    // Non-git projects have no status overlay.
-  }
-  return statuses;
+function git(root:string,args:string[],maxBuffer=1024*1024,allowNotRepository=false){
+  const result=spawnSync('git',['--no-optional-locks','-c','core.fsmonitor=false','-C',root,...args],{encoding:'buffer',timeout:10000,maxBuffer,stdio:['ignore','pipe','pipe'],env:{...process.env,LC_ALL:'C',GIT_OPTIONAL_LOCKS:'0',GIT_EXTERNAL_DIFF:''}});
+  if(result.error&&(result.error as NodeJS.ErrnoException).code==='ETIMEDOUT')throw new DomainError('GIT_TIMEOUT','读取Git状态超时',504,true);
+  if(allowNotRepository&&!result.error&&result.status===128&&/not a git repository/.test(result.stderr?.toString()??''))return {bytes:Buffer.from('false'),truncated:false};
+  const truncated=!!result.error&&(result.error as NodeJS.ErrnoException).code==='ENOBUFS';
+  if(!truncated&&(result.error||result.status!==0))throw new DomainError('GIT_READ_FAILED','无法读取Git状态',500,true);
+  return {bytes:result.stdout??Buffer.alloc(0),truncated};
 }
-
-export function readProjectReference(reference: ProjectMessageReference): {name: string; data: string} {
-  const resolve = () => {
-    const root = projectRoot(reference.projectId);
-    const absolute = safePath(root, reference.path);
-    if ([reference.path, path.relative(root, absolute)].some(value => value.split(/[\\/]/).some(part => ignoredDirectories.has(part)))) throw new DomainError("INVALID_PATH", "参考文件位于不可访问目录", 403, true);
-    return absolute;
-  };
-  let fd: number | undefined;
-  try {
-    const absolute = resolve();
-    fd = fs.openSync(absolute, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
-    const stat = fs.fstatSync(fd);
-    const checked = resolve();
-    const checkedStat = fs.statSync(checked);
-    if (checked !== absolute || stat.dev !== checkedStat.dev || stat.ino !== checkedStat.ino) throw new DomainError("FILE_CHANGED", "参考文件路径发生变化，请重试", 409, true);
-    if (!stat.isFile()) throw new DomainError("INVALID_FILE", "只能选择普通文件", 400, true);
-    if (stat.size > 2 * 1024 * 1024) throw new DomainError("FILE_TOO_LARGE", "参考文件超过容量限制", 413, true);
-    const buffer = Buffer.alloc(stat.size);
-    let offset = 0;
-    while (offset < buffer.length) { const n = fs.readSync(fd, buffer, offset, buffer.length - offset, offset); if (!n) break; offset += n; }
-    const after = fs.fstatSync(fd);
-    if (offset !== stat.size || after.size !== stat.size || after.mtimeMs !== stat.mtimeMs || after.ctimeMs !== stat.ctimeMs) throw new DomainError("FILE_CHANGED", "参考文件发生变化，请重试", 409, true);
-    return { name: path.basename(absolute), data: buffer.toString("base64") };
-  } catch (error) {
-    if (error instanceof DomainError) throw error;
-    throw new DomainError("REFERENCE_READ_FAILED", "无法读取参考文件，请检查后重试", 409, true);
-  } finally { if (fd !== undefined) fs.closeSync(fd); }
-}
-
-export const projectFiles = {
-  list(projectId: string, directoryPath = "") {
-    const root = projectRoot(projectId);
-    const directory = safeDirectory(root, directoryPath);
-    const statuses = gitStatuses(root);
-    const children = fs
-      .readdirSync(directory, { withFileTypes: true })
-      .filter(
-        (entry) =>
-          !entry.isSymbolicLink() &&
-          !ignoredDirectories.has(entry.name) &&
-          !sensitiveNames.some((pattern) => pattern.test(entry.name)),
-      )
-      .sort(
-        (left, right) =>
-          Number(right.isDirectory()) - Number(left.isDirectory()) ||
-          left.name.localeCompare(right.name, "en", {
-            numeric: true,
-            sensitivity: "base",
-          }),
-      );
-    const entries = children.slice(0, maxDirectoryEntries).map((child) => {
-      const relative = path.relative(root, path.join(directory, child.name));
-      return {
-        path: relative,
-        parentPath: directoryPath,
-        name: child.name,
-        type: child.isDirectory() ? "directory" as const : "file" as const,
-        ...(statuses.get(relative) ? { gitStatus: statuses.get(relative) } : {}),
-      };
-    });
-    return {
-      entries,
-      isGitRepository: fs.existsSync(path.join(root, ".git")),
-      truncated: children.length > maxDirectoryEntries,
-    };
+function gitRepository(root:string){return git(root,['rev-parse','--is-inside-work-tree'],4096,true).bytes.toString().trim()==='true';}
+function gitMetadata(root:string){for(let current=root;;current=path.dirname(current)){if(fs.existsSync(path.join(current,'.git')))return true;if(path.dirname(current)===current)return false;}}
+function statusMap(bytes:Buffer){const result=new Map<string,GitFileStatus>(),records=bytes.toString('utf8').split('\0');for(let i=0;i<records.length;i++){const record=records[i];if(record.length<4)continue;const code=record.slice(0,2),name=record.slice(3);const status:GitFileStatus=code==='??'?'untracked':code.includes('U')||['AA','DD'].includes(code)?'conflicted':/[RC]/.test(code)?'renamed':code.includes('A')?'added':code.includes('D')?'deleted':'modified';result.set(name,status);if(/[RC]/.test(code))i++;}return result;}
+function utf8Prefix(bytes:Buffer,limit:number){const valid=Buffer.from(bytes.toString('utf8'));let end=Math.min(valid.length,Math.max(0,limit));while(end>0){try{return new TextDecoder('utf-8',{fatal:true}).decode(valid.subarray(0,end));}catch{end--;}}return '';}
+export function readProjectReference(reference:ProjectMessageReference){const root=projectRoot(reference.projectId);return {name:path.basename(reference.path),data:readProjectBytes(root,reference.path,2*1024*1024).toString('base64')};}
+export const projectFiles={
+  list(projectId:string,relative=''){
+    const root=projectRoot(projectId),directory=resolveProjectFile(root,relative,true),before=fs.statSync(directory);
+    if(!before.isDirectory())throw new DomainError('INVALID_DIRECTORY','路径不是目录',400,true);
+    const children=fs.readdirSync(directory,{withFileTypes:true}).filter(entry=>!forbidden(entry.name)&&!entry.isSymbolicLink()).sort((a,b)=>Number(b.isDirectory())-Number(a.isDirectory())||(a.name<b.name?-1:a.name>b.name?1:0));
+    const after=fs.statSync(resolveProjectFile(root,relative,true));if(after.dev!==before.dev||after.ino!==before.ino||after.mtimeMs!==before.mtimeMs)throw new DomainError('FILE_CHANGED','目录发生变化，请重试',409,true);
+    let repository=gitMetadata(root),gitState:'available'|'not_repository'|'unavailable'='unavailable',statuses=new Map<string,GitFileStatus>();
+    try{repository=gitRepository(root);gitState=repository?'available':'not_repository';}catch{}
+    if(repository&&gitState==='available')try{const status=git(root,['status','--porcelain=v1','-z','--untracked-files=all']);if(status.truncated)gitState='unavailable';else statuses=statusMap(status.bytes);}catch{gitState='unavailable';}
+    const entries=children.slice(0,2000).map(child=>{const file=path.relative(root,path.join(directory,child.name));return {path:file,parentPath:relative,name:child.name,type:child.isDirectory()?'directory' as const:'file' as const,...(statuses.has(file)?{gitStatus:statuses.get(file)}:{})};});
+    return {path:relative,entries,isGitRepository:repository,gitState,truncated:children.length>2000};
   },
-
-  read(projectId: string, relativePath: string) {
-    const root = projectRoot(projectId);
-    const absolute = safePath(root, relativePath);
-    const stat = fs.statSync(absolute);
-    if (!stat.isFile()) throw new DomainError("INVALID_FILE", "只能预览普通文件", 400, true);
-    if (stat.size > maxPreviewBytes) {
-      throw new DomainError("FILE_TOO_LARGE", "文件超过 512 KiB，不能预览", 413, true);
-    }
-    const buffer = fs.readFileSync(absolute);
-    if (buffer.includes(0)) {
-      throw new DomainError("BINARY_FILE", "二进制文件不能预览", 415, true);
-    }
-    return { path: relativePath, content: buffer.toString("utf8"), size: stat.size };
-  },
-
-  changes(projectId: string) {
-    const root = projectRoot(projectId);
-    if (!fs.existsSync(path.join(root, ".git"))) {
-      return { isGitRepository: false, status: "", workingPatch: "", stagedPatch: "" } satisfies ProjectChanges;
-    }
-    try {
-      const status = execFileSync(
-        "git",
-        ["-C", root, "status", "--short", "--untracked-files=all"],
-        { encoding: "utf8", maxBuffer: maxDiffBytes, stdio: ["ignore", "pipe", "ignore"] },
-      );
-      const working = execFileSync(
-        "git",
-        ["-C", root, "diff", "--no-ext-diff", "--no-color"],
-        { encoding: "utf8", maxBuffer: maxDiffBytes, stdio: ["ignore", "pipe", "ignore"] },
-      );
-      const staged = execFileSync(
-        "git",
-        ["-C", root, "diff", "--cached", "--no-ext-diff", "--no-color"],
-        { encoding: "utf8", maxBuffer: maxDiffBytes, stdio: ["ignore", "pipe", "ignore"] },
-      );
-      return { isGitRepository: true, status, workingPatch: working, stagedPatch: staged } satisfies ProjectChanges;
-    } catch {
-      throw new DomainError("GIT_READ_FAILED", "无法读取项目变更，或变更内容超过 1 MiB", 422, true);
-    }
+  read(projectId:string,relative:string){const buffer=readProjectBytes(projectRoot(projectId),relative,512*1024);let content:string;try{if(buffer.includes(0))throw Error();content=new TextDecoder('utf-8',{fatal:true}).decode(buffer);}catch{throw new DomainError('BINARY_FILE','只支持UTF-8文本预览',415,true);}return {path:relative,content,size:buffer.length};},
+  changes(projectId:string):ProjectChanges{
+    const root=projectRoot(projectId);if(!gitRepository(root))return {isGitRepository:false,status:'',workingPatch:'',stagedPatch:'',truncated:false};
+    const results=[git(root,['status','--porcelain=v1','--untracked-files=all']),git(root,['diff','--no-ext-diff','--no-textconv','--no-color']),git(root,['diff','--cached','--no-ext-diff','--no-textconv','--no-color'])];
+    let remaining=1024*1024,truncated=results.some(result=>result.truncated);
+    const [status,workingPatch,stagedPatch]=results.map(result=>{if(Buffer.byteLength(result.bytes.toString('utf8'))>remaining)truncated=true;const text=utf8Prefix(result.bytes,remaining);remaining-=Buffer.byteLength(text);return text;});
+    return {isGitRepository:true,status,workingPatch,stagedPatch,truncated};
   },
 };

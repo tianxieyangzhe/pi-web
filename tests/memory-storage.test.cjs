@@ -1,4 +1,4 @@
-require('./register.cjs');const {test}=require('node:test'),assert=require('node:assert/strict'),D=require('better-sqlite3');const {mkdtempSync}=require('node:fs'),{join}=require('node:path'),{tmpdir}=require('node:os'),{spawnSync}=require('node:child_process');const {targetSchema}=require('../src/infrastructure/database/schema.server.ts');
+require('./register.cjs');const {test}=require('node:test'),assert=require('node:assert/strict'),D=require('better-sqlite3');const {mkdtempSync}=require('node:fs'),{join}=require('node:path'),{tmpdir}=require('node:os'),{spawnSync}=require('node:child_process');const targetSchema=require('./fixtures/legacy-schema.cjs');
 test('explicit storage rename preserves confirmed and draft memory and exclusive binding',()=>{
  const file=join(mkdtempSync(join(tmpdir(),'memory-rename-')),'test.sqlite'),db=new D(file);db.exec(targetSchema);db.exec("DROP TRIGGER session_role_insert");
  const empty=JSON.stringify({summary:'keep this',goal:'',constraints:[],facts:[],decisions:[],nextActions:[],outputs:[]});

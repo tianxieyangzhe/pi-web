@@ -21,7 +21,7 @@ export function useWorkspaceState() {
 
   async function saveResource(kind: "project" | "agent" | "mcp", id: string | null, body: Record<string, unknown>) {
     try {
-      if (kind === "project") id ? await api.updateProject(id, body) : await api.createProject(body);
+      if (kind === "project") id ? await api.updateProject(id, body, projects.find(p=>p.id===id)?.writeETag) : await api.createProject(body);
       if (kind === "agent") id ? await api.updateAgent(id, body) : await api.createAgent(body);
       if (kind === "mcp") id ? await api.updateMcp(id, body) : await api.createMcp(body);
       await reload();
@@ -29,8 +29,8 @@ export function useWorkspaceState() {
   }
   async function deleteResource(kind: "project" | "agent" | "mcp", id: string) {
     try {
-      if (kind === "project") await api.deleteProject(id);
-      if (kind === "agent") await api.deleteAgent(id);
+      if (kind === "project") await api.deleteProject(id, projects.find(p=>p.id===id)?.writeETag);
+      if (kind === "agent") await api.deleteAgent(id, agents.find(p=>p.id===id)?.writeETag);
       if (kind === "mcp") await api.deleteMcp(id);
       await reload();
     } catch (cause) { setError(cause instanceof Error ? cause.message : "无法删除资源"); }

@@ -7,7 +7,6 @@ import type { ProjectRepositoryPort } from "@/application/ports/catalog";
 import type { PiRuntimePort, SessionRuntimeInput } from "@/application/ports/pi-runtime";
 
 import { sessionLocks as locks, acquireSession,acquireProjectWrite,projectWriteRoots } from "./session-lock";
-import type { SessionMemoryRepositoryPort } from "./ports/session-memory";
 import { createProjectMessageTiming } from "./project-message-timing";
 import { parseMessageReferences, type ProjectMessageReference } from "@/domain/message-references";
 
@@ -41,12 +40,10 @@ export function createSessionExecutionService(dependencies: {
   projects: ProjectRepositoryPort;
   readProjectReference?: (reference: ProjectMessageReference) => { name: string; data: string };
   runtime: PiRuntimePort;
-  sessionMemories: SessionMemoryRepositoryPort;
-  onCompleted?: (sessionId: string) => void;
+  openHistory?:import('./ports/session-open-history').SessionOpenHistory;
   assertSessionAllowed?: (sessionId:string)=>void;
   coordinatorExecutionIds?: (sessionId:string)=>ReadonlySet<string>;
   backgroundInUse?: (sessionId: string) => boolean;
-  memoryBusy?: (sessionId: string) => boolean;
 }) {
   const { sessions, catalog, projects, runtime } = dependencies;
   const controls = new Map<string, {
@@ -57,7 +54,7 @@ export function createSessionExecutionService(dependencies: {
     complete: () => void;
   }>();
 
-  const deleting = new Set<string>();
+  const deleting = new Set<string>(),closing=new Set<string>();
   const openings = new Map<string, Promise<object | null>>();
   const leases = new Map<string, { sessionId: string; expires: number }>();
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -99,7 +96,7 @@ export function createSessionExecutionService(dependencies: {
   const observed = new Map<string, { handle: object; unsubscribe: () => void }>();
   const events = new SessionEvents({ assertLease, renew: (id, leaseId) => {
     assertLease(id, leaseId); leases.get(leaseId)!.expires = Date.now() + 120_000; schedule(id);
-  }, release: (id, leaseId) => { if (leases.get(leaseId)?.sessionId === id) { leases.delete(leaseId); schedule(id); } } });
+  }, release: (id, leaseId) => { if (leases.get(leaseId)?.sessionId === id) { leases.delete(leaseId); schedule(id); } } },undefined,id=>({running:controls.has(id),compacting:!controls.has(id)&&locks.has(id)}));
   function observe(id: string, handle: object) {
     if (observed.get(id)?.handle === handle) return;
     observed.get(id)?.unsubscribe();
@@ -147,12 +144,14 @@ export function createSessionExecutionService(dependencies: {
 
   return {
     referenceContractVersion: 6,
-    async open(sessionId: string, key: string) {
-      if (deleting.has(sessionId)) throw new DomainError('SESSION_BUSY', '会话正在删除', 409, true);
+    hasLease,
+    async open(sessionId: string, key: string, readOnly = false) {
+      if (deleting.has(sessionId)||closing.has(sessionId)) throw new DomainError('SESSION_BUSY', '会话正在关闭或删除', 409, true);
       session(sessionId);
       const now = Date.now();
       for (const [storedKey, record] of idempotency) if (record.expires <= now) idempotency.delete(storedKey);
-      const existing = idempotency.get(key);
+      const scopedKey = sessionId + ":" + key;
+      const existing = idempotency.get(scopedKey);
       if (existing) { if (existing.sessionId !== sessionId) throw new DomainError("IDEMPOTENCY_CONFLICT", "幂等键已用于其他会话", 409, true); return existing.promise; }
       clearTimer(sessionId);
       const promise = (async () => {
@@ -160,40 +159,58 @@ export function createSessionExecutionService(dependencies: {
         if (!opening) {
           opening = (async () => {
             const value = session(sessionId);
-            if (value.state === "ended" || value.endedAt) {
-              if (!value.nativeRef) throw new DomainError("NO_NATIVE_REF", "已结束会话没有原生历史", 409, true);
+            if (readOnly) {
+              if (!value.nativeRef) throw new DomainError("NO_NATIVE_REF", "会话没有原生历史", 409, true);
               if (!runtime.readTree) throw new DomainError("SESSION_TREE_READ_FAILED", "原生树读取不可用", 500, true);
               const project = projects.get(value.projectId); if (!project) throw new DomainError("NOT_FOUND", "项目不存在", 404, true);
               await runtime.readTree({ session: value, workingDirectory: project.rootPath, allowProjectWrite: false }); return null;
             }
-            const live = runtime.getHandle(sessionId); if (live) return live;
+            const live = runtime.getHandle(sessionId);
+            if (live) {
+              if(controls.has(sessionId)||locks.has(sessionId)||runtime.isBusy?.(live))return live;
+              acquireSession(sessionId);
+              try {await runtime.refreshModel?.(live);sessions.updateRuntime(sessionId,{state:'idle'});return live;}
+              catch(error){if(error instanceof DomainError&&['MODEL_NOT_FOUND','MODEL_UNAVAILABLE'].includes(error.code)){sessions.updateRuntime(sessionId,{state:'unavailable'});return null;}throw error;}
+              finally{locks.delete(sessionId);}
+            }
+            acquireSession(sessionId);
+            try{
             const input = { ...runtimeInput(value, true), projectSession: true };
-            if (value.nativeRef) return runtime.restore(input);
+            if (value.nativeRef) {
+              try { return await runtime.restore(input); }
+              catch(error) { if(error instanceof DomainError && ["MODEL_NOT_FOUND","MODEL_UNAVAILABLE"].includes(error.code)) { sessions.updateRuntime(sessionId,{state:"unavailable"}); return null; } throw error; }
+            }
             if (!runtime.initializeProject) throw new DomainError("RUNTIME_ERROR", "项目初始化不可用", 503, true);
-            return runtime.initializeProject(input, ref => {
+            return await runtime.initializeProject(input, ref => {
               const updated = sessions.setNativeRefIfAbsent(sessionId, ref);
-              if (!updated?.nativeRef || updated.endedAt) throw new DomainError("NO_NATIVE_REF", "无法保存原生 Session 身份", 409, true);
+              if (!updated?.nativeRef) throw new DomainError("NO_NATIVE_REF", "无法保存原生 Session 身份", 409, true);
               return updated.nativeRef;
             });
+            }finally{locks.delete(sessionId);}
           })().finally(() => openings.delete(sessionId));
           openings.set(sessionId, opening);
         }
         const handle = await opening;
         if (handle) observe(sessionId, handle);
+        const openedSession=session(sessionId);dependencies.openHistory?.record({scope:'project',ownerId:openedSession.projectId,sessionId});
         const leaseId = crypto.randomUUID(); leases.set(leaseId, { sessionId, expires: Date.now() + 120_000 }); schedule(sessionId);
-        return { leaseId, status: controls.has(sessionId) || handle && runtime.isBusy?.(handle) ? "running" : "ready", outcome: lastTimeouts.has(sessionId) ? "SESSION_BACKGROUND_TIMEOUT" : null };
+        return { leaseId, status: !handle ? "unavailable" : controls.has(sessionId) || handle && runtime.isBusy?.(handle) ? "running" : "ready", outcome: lastTimeouts.has(sessionId) ? "SESSION_BACKGROUND_TIMEOUT" : null };
       })();
-      idempotency.set(key, { sessionId, promise, expires: now + 600_000 });
-      try { return await promise; } catch (error) { idempotency.delete(key); schedule(sessionId); throw error; }
+      idempotency.set(scopedKey, { sessionId, promise, expires: now + 600_000 });
+      try { return await promise; } catch (error) { idempotency.delete(scopedKey); schedule(sessionId); throw error; }
     },
     events,
-    accept(sessionId: string, instruction: string, references?: unknown) {
+    accept(sessionId: string, instruction: string, references?: unknown, onSettled?: (error?: unknown) => void) {
       const source = this.send(sessionId, instruction, undefined, references);
       void (async () => {
+        let failure:unknown;
         for await (const event of source) {
-          if (event.type !== "pi_event" && event.type !== "entry_link") events.agent(sessionId, event);
+          if(event.type === "error") failure = new DomainError(event.code,event.message,409,true);
+          if (!["pi_event","entry_link","complete","error"].includes(event.type)) events.agent(sessionId, event);
         }
-      })().catch(() => events.agent(sessionId, { type: "error", code: "STREAM_ERROR", message: "无法完成会话事件同步，请重新读取历史", recoverable: true }));
+        onSettled?.(failure);
+        events.agent(sessionId, failure instanceof DomainError ? {type:"error",code:failure.code,message:failure.message,recoverable:true} : {type:"complete"});
+      })().catch(error => { onSettled?.(error); events.agent(sessionId, { type: "error", code: "STREAM_ERROR", message: "无法完成会话事件同步，请重新读取历史", recoverable: true }); });
       return { accepted: true, sessionId };
     },
     heartbeat(sessionId: string, leaseId: string) {
@@ -207,14 +224,9 @@ export function createSessionExecutionService(dependencies: {
       const value = session(sessionId);
       operation ??= 'project_write';
       dependencies.assertSessionAllowed?.(sessionId);
-      const memory = value.sessionMemoryId ? dependencies.sessionMemories.get(value.sessionMemoryId) : null;
-      if (!memory || memory.projectId !== value.projectId) {
-        throw new DomainError("MEMORY_NOT_ACTIVE", "当前会话不能执行项目任务", 409, true);
-      }
       if (locks.has(sessionId) || ["starting", "running", "interrupting"].includes(value.state)) {
         throw new DomainError("SESSION_BUSY", "项目工作线正在运行", 409, true);
       }
-      if (value.state === "ended") throw new DomainError("SESSION_ENDED", "项目工作线已结束", 409, true);
       if (value.state === "unavailable") throw new DomainError("SESSION_RESTORE_REQUIRED", "项目工作线需要先恢复", 409, true);
 
       if (!runtime.getHandle(sessionId)) throw new DomainError("RUNTIME_NOT_OPEN", "请先打开项目会话", 409, true);
@@ -267,7 +279,6 @@ export function createSessionExecutionService(dependencies: {
               sessions.updateRuntime(sessionId, { state: "idle" });
               queue.push({ type: "session_state", state: "idle" });
               queue.push({ type: "complete" });
-              setTimeout(() => dependencies.onCompleted?.(sessionId), 0);
             })
             .catch((error) => {
               const cancelled = error instanceof DomainError && error.code === "REQUEST_ABORTED";
@@ -326,8 +337,8 @@ export function createSessionExecutionService(dependencies: {
       const value = session(sessionId);
       if (value.state !== "unavailable") throw new DomainError("SESSION_NOT_UNAVAILABLE", "只有不可用的项目工作线需要恢复", 409, true);
       if (!value.nativeRef) throw new DomainError("NO_NATIVE_REF", "项目工作线没有可恢复的 Pi Session", 409, true);
-      if (!runtime.getHandle(sessionId)) throw new DomainError("RUNTIME_NOT_OPEN", "请先打开项目会话", 409, true);
-      return sessions.updateRuntime(sessionId, { state: "idle" })!;
+      acquireSession(sessionId);
+      try{const previous=runtime.getHandle(sessionId);if(previous)await runtime.close(previous);const handle=await runtime.restore({...runtimeInput(value,true),projectSession:true});observe(sessionId,handle);return sessions.updateRuntime(sessionId,{state:'idle'})!;}finally{locks.delete(sessionId);}
     },
     async messages(sessionId: string) {
       const value = session(sessionId);
@@ -340,7 +351,7 @@ export function createSessionExecutionService(dependencies: {
       const value = session(sessionId);
       if (value.projectId !== projectId) throw new DomainError('NOT_FOUND', '项目会话不存在', 404, true);
       if (value.botConversationId) throw new DomainError('SESSION_REFERENCED', '此会话关联历史 Bot，不能删除', 409, true);
-      if (openings.has(sessionId) || controls.has(sessionId) || dependencies.memoryBusy?.(sessionId) || ['starting','running','interrupting'].includes(value.state)) throw new DomainError('SESSION_BUSY', '请等待会话和记忆处理结束后删除', 409, true);
+      if (openings.has(sessionId) || controls.has(sessionId) || ['starting','running','interrupting'].includes(value.state)) throw new DomainError('SESSION_BUSY', '请等待会话操作结束后删除', 409, true);
       if (value.state === 'unavailable') throw new DomainError('REQUEST_UNKNOWN', '请先核对并恢复会话', 409, true);
       acquireSession(sessionId);
       deleting.add(sessionId);
@@ -348,9 +359,8 @@ export function createSessionExecutionService(dependencies: {
         const handle = runtime.getHandle(sessionId);
         if (handle && runtime.isBusy?.(handle)) throw new DomainError('SESSION_BUSY', '会话正在运行', 409, true);
         if (handle) await runtime.close(handle);
-        if (dependencies.memoryBusy?.(sessionId)) throw new DomainError('SESSION_BUSY', '记忆正在处理', 409, true);
         sessions.delete(projectId, sessionId);
-        observed.get(sessionId)?.unsubscribe(); observed.delete(sessionId); clearTimer(sessionId);
+        events.closeSession(sessionId);observed.get(sessionId)?.unsubscribe(); observed.delete(sessionId); clearTimer(sessionId);
         for (const [key, lease] of leases) if (lease.sessionId === sessionId) leases.delete(key);
         for (const [key, record] of idempotency) if (record.sessionId === sessionId) idempotency.delete(key);
         timeouts.delete(sessionId); lastTimeouts.delete(sessionId);
@@ -359,8 +369,15 @@ export function createSessionExecutionService(dependencies: {
     },
     async close(sessionId: string) {
       if(openings.has(sessionId) || locks.has(sessionId))throw new DomainError("SESSION_BUSY","Session 正在打开、回答或压缩",409,true);
-      const handle = runtime.getHandle(sessionId);
-      if (handle) await runtime.close(handle);
+      acquireSession(sessionId);closing.add(sessionId);
+      try {
+        const handle = runtime.getHandle(sessionId);
+        if (handle) await runtime.close(handle);
+        events.closeSession(sessionId);
+        for(const [key,lease] of leases)if(lease.sessionId===sessionId)leases.delete(key);
+        for(const [key,record] of idempotency)if(record.sessionId===sessionId)idempotency.delete(key);
+        clearTimer(sessionId);observed.get(sessionId)?.unsubscribe();observed.delete(sessionId);
+      } finally {closing.delete(sessionId);locks.delete(sessionId);}
     },
   };
 }

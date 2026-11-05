@@ -25,14 +25,14 @@ async function workspaceApi(request:Request,segments:string[]=[]) {
         if(action==='runtime/close'&&method==='POST'){const body=await jsonBody(request);exactKeys(body,['leaseId']);service.close(sessionId,String(body.leaseId??''));return new Response(null,{status:204});}
         if(action==='messages'&&method==='GET')return dataResponse(await service.messages(workspaceId,sessionId));
         if(action==='messages'&&method==='POST')return dataResponse(await service.accept(workspaceId,sessionId,await jsonBody(request,12*1024*1024),request.headers.get('idempotency-key')??'',request.headers.get('x-session-lease-id')??''),{status:202});
+        if(['models','model'].includes(action)&&(typeof service.models!=='function'||typeof service.switchModel!=='function'))throw new DomainError('SERVICE_RESTART_REQUIRED','模型恢复能力已更新，请重启应用服务后重试',503,true);
+        if(action==='models'&&method==='GET')return dataResponse(await service.models(workspaceId,sessionId,request.headers.get('x-session-lease-id')??''));
+        if(action==='model'&&method==='PUT')return dataResponse(await service.switchModel(workspaceId,sessionId,await jsonBody(request,65536),request.headers.get('idempotency-key')??'',request.headers.get('x-session-lease-id')??''));
         if(action==='context'&&method==='GET')return dataResponse(await service.inspect(workspaceId,sessionId));
-        if(action==='memory'&&method==='GET')return dataResponse(service.memory(workspaceId,sessionId));
-        if(action==='memory/context'&&method==='PATCH')return dataResponse(service.changeMemory(workspaceId,sessionId,await jsonBody(request),request.headers.get('if-match')??''));
         if(method==='POST') {
           const body=await emptyBody(request);
           if(action==='recover'){exactKeys(body,['action']);return dataResponse(await service.recover(workspaceId,sessionId,String(body.action)));}
           exactKeys(body,[]);
-          if(action==='memory/summarize')return dataResponse(await service.summarizeMemory(workspaceId,sessionId));
           if(action==='interrupt')return dataResponse(await service.interrupt(workspaceId,sessionId));
           if(action==='restore')return dataResponse(await service.restore(workspaceId,sessionId));
           if(action==='end')return dataResponse(await service.end(workspaceId,sessionId));

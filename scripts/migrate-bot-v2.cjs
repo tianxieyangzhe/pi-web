@@ -10,7 +10,7 @@ const {
     spawnSync
   } = require('node:child_process');
 const root = path.resolve(__dirname, '..'),
-  base = path.join(root, 'src/infrastructure/database');
+  base = path.join(__dirname, 'historical-schema');
 const schema = ['core-schema.sql', 'bot-schema.sql', 'role-schema.sql'].map(f => fs.readFileSync(path.join(base, f), 'utf8')).join('\n');
 const changed = ['agents', 'sessions', 'bots', 'bot_conversations', 'bot_tasks', 'bot_task_dependencies', 'bot_executions', 'bot_messages'];
 const reference = new Database(':memory:');

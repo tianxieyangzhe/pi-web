@@ -14,7 +14,7 @@ export function RoleDirectory({open,roles,onRefresh,onClose,onEdit}:{open:boolea
     if(!window.confirm(`删除“${role.name}”？若已有 Bot 或会话引用，将归档并保留历史版本。`))return;
     setError("");setNotice("");
     try{
-      const result=await api.deleteAgent(role.id);
+      const result=await api.deleteAgent(role.id,role.writeETag);
       await onRefresh();
       setNotice(result.archived?`“${role.name}”已归档，历史引用保留。`:`“${role.name}”已删除。`);
     }catch(cause){setError(cause instanceof Error?cause.message:"删除 Agent 失败");}

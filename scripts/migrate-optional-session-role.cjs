@@ -6,7 +6,7 @@ const {spawnSync} = require('node:child_process');
 const Database = require('better-sqlite3');
 const file = path.resolve(process.argv[2] || '.data/ai-workspace-v5.sqlite');
 const apply = process.argv.includes('--apply');
-const schema = fs.readFileSync(path.join(__dirname, '../src/infrastructure/database/role-schema.sql'), 'utf8');
+const schema = fs.readFileSync(path.join(__dirname, 'historical-schema/role-schema.sql'), 'utf8');
 const target = schema.split('\n').find(line => line.startsWith('CREATE TRIGGER session_role_insert '));
 function checkOffline() {
   for (const candidate of [file, `${file}-wal`, `${file}-shm`]) {

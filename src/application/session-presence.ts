@@ -7,6 +7,7 @@ export class SessionPresence {
   private timers = new Map<string, ReturnType<typeof setTimeout>>();
   private detachedAt = new Map<string, number>();
   constructor(private runtime: { busy: (id: string) => boolean; release: (id: string) => Promise<void>; abort: (id: string) => Promise<void> }, private now = () => performance.now()) {}
+  has(id:string) {return [...this.leases.values()].some(lease=>lease.id===id&&lease.expires>this.now());}
   open(id: string) { const leaseId = randomUUID(); this.leases.set(leaseId, { id, expires: this.now() + 120_000 }); this.detachedAt.delete(id); this.schedule(id); return leaseId; }
   assertLease = (id: string, leaseId: string) => {
     const lease = this.leases.get(leaseId);

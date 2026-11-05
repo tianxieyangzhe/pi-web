@@ -1,0 +1,82 @@
+require('./register.cjs');
+const {test}=require('node:test'),assert=require('node:assert/strict');
+const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),Module=require('node:module');
+async function modules(){const pi=await import('@earendil-works/pi-coding-agent'),ai=await import('@earendil-works/pi-ai'),original=Module._load;Module._load=function(spec,...args){if(spec==='@earendil-works/pi-coding-agent')return pi;if(spec==='@earendil-works/pi-ai')return ai;return original.call(this,spec,...args);};try{return {...require('../src/infrastructure/pi/session-artifacts.server.ts'),...require('../src/infrastructure/pi/model-config.server.ts'),...require('../src/infrastructure/pi/pi-session-runtime.server.ts'),pi,ai};}finally{Module._load=original;}}
+test('isolated Pi fork preserves raw label path, all branches export, config-only persistence and inert HTML',async()=>{
+ const {pi,persistManager,prepareFork,renderSessionExport,branchEntries}=await modules();
+ const root=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'pi-fork-export-')));
+ try{
+  const manager=pi.SessionManager.create(root,path.join(root,'source'));manager.appendModelChange('fake','one');persistManager(manager);
+  const configLeaf=manager.getLeafId(),ref=manager.getSessionFile(),before=fs.readFileSync(ref);
+  const candidate=prepareFork({header:manager.getHeader(),entries:manager.getEntries(),sessionFile:ref,cwd:root},configLeaf,path.join(root,'config-fork'));
+  const reopened=pi.SessionManager.open(candidate.sessionFile);assert.equal(reopened.getLeafId(),configLeaf);assert.notEqual(reopened.getSessionId(),manager.getSessionId());assert.deepEqual(fs.readFileSync(ref),before);
+  const user=manager.appendMessage({role:'user',content:'<script>window.pwned=1</script>\u2028 secret sk-test',timestamp:Date.now()});
+  const label=manager.appendLabelChange(user,'Original Label');const labelLeaf=manager.getLeafId();
+  manager.resetLeaf();manager.appendMessage({role:'user',content:'other branch',timestamp:Date.now()});persistManager(manager);
+  const sourceBytes=fs.readFileSync(ref),sourceLeaf=manager.getLeafId();
+  const fork=prepareFork({header:manager.getHeader(),entries:manager.getEntries(),sessionFile:ref,cwd:root},labelLeaf,path.join(root,'label-fork'));
+  const child=pi.SessionManager.open(fork.sessionFile);
+  assert.deepEqual(child.getEntries(),branchEntries(manager.getEntries(),labelLeaf));assert.equal(child.getLeafId(),labelLeaf);assert(child.getEntries().some(entry=>entry.id===label));assert.equal(manager.getLeafId(),sourceLeaf);assert.deepEqual(fs.readFileSync(ref),sourceBytes);
+  const jsonl=renderSessionExport(manager.getHeader(),manager.getEntries(),'jsonl','tree');assert.deepEqual(jsonl.trimEnd().split('\n').map(JSON.parse),[manager.getHeader(),...manager.getEntries()]);
+  const html=renderSessionExport(manager.getHeader(),manager.getEntries(),'html','tree');assert(!/<script\b/i.test(html));assert(html.includes('&lt;script&gt;window.pwned=1&lt;/script&gt;'));assert(html.includes('sk-test'));assert(html.includes('other branch'));assert(html.includes("default-src 'none'"));
+  assert.throws(()=>prepareFork({header:manager.getHeader(),entries:manager.getEntries(),sessionFile:ref,cwd:root},'missing',path.join(root,'bad')),e=>e.code==='SESSION_TREE_READ_FAILED');
+ }finally{fs.rmSync(root,{recursive:true,force:true});}
+});
+test('Pi model configuration selects each whole file independently, validates local errors, preserves model capacity',async()=>{
+ const {loadModelConfiguration,resolveConfiguredModel,selectConfiguration}=await modules();
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'pi-model-config-')),global=path.join(root,'agent');fs.mkdirSync(global);
+ try{
+  fs.writeFileSync(path.join(global,'settings.json'),JSON.stringify({defaultProvider:'test',defaultModel:'custom'}));
+  fs.writeFileSync(path.join(global,'models.json'),'invalid ignored global');
+  fs.writeFileSync(path.join(root,'models.json'),JSON.stringify({providers:{test:{api:'openai-completions',baseUrl:'http://localhost:1/v1',apiKey:'offline-test',models:[{id:'custom',name:'Custom',reasoning:false,input:['text','image'],cost:{input:0,output:0,cacheRead:0,cacheWrite:0},contextWindow:654321,maxTokens:23456}]}}}));
+  const configuration=await loadModelConfiguration(root,global);assert.deepEqual(configuration.configuration,{models:'local',settings:'global'});
+  const model=await resolveConfiguredModel(configuration);assert.equal(model.contextWindow,654321);assert.equal(model.maxTokens,23456);assert.equal(model.api,'openai-completions');
+  fs.writeFileSync(path.join(root,'settings.json'),'{}');const incomplete=await loadModelConfiguration(root,global);await assert.rejects(resolveConfiguredModel(incomplete),e=>e.code==='MODEL_CONFIGURATION_ERROR');
+  assert.equal((await resolveConfiguredModel(incomplete,{provider:'test',modelId:'custom'})).contextWindow,654321);
+  fs.writeFileSync(path.join(root,'settings.json'),' ');assert.throws(()=>selectConfiguration('settings.json',root,global),e=>e.code==='MODEL_CONFIGURATION_ERROR');
+  fs.writeFileSync(path.join(root,'settings.json'),'{}');fs.writeFileSync(path.join(root,'models.json'),'{"providers":{"test":{"models":[{"id":"invalid","contextWindow":-1}]}}}');await assert.rejects(loadModelConfiguration(root,global),e=>e.code==='MODEL_CONFIGURATION_ERROR');
+ }finally{fs.rmSync(root,{recursive:true,force:true});}
+});
+
+test('existing branch ignores a removed default; idle operations refresh capacity; explicit switch persists only its target and keeps source identity',async()=>{
+ const {pi,ai,PiSessionRuntime,loadModelConfiguration,persistManager}=await modules();const root=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'pi-runtime-model-'))),agentDir=path.join(root,'agent');fs.mkdirSync(agentDir);
+ const modelsFile=path.join(root,'models.json');
+ const writeModels=window=>fs.writeFileSync(modelsFile,JSON.stringify({providers:{test:{api:'openai-completions',baseUrl:'http://localhost:1/v1',apiKey:'offline-test',models:[{id:'custom',name:'Custom',reasoning:false,input:['text'],cost:{input:0,output:0,cacheRead:0,cacheWrite:0},contextWindow:window,maxTokens:1234},{id:'next',name:'Next',reasoning:false,input:['text'],cost:{input:0,output:0,cacheRead:0,cacheWrite:0},contextWindow:48000,maxTokens:4321}]}}}));
+ writeModels(64000);fs.writeFileSync(path.join(root,'settings.json'),JSON.stringify({defaultProvider:'test',defaultModel:'removed'}));
+ const manager=pi.SessionManager.create(root,path.join(root,'native'));manager.appendModelChange('test','custom');persistManager(manager);
+ const nativeRef={kind:'pi',sessionId:manager.getSessionId(),sessionFile:manager.getSessionFile(),cwd:root};
+ const input={session:{id:'s-model',projectId:'p',nativeRef,agentSnapshot:null,mcpIds:[],state:'idle',endedAt:null},workingDirectory:root,allowProjectRead:false,allowProjectWrite:false};
+ const runtime=new PiSessionRuntime(()=>loadModelConfiguration(root,agentDir));let handle;
+ try{
+  handle=await runtime.restore(input);assert.equal(handle.session.model.contextWindow,64000);assert.equal(runtime.preview({...input.session,createdAt:'2026-01-01T00:00:00Z'}).lastUserInput,null);const count=handle.manager.getEntries().filter(e=>e.type==='model_change').length;
+  const seen=[];handle.session.agent.streamFunction=model=>{seen.push([model.contextWindow,model.maxTokens]);const stream=ai.createAssistantMessageEventStream(),message={role:'assistant',content:[{type:'text',text:'controlled response'}],api:'openai-completions',provider:'test',model:'custom',usage:{input:1,output:1,cacheRead:0,cacheWrite:0,totalTokens:2,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}},stopReason:'stop',timestamp:Date.now()};stream.push({type:'done',reason:'stop',message});stream.end();return stream;};
+  writeModels(96000);await runtime.send(handle,'hello',()=>{});assert.deepEqual(seen,[[96000,1234]]);const preview=runtime.preview({...input.session,createdAt:'2026-01-01T00:00:00Z'});assert.equal(preview.lastUserInput,'hello');assert.equal(preview.previewUnavailable,false);assert(preview.lastActivityAt);assert.equal(runtime.preview({nativeRef:{...nativeRef,sessionId:'wrong-id'},createdAt:'created'}).previewUnavailable,true);assert.equal(handle.manager.getEntries().filter(e=>e.type==='model_change').length,count);
+  await runtime.switchModel(input,{provider:'test',modelId:'custom'});assert.equal(handle.manager.getEntries().filter(e=>e.type==='model_change').length,count);
+  await runtime.switchModel(input,{provider:'test',modelId:'next'});assert.equal(handle.session.model.maxTokens,4321);assert.equal(handle.manager.getEntries().filter(e=>e.type==='model_change').length,count+1);assert.equal(pi.SessionManager.open(nativeRef.sessionFile).getBranch().filter(e=>e.type==='model_change').at(-1).modelId,'next');
+  const sourceLeaf=handle.manager.getLeafId(),ref=await runtime.fork(input,sourceLeaf,path.join(root,'fork'));const evidence=runtime.validateForkCandidate(input,ref,sourceLeaf);assert.equal(evidence.fileSha256.length,64);
+  fs.appendFileSync(ref.sessionFile,JSON.stringify({type:'custom',id:'changed',parentId:sourceLeaf,timestamp:new Date().toISOString(),customType:'tamper'})+'\n');assert.throws(()=>runtime.validateForkCandidate(input,ref,sourceLeaf),e=>e.code==='REQUEST_UNKNOWN');assert.equal(handle.manager.getLeafId(),sourceLeaf);
+ }finally{if(handle)await runtime.close(handle);fs.rmSync(root,{recursive:true,force:true});}
+});
+
+test('cold Workspace missing-model recovery lists choices and appends only the explicit model while preserving native identity and legacy history',async()=>{
+ const {pi,PiSessionRuntime,loadModelConfiguration,persistManager}=await modules(),root=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'pi-missing-workspace-model-'))),agentDir=path.join(root,'agent');fs.mkdirSync(agentDir);
+ const model=id=>({id,name:id,reasoning:false,input:['text'],cost:{input:0,output:0,cacheRead:0,cacheWrite:0},contextWindow:64000,maxTokens:1234});
+ fs.writeFileSync(path.join(root,'models.json'),JSON.stringify({providers:{test:{api:'openai-completions',baseUrl:'http://localhost:1/v1',apiKey:'offline-test',models:[model('default'),model('chosen')]}}}));fs.writeFileSync(path.join(root,'settings.json'),JSON.stringify({defaultProvider:'test',defaultModel:'unavailable-default'}));
+ const manager=pi.SessionManager.create(root,path.join(root,'native'));manager.appendModelChange('removed-provider','old');persistManager(manager);const ref={kind:'pi',sessionId:manager.getSessionId(),sessionFile:manager.getSessionFile(),cwd:root},input={session:{id:'ws-recover',projectId:'wp',nativeRef:ref,agentSnapshot:null,mcpIds:[],state:'unavailable',endedAt:null},workingDirectory:root,allowProjectRead:true,allowProjectWrite:true,workspace:{id:'w',defaultProjectId:'wp',projects:[{id:'wp',rootPath:root,workspaceId:'w',name:'Project'}],prompt:'Workspace fixture'}};
+ const runtime=new PiSessionRuntime(()=>loadModelConfiguration(root,agentDir));let handle;
+ try{const before=fs.readFileSync(ref.sessionFile);await assert.rejects(runtime.restore(input),e=>e.code==='MODEL_UNAVAILABLE');assert.deepEqual(fs.readFileSync(ref.sessionFile),before);const view=await runtime.models(input);assert.equal(view.current.provider,'removed-provider');assert.equal(view.current.available,false);assert(view.models.some(m=>m.provider==='test'&&m.modelId==='chosen'&&m.available));assert.deepEqual(fs.readFileSync(ref.sessionFile),before);
+ const request={key:'select',hash:'target-hash',operation:'switch-model'};runtime.recordRequest(input,'workspace_request',request);assert.deepEqual(fs.readFileSync(ref.sessionFile),before);assert.equal((await runtime.readRequestEntries(input))[0].data.operation,'switch-model');
+ await runtime.switchModel(input,{provider:'test',modelId:'chosen'});handle=runtime.getHandle(input.session.id);assert(handle);assert.equal(handle.manager.getSessionId(),ref.sessionId);assert.equal(handle.manager.getSessionFile(),ref.sessionFile);assert(fs.readFileSync(ref.sessionFile).subarray(0,before.length).equals(before));assert.deepEqual(handle.manager.getBranch().filter(e=>e.type==='model_change').map(e=>[e.provider,e.modelId]),[['removed-provider','old'],['test','chosen']]);runtime.recordRequest(input,'workspace_request_result',{...request,outcome:'settled'});assert.equal(handle.session.model.contextWindow,64000);assert.equal(handle.session.model.maxTokens,1234);
+ }finally{if(handle)await runtime.close(handle);fs.rmSync(root,{recursive:true,force:true});}
+});
+
+test('Pi thinking settings expose native supported levels, validate before writes, persist only actual changes and survive cold restore',async()=>{
+ const {pi,ai,PiSessionRuntime,loadModelConfiguration,persistManager}=await modules(),root=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'pi-thinking-'))),agentDir=path.join(root,'agent');fs.mkdirSync(agentDir);
+ const model=(id,reasoning)=>({id,name:id,reasoning,input:['text'],cost:{input:0,output:0,cacheRead:0,cacheWrite:0},contextWindow:64000,maxTokens:1234});fs.writeFileSync(path.join(root,'models.json'),JSON.stringify({providers:{test:{api:'openai-completions',baseUrl:'http://localhost:1/v1',apiKey:'offline-test',models:[model('reasoner',true),model('plain',false)]}}}));fs.writeFileSync(path.join(root,'settings.json'),JSON.stringify({defaultProvider:'test',defaultModel:'reasoner'}));
+ const manager=pi.SessionManager.create(root,path.join(root,'native'));manager.appendModelChange('test','reasoner');manager.appendThinkingLevelChange('low');manager.appendMessage({role:'user',content:'history',timestamp:Date.now()});persistManager(manager);const ref={kind:'pi',sessionId:manager.getSessionId(),sessionFile:manager.getSessionFile(),cwd:root},input={session:{id:'thinking',projectId:'p',nativeRef:ref,agentSnapshot:null,mcpIds:[],state:'idle'},workingDirectory:root,allowProjectRead:false,allowProjectWrite:false},runtime=new PiSessionRuntime(()=>loadModelConfiguration(root,agentDir));let handle;
+ try{const before=fs.readFileSync(ref.sessionFile),view=await runtime.models(input);assert.equal(view.thinkingLevel,'low');const configuration=await loadModelConfiguration(root,agentDir);assert.deepEqual(view.models.find(model=>model.modelId==='reasoner').thinkingLevels,ai.getSupportedThinkingLevels(configuration.runtime.getModel('test','reasoner')));assert.deepEqual(view.models.find(model=>model.modelId==='plain').thinkingLevels,['off']);assert.deepEqual(fs.readFileSync(ref.sessionFile),before);
+ await assert.rejects(runtime.switchModel(input,{provider:'test',modelId:'plain',thinkingLevel:'high'}),e=>e.code==='INVALID_INPUT'&&e.noSideEffects);assert.equal(runtime.getHandle('thinking'),undefined);assert.deepEqual(fs.readFileSync(ref.sessionFile),before);
+ const updated=await runtime.switchModel(input,{provider:'test',modelId:'reasoner',thinkingLevel:'high'});handle=runtime.getHandle('thinking');assert.equal(updated.thinkingLevel,'high');assert.equal(handle.manager.getSessionId(),ref.sessionId);assert.equal(handle.manager.getSessionFile(),ref.sessionFile);assert(fs.readFileSync(ref.sessionFile).subarray(0,before.length).equals(before));const modelCount=handle.manager.getEntries().filter(e=>e.type==='model_change').length,thinkingCount=handle.manager.getEntries().filter(e=>e.type==='thinking_level_change').length;await runtime.switchModel(input,{provider:'test',modelId:'reasoner',thinkingLevel:'high'});assert.equal(handle.manager.getEntries().filter(e=>e.type==='thinking_level_change').length,thinkingCount);assert.equal(handle.manager.getEntries().filter(e=>e.type==='model_change').length,modelCount);
+ await runtime.close(handle);handle=await runtime.restore(input);assert.equal(handle.session.thinkingLevel,'high');assert.equal((await runtime.models(input)).thinkingLevel,'high');const saved=fs.readFileSync(ref.sessionFile);await assert.rejects(runtime.switchModel(input,{provider:'test',modelId:'plain',thinkingLevel:'high'}),e=>e.code==='INVALID_INPUT');assert.deepEqual(fs.readFileSync(ref.sessionFile),saved);await runtime.switchModel(input,{provider:'test',modelId:'plain',thinkingLevel:'off'});assert.equal(handle.session.thinkingLevel,'off');assert.equal(handle.session.model.id,'plain');assert.deepEqual(JSON.parse(fs.readFileSync(path.join(root,'settings.json'),'utf8')),{defaultProvider:'test',defaultModel:'reasoner'});
+ }finally{if(handle)await runtime.close(handle);fs.rmSync(root,{recursive:true,force:true});}
+});

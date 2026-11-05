@@ -9,6 +9,7 @@
     "dev": "next dev --webpack --hostname 0.0.0.0 --port 3000",
     "build": "next build --webpack",
     "start": "next start",
+    "systemd": "node scripts/systemd.cjs",
     "lint": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
     "test": "node --test tests/*.test.cjs"

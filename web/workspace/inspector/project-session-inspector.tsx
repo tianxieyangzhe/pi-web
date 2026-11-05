@@ -1,63 +1,25 @@
-import {RoleVersion} from '../roles/role-version';
-import {useState,useEffect} from 'react';
-import {api} from '../../api/client';
-import type {Agent} from '../../domain/models';
-import {RoleSelector} from '../roles/role-selector';
-import {NativeContextSection} from "./native-context-section";
-import { RotateCcw } from "lucide-react";
-import type { Project, Session } from "../../domain/models";
-import { useProjectSession } from "../conversation/project-session/use-project-session";
-
-export function ProjectSessionInspector({ project, session }: { project: Project; session: ReturnType<typeof useProjectSession> }) {
-
-  const active = session.sessions.find((item) => item.id === session.sessionId) ?? null;
-  const agent = active?.agent ?? null;
-  const mcpSnapshots = active?.mcps ?? [];
-  const prompts = session.messages.filter((message) => message.role === "user").length;
-  const runtimeState = active?.state === "running" || active?.state === "starting" || active?.state === "interrupting"
-    ? "运行中"
-    : active?.state === "unavailable" ? "需要恢复" : active?.state === "ended" ? "已结束" : active ? "空闲" : "未启动";
-
-  return <div className="inspector__body session-inspector">
-    <NativeContextSection projectId={project.id} sessionId={session.sessionId} onBusy={session.setCompacting} onRestore={session.restore} running={session.running} />
-    <section className="session-inspector__section"><h2>Session</h2>
-      <DetailRow label="项目" value={project.name} />
-      <DetailRow label="状态" value={active ? sessionStateLabel(active.state) : "尚未创建"} />
-      <DetailRow label="会话 ID" value={active ? `${active.id.slice(0, 14)}…` : "发送首条消息后创建"} />
-      <DetailRow label="提示记录" value={`${prompts} 条`} />
-      {active?.lastActivityAt && <DetailRow label="最近活动" value={formatTime(active.lastActivityAt)} />}
-    </section>
-    <section className="session-inspector__section"><h2>运行环境</h2>
-      <DetailRow label="执行器" value="Pi Agent" />
-      <DetailRow label="模型" value="服务端统一配置" />
-      <DetailRow label="执行状态" value={runtimeState} />
-      <DetailRow label="SessionManager" value={active ? "持久会话记录" : "等待首次提示"} />
-      {active?.state === "unavailable" && <button className="session-inspector__action" onClick={() => void session.restore()}><RotateCcw size={13} />恢复工作线</button>}
-      <p className="session-inspector__note">运行时由平台管理，不展示本地 transcript 文件或内部句柄。</p>
-    </section>
-    <section className="session-inspector__section"><h2>角色</h2>
-      <DetailRow label="执行配置" value={agent?.name ?? "待配置角色"} />
-      {agent && <><DetailRow label="版本" value={`修订 ${agent.revision}`} /></>}
-    </section>
-    {active&&<RoleVersion key={active.id} state={active.roleState} snapshot={active.agentSnapshot} agentId={active.agentId} kind="project" projectId={project.id} projects={[project]} onRefresh={()=>session.selectSession(active.id)} onAdopt={async(id,revision,sha)=>{await api.configureSessionRole(project.id,active,id,revision,sha);await session.selectSession(active.id);}}/>}
-    <section className="session-inspector__section"><h2>MCP</h2>
-      {mcpSnapshots.length ? mcpSnapshots.map((mcp) => <DetailRow key={mcp.id} label={mcp.name} value={mcp.accessPolicy === "read_only" ? "只读" : mcp.accessPolicy === "approval" ? "需审批" : "按策略运行"} />) : <p className="session-inspector__empty">此工作线没有绑定 MCP。</p>}
-    </section>
-    <section className="session-inspector__section"><h2>Skills</h2>
-      <DetailRow label="Skill 配置" value={`${agent?.skills.length ?? 0} 项`} />
-      {agent?.skills.length ? <div className="session-inspector__tags">{agent.skills.map((skill) => <span key={skill}>{skill}</span>)}</div> : <p className="session-inspector__empty">本版角色不启用隐式 Skill。</p>}
-    </section>
-  </div>;
-}
-
-function DetailRow({ label, value }: { label: string; value: string }) {
-  return <div className="session-inspector__row"><span>{label}</span><b title={value}>{value}</b></div>;
-}
-
-function sessionStateLabel(state: Session["state"]) {
-  return ({ not_started: "未启动", starting: "正在启动", idle: "空闲", running: "运行中", interrupting: "正在停止", ended: "已结束", unavailable: "不可用" })[state];
-}
-
-function formatTime(value: string) {
-  return new Intl.DateTimeFormat("zh-CN", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
+import { useEffect, useMemo, useState } from 'react';
+import { api } from '../../api/client';
+import type { Project, Session } from '../../domain/models';
+import type { RecoveryView } from '../../../src/domain/session-tools';
+import { NativeContextSection } from './native-context-section';
+import {SessionModelSettings} from './session-model-settings';
+import type { useProjectSession } from '../conversation/project-session/use-project-session';
+export function ProjectSessionInspector({project,session,selectedEntryId,onFork}:{project:Project;session:ReturnType<typeof useProjectSession>;selectedEntryId:string|null;onFork:(value:Session)=>void}) {
+  const active=session.sessions.find(item=>item.id===session.sessionId),id=session.sessionId;
+  const [error,setError]=useState(''),[busy,setBusy]=useState(false),[format,setFormat]=useState<'html'|'jsonl'>('html'),[range,setRange]=useState<'tree'|'branch'>('tree'),[recovery,setRecovery]=useState<RecoveryView|null>(null);
+  useEffect(()=>{setRecovery(null);},[project.id,id]);
+  const modelApi=useMemo(()=>({load:()=>api.sessionModels(project.id,id!,session.leaseId??undefined),apply:(provider:string,modelId:string,thinkingLevel?:import('../../../src/domain/session-tools').SessionThinkingLevel)=>api.switchSessionModel(project.id,id!,provider,modelId,session.leaseId!,thinkingLevel)}),[project.id,id,session.leaseId,session.running]);
+  const contextApi=useMemo(()=>({inspect:()=>api.getNativeContext(project.id,id!),compact:()=>api.compactNativeContext(project.id,id!,session.leaseId??undefined),cancel:()=>api.cancelNativeCompaction(project.id,id!)}),[project.id,id,session.leaseId]);
+  async function perform(work:()=>Promise<void>){if(busy)return;setBusy(true);setError('');try{await work();}catch(cause){setError(cause instanceof Error?cause.message:'操作失败');}finally{setBusy(false);}}
+  if(!id||!active)return <p className="p-5 text-sm text-slate-500">请先选择会话。</p>;
+  return <>
+    <section><h3 className="mb-2 font-semibold">Session</h3><p>{active.purpose.trim()||'新会话'}</p><p className="mt-1 break-all text-xs text-slate-500">{active.id} · {session.connection==='open'?'打开':'关闭'}</p>{active.agentSnapshot&&<p className="mt-1 text-xs">Agent：{'name' in active.agentSnapshot?active.agentSnapshot.name:active.agentId} · 修订 {active.agentSnapshot.revision}</p>}</section>
+    <SessionModelSettings modelApi={modelApi} leaseId={session.leaseId} onApplied={async()=>{await session.refresh();await session.reload();session.retryOpen();}}/>
+    <NativeContextSection eventRevision={session.eventRevision} projectId={project.id} sessionId={id} onBusy={session.setCompacting} onRestore={session.restore} running={session.running} contextApi={contextApi}/>
+    <section className="space-y-2 border-t border-slate-100 pt-4"><h3 className="font-semibold">从节点创建独立会话</h3><p className="break-all text-xs text-slate-500">{selectedEntryId?`选中节点：${selectedEntryId}`:'先在会话树中选择节点。'}</p><button className="rounded border border-slate-200 px-3 py-2 disabled:opacity-40" disabled={busy||!selectedEntryId||!active.allowedActions?.fork.allowed} title={active.allowedActions?.fork.reason??''} onClick={()=>void perform(async()=>{const created=await api.forkSession(project.id,id,selectedEntryId!);await session.reload();onFork(created);})}>创建并进入新会话</button></section>
+    <section className="space-y-2 border-t border-slate-100 pt-4"><h3 className="font-semibold">导出会话</h3><div className="flex flex-wrap gap-2"><select aria-label="导出格式" className="rounded border border-slate-200 p-2" value={format} onChange={event=>setFormat(event.target.value as 'html'|'jsonl')}><option value="html">HTML</option><option value="jsonl">JSONL</option></select><select aria-label="导出范围" className="rounded border border-slate-200 p-2" value={range} onChange={event=>setRange(event.target.value as 'tree'|'branch')}><option value="tree">完整树（全部分支）</option><option value="branch">当前分支</option></select><button className="rounded border border-slate-200 px-3 py-2 disabled:opacity-40" disabled={busy||!active.allowedActions?.export.allowed} onClick={()=>void perform(()=>api.exportSession(project.id,id,format,range))}>下载</button></div></section>
+    {!!active.pendingOperations?.length&&<section className="space-y-2 border-t border-slate-100 pt-4"><h3 className="font-semibold">待核对操作</h3>{active.pendingOperations.map(operation=><div key={operation.operationId} className="break-all text-xs"><p>{operation.operation} · {operation.status} · {operation.operationId}</p><button disabled={busy} className="mt-1 underline" onClick={()=>void perform(async()=>{setRecovery(await api.recoverSession(project.id,id,operation.operationId,'inspect'));})}>核对原生证据</button></div>)}{recovery&&<div className="space-y-2 text-xs"><p>核对结果：{recovery.status}</p>{recovery.allowedRecovery.finalizeFork&&<button className="block underline" disabled={busy} onClick={()=>void perform(async()=>{const result=await api.recoverSession(project.id,id,recovery.operationId,'finalize-fork');setRecovery(result);await session.reload();})}>确认提交已验证的派生候选</button>}{recovery.allowedRecovery.acknowledgeUnknown&&<button className="block text-amber-800 underline" disabled={busy} onClick={()=>{if(window.confirm('该操作可能已经产生工具或文件副作用。确认承认结果未知并解除本操作门禁？旧请求不会重新执行。'))void perform(async()=>{setRecovery(await api.recoverSession(project.id,id,recovery.operationId,'acknowledge-unknown'));await session.reload();session.retryOpen();});}}>承认结果未知并解除阻塞</button>}</div>}</section>}
+    {error&&<p role="alert" className="text-red-700">{error}</p>}
+  </>;
 }

@@ -1,6 +1,6 @@
 import type { PiStreamEvent } from "../domain/models";
 
-export type SessionLease = { leaseId: string; status: string; outcome: string | null };
+export type SessionLease = { leaseId: string; status: string; outcome: string | null;activity?:{running:boolean;compacting:boolean} };
 async function mutation(base: string, action: string, body?: unknown, keepalive = false) {
   const response = await fetch(`${base}/runtime/${action}`, { method: "POST", cache: "no-store", keepalive, headers: { "content-type": "application/json", "idempotency-key": crypto.randomUUID() }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   if (!response.ok) { const payload = await response.json(); throw new Error(payload.error?.message ?? "会话订阅失败"); }
@@ -8,7 +8,7 @@ async function mutation(base: string, action: string, body?: unknown, keepalive 
 }
 
 /** Browser only responds to server ping; reconnect timers never renew presence. */
-export function subscribeSession(base: string, options: { onReady: (lease: SessionLease) => void | Promise<void>; onEvent: (event: PiStreamEvent) => void; onError: (error: Error) => void; onDisconnect?: () => void }) {
+export function subscribeSession(base: string, options: { onReady: (lease: SessionLease) => void | Promise<void>; onEvent: (event: PiStreamEvent) => void; onError: (error: Error) => void; onDisconnect?: () => void;onClosed?:()=>void }) {
   let disposed = false, source: EventSource | null = null, lease: SessionLease | null = null;
   let reconnect: ReturnType<typeof setTimeout> | undefined, generation = 0;
   const release = () => {
@@ -28,9 +28,10 @@ export function subscribeSession(base: string, options: { onReady: (lease: Sessi
       if (disposed || version !== generation) { void mutation(base, "close", { leaseId: opened.leaseId }, true); return; }
       lease = opened;
       const events = new EventSource(`${base}/events?${new URLSearchParams({ leaseId: opened.leaseId })}`); source = events;
-      events.addEventListener("ready", () => {
+      events.addEventListener("ready", message => {
         if (disposed || version !== generation) return;
-        void Promise.resolve(options.onReady(opened)).catch(error => { if (!disposed && version === generation) options.onError(error instanceof Error ? error : new Error("历史同步失败")); });
+        const frame=JSON.parse((message as MessageEvent|undefined)?.data??'{}');
+        void Promise.resolve(options.onReady({...opened,activity:frame.activity??undefined})).catch(error => { if (!disposed && version === generation) options.onError(error instanceof Error ? error : new Error("历史同步失败")); });
       });
       events.addEventListener("ping", message => {
         if (disposed || version !== generation) return;
@@ -39,7 +40,7 @@ export function subscribeSession(base: string, options: { onReady: (lease: Sessi
       });
       events.onmessage = message => {
         if (disposed || version !== generation) return;
-        try { options.onEvent(JSON.parse(message.data)); } catch { fail(new Error("无法解析会话事件，请重新同步"), version); }
+        try { const event=JSON.parse(message.data);if(event.type==="session_closed"){disposed=true;++generation;release();options.onDisconnect?.();options.onClosed?.();return;}options.onEvent(event); } catch { fail(new Error("无法解析会话事件，请重新同步"), version); }
       };
       events.onerror = () => fail(new Error("会话订阅已断开，正在重新连接"), version);
     } catch (error) { fail(error instanceof Error ? error : new Error("无法订阅会话"), version); }

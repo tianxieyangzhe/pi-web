@@ -1,5 +1,6 @@
 import { closeSync, fsyncSync, openSync, readFileSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
+import {dirname} from 'node:path';
 import { DomainError } from '@/domain/errors';
 
 export type WorkspaceRequestIdentity = {
@@ -16,7 +17,8 @@ function validData(data: unknown): boolean {
   if (!data || typeof data !== 'object' || Array.isArray(data)) return false;
   const value = data as Record<string, unknown>;
   return typeof value.key === 'string' && !!value.key && typeof value.hash === 'string' && !!value.hash
-    && Object.keys(value).every(key => ['key', 'hash', 'outcome'].includes(key))
+    && Object.keys(value).every(key => ['key', 'hash', 'outcome', 'operation'].includes(key))
+    && (value.operation === undefined || value.operation === 'switch-model')
     && (value.outcome === undefined || ['settled', 'failed', 'aborted'].includes(String(value.outcome)));
 }
 export function readWorkspaceRequests(identity: WorkspaceRequestIdentity): WorkspaceRequestRecord[] {
@@ -50,6 +52,7 @@ export function appendWorkspaceRequest(identity: WorkspaceRequestIdentity, type:
     fd = openSync(journalFile(identity), 'a', 0o600);
     writeFileSync(fd, JSON.stringify(entry) + '\n', 'utf8');
     fsyncSync(fd);
+    const directory=openSync(dirname(journalFile(identity)),'r');try{fsyncSync(directory);}finally{closeSync(directory);}
     return id;
   } catch { throw unavailable(); }
   finally { if (fd !== undefined) closeSync(fd); }
