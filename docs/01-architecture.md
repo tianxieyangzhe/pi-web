@@ -88,6 +88,8 @@ AI Elements 不承担 API、NDJSON 解析、持久状态或权限校验。Tailwi
 
 ## 6. 持久化与运行边界
 
+OPS-004：web/api/random-uuid.ts 统一提供浏览器 API 请求键和本地附件标识的安全随机 UUID，兼容公网 HTTP；不依赖 Node crypto，不修改全局 crypto，不创建持久模型或调用 Pi。
+
 OPS-003：Next配置采用next.config.mjs，构建manifest插件采用显式.cjs导入，不依赖配置加载阶段的TypeScript扩展解析或SWC原生二进制；保留开发manifest原子替换行为。旧glibc平台的SWC回退与后续原生模块兼容性由部署环境验证，不自动升级系统库。
 
 OPS-002：开发、生产及systemd默认监听localhost:3000；可显式指定0.0.0.0、任意本机IPv4或IPv6监听地址，不设来源IP白名单。监听由Next CLI与启动脚本配置，不新增跨域API或修改业务归属校验。

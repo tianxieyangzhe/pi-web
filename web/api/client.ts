@@ -1,3 +1,4 @@
+import { randomUUID } from "./random-uuid";
 import type {NativeContextInspection} from "../domain/native-context";
 import type { SessionModelView, RecoveryView } from "../../src/domain/session-tools";
 import type { Agent, AgentEvent, ConversationMessage, FilePreview, Mcp, Project, ProjectChanges, ProjectFileListing, Session } from "../domain/models";
@@ -7,7 +8,7 @@ const jsonHeaders = { "content-type": "application/json" };
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
-  if (init?.method && init.method !== "GET" && !headers.has("idempotency-key")) headers.set("idempotency-key", crypto.randomUUID());
+  if (init?.method && init.method !== "GET" && !headers.has("idempotency-key")) headers.set("idempotency-key", randomUUID());
   const response = await fetch(url, { ...init, headers });
   const payload = await response.json().catch(() => ({})) as ApiEnvelope<T>;
   if (!response.ok) throw new Error(`${payload.error?.message ?? "请求失败"}（${response.status} ${url}）`);
@@ -105,7 +106,7 @@ export const api = {
   openSession: (projectId:string,sessionId:string) => request<{leaseId:string;status:string;outcome:string|null}>(`/api/projects/${projectId}/sessions/${sessionId}/runtime/open`, mutation("POST")),
   closeSession: (projectId:string,sessionId:string,leaseId:string) => fetch(`/api/projects/${projectId}/sessions/${sessionId}/runtime/close`, {...mutation("POST", {leaseId}), keepalive:true}).then(() => {}),
   listMessages: (projectId: string, sessionId: string) => request<import("../domain/models").SessionTree>(`/api/projects/${projectId}/sessions/${sessionId}/messages`, {cache:"no-store"}),
-  sendMessage: (projectId: string, sessionId: string, leaseId:string, content: string, steer=false, onAccepted?: () => void, references?: import("../../src/domain/message-references").MessageReference[]) => stream<import("../domain/models").PiStreamEvent>(`/api/projects/${projectId}/sessions/${sessionId}/messages`, { ...mutation("POST", { content,steer,references }), headers: { ...jsonHeaders, "idempotency-key": crypto.randomUUID(), "x-session-lease-id":leaseId } }, "无法发送项目消息", onAccepted),
+  sendMessage: (projectId: string, sessionId: string, leaseId:string, content: string, steer=false, onAccepted?: () => void, references?: import("../../src/domain/message-references").MessageReference[]) => stream<import("../domain/models").PiStreamEvent>(`/api/projects/${projectId}/sessions/${sessionId}/messages`, { ...mutation("POST", { content,steer,references }), headers: { ...jsonHeaders, "idempotency-key": randomUUID(), "x-session-lease-id":leaseId } }, "无法发送项目消息", onAccepted),
   interruptProjectSession: (projectId: string, sessionId: string) => request<Session>(`/api/projects/${projectId}/sessions/${sessionId}/interrupt`, mutation("POST")),
   restoreProjectSession: (projectId: string, sessionId: string) => request<Session>(`/api/projects/${projectId}/sessions/${sessionId}/restore`, mutation("POST")),
   endProjectSession: (projectId: string, sessionId: string) => request<Session>(`/api/projects/${projectId}/sessions/${sessionId}/end`, mutation("POST")),

@@ -1,8 +1,9 @@
+import { randomUUID } from "./random-uuid";
 import type { PiStreamEvent } from "../domain/models";
 
 export type SessionLease = { leaseId: string; status: string; outcome: string | null;activity?:{running:boolean;compacting:boolean} };
 async function mutation(base: string, action: string, body?: unknown, keepalive = false) {
-  const response = await fetch(`${base}/runtime/${action}`, { method: "POST", cache: "no-store", keepalive, headers: { "content-type": "application/json", "idempotency-key": crypto.randomUUID() }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+  const response = await fetch(`${base}/runtime/${action}`, { method: "POST", cache: "no-store", keepalive, headers: { "content-type": "application/json", "idempotency-key": randomUUID() }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   if (!response.ok) { const payload = await response.json(); throw new Error(payload.error?.message ?? "会话订阅失败"); }
   return response.status === 204 ? null : (await response.json()).data;
 }
@@ -50,7 +51,7 @@ export function subscribeSession(base: string, options: { onReady: (lease: Sessi
 }
 
 export async function submitSessionMessage(base: string, leaseId: string, content: string, references?: import("../../src/domain/message-references").MessageReference[]) {
-  const response = await fetch(`${base}/messages`, { method: "POST", headers: { "content-type": "application/json", accept: "application/json", "idempotency-key": crypto.randomUUID(), "x-session-lease-id": leaseId }, body: JSON.stringify({ content, references }) });
+  const response = await fetch(`${base}/messages`, { method: "POST", headers: { "content-type": "application/json", accept: "application/json", "idempotency-key": randomUUID(), "x-session-lease-id": leaseId }, body: JSON.stringify({ content, references }) });
   if (!response.ok) { const payload = await response.json(); throw new Error(payload.error?.message ?? "消息提交失败"); }
   return (await response.json()).data;
 }

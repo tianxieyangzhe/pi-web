@@ -153,6 +153,8 @@ WorkspaceRequestJournal 是每个工作区 Session 的应用请求证据，不�
 
 ## 6. 首期 API 契约
 
+工作区客户端请求键的 HTTP 兼容生成沿用 03 的 OPS-004；表单修改后换键、同一提交重试复用原键的规则保持不变，不改变工作区持久模型或 Pi 身份。
+
 以下为首期正式契约，路径相对 /api。成功 {data:...}，错误沿用通用 error envelope；可信单用户长驻部署沿用 `03`。读操作 no-store，无模型调用。创建 POST 要求 Idempotency-Key，同键同载荷返回相同记录、异载荷 409；配置 PUT 要求 If-Match。未知字段拒绝。
 
 | 用户意图 | 应读取或改变的模型 | Pi 边界 |

@@ -1,9 +1,10 @@
+import { randomUUID } from "./random-uuid";
 import type { WorkspaceRecord, WorkspaceSessionDTO, WorkspaceConfiguration } from '../../src/domain/workspace';
 import type { DirectoryListing } from '../../src/application/ports/workspace';
 import type { SessionTree, ProjectFileListing } from '../domain/models';
 import type { NativeContextInspection } from '../domain/native-context';
 async function request<T>(url:string,method='GET',body?:unknown,headers?:Record<string,string>):Promise<T> {
-  const response=await fetch(url,{method,cache:'no-store',headers:{...(body===undefined?{}:{'content-type':'application/json'}),...(method==='GET'?{}:{'idempotency-key':crypto.randomUUID()}),...headers},...(body===undefined?{}:{body:JSON.stringify(body)})});
+  const response=await fetch(url,{method,cache:'no-store',headers:{...(body===undefined?{}:{'content-type':'application/json'}),...(method==='GET'?{}:{'idempotency-key':randomUUID()}),...headers},...(body===undefined?{}:{body:JSON.stringify(body)})});
   const payload=await response.json().catch(()=>({}));if(!response.ok)throw new Error(payload.error?.message??'工作区请求失败');return payload.data;
 }
 const base=(id:string)=>`/api/workspaces/${encodeURIComponent(id)}`;
@@ -12,7 +13,7 @@ export const workspaceApi={
   base,session,
   list:()=>request<WorkspaceRecord[]>('/api/workspaces'),
   get:(id:string)=>request<WorkspaceRecord>(base(id)),
-  save:(id:string|null,body:WorkspaceConfiguration,etag?:string,key=crypto.randomUUID())=>request<WorkspaceRecord>(id?base(id):'/api/workspaces',id?'PUT':'POST',{name:body.name,projects:body.projects.map(({id,rootPath})=>({...(id?{id}:{}),rootPath})),defaultProjectIndex:body.defaultProjectIndex},{'idempotency-key':key,...(etag?{'if-match':etag}:{})}),
+  save:(id:string|null,body:WorkspaceConfiguration,etag?:string,key=randomUUID())=>request<WorkspaceRecord>(id?base(id):'/api/workspaces',id?'PUT':'POST',{name:body.name,projects:body.projects.map(({id,rootPath})=>({...(id?{id}:{}),rootPath})),defaultProjectIndex:body.defaultProjectIndex},{'idempotency-key':key,...(etag?{'if-match':etag}:{})}),
   directories:(path?:string)=>request<DirectoryListing>(`/api/workspaces/directories${path?'?path='+encodeURIComponent(path):''}`),
   sessions:(id:string)=>request<WorkspaceSessionDTO[]>(`${base(id)}/sessions`),
   createSession:(id:string,defaultProjectId?:string)=>request<WorkspaceSessionDTO>(`${base(id)}/sessions`,'POST',defaultProjectId?{defaultProjectId}:{}),

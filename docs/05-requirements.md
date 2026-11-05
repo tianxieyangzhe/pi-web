@@ -10,6 +10,8 @@
 
 ## 当前规则
 
+OPS-004（已实现，函数与客户端定向验证通过；真实浏览器待验）：公网 HTTP 访问时，浏览器缺少 crypto.randomUUID 不得阻断创建表单、附件及 API 提交；统一使用安全随机 UUID，原生方法缺失时以 getRandomValues 生成 UUID v4，不使用 Math.random。既有 API 幂等键的作用域、重试复用、权限、模型及 Pi 归属不变，无数据库迁移。tests/browser-random-uuid.test.cjs（4项）验证原生与回退路径、UUID 格式与安全随机来源、项目/工作区/消息/历史Bot客户端实际提交、显式幂等键保留，以及无安全随机源时阻止提交；tests/session-subscription-client.test.cjs（3项）验证订阅/心跳/重连与发送，合计7项通过。git diff --check通过，web中无直接crypto.randomUUID调用；未启动服务、操作用户库或调用真实模型，公网浏览器现场待验。
+
 OPS-003（已实现，定向测试通过）：修复Linux旧glibc/SWC回退下next.config.ts扩展解析失败；配置与插件直接由Node加载，不启动服务，定向验证配置导入、webpack插件挂载及原子manifest行为。无模型/API或数据库变更。实际运行tests/atomic-manifest.test.cjs（5项，直接Node导入配置、开发插件挂载、manifest原子写/失败保留及真实临时Webpack编译）、tests/systemd-scripts.test.cjs（3项），共8项通过；npm run typecheck、git diff --check通过。未启动用户服务，未在CentOS实机验证SWC WASM或系统原生库兼容性。
 
 OPS-002（已实现，定向测试通过）：启动默认绑定localhost，支持显式绑定任意本机IP；生产CLI与systemd支持指定本机IPv4/IPv6地址，应用不新增IP白名单。定向验证默认地址与显式覆盖，不改防火墙或用户服务。实际运行tests/systemd-scripts.test.cjs三项通过，含默认localhost、指定IPv4/IPv6及启动脚本覆盖；Bash/Node语法、git diff --check通过。未启动服务或做真实网络连通验收。

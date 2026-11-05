@@ -1,3 +1,4 @@
+import { randomUUID } from "../../api/random-uuid";
 import { ArrowUp, LoaderCircle, Square } from "lucide-react";
 import { useEffect,useState,useRef, type FormEvent, type KeyboardEvent, type ClipboardEvent } from "react";
 import type { MessageReference, ProjectMessageReference, BotMessageReference } from "../../../src/domain/message-references";
@@ -10,7 +11,7 @@ import { ErrorToast } from "./error-toast";
 const drafts=new Map<string,string>();
 const draftVersions=new Map<string,number>();
 const fileIds = new WeakMap<File, string>();
-function fileId(file: File) { let id=fileIds.get(file); if (!id) {id=crypto.randomUUID();fileIds.set(file,id);} return id; }
+function fileId(file: File) { let id=fileIds.get(file); if (!id) {id=randomUUID();fileIds.set(file,id);} return id; }
 function projectId(item: ProjectMessageReference | BotMessageReference) { return JSON.stringify(item); }
 function fileAttachment(file: File): InlineAttachment { return {id:fileId(file),file,label:/^已粘贴 \d+ 行\.txt$/.test(file.name)?file.name.slice(0,-4):file.name}; }
 

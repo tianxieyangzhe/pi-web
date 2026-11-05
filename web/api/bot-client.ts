@@ -1,3 +1,4 @@
+import { randomUUID } from "./random-uuid";
 import type { Bot, BotConversation, BotParticipant, BotDetail, BotOverview, BotMessage } from '../domain/bot';
 import type { NativeContextInspection } from '../domain/native-context';
 import type { FilePreview, ProjectFileListing } from '../domain/models';
@@ -7,7 +8,7 @@ async function request<T>(url: string, method = 'GET', body?: unknown, etag?: st
     headers: {
       'content-type': 'application/json',
       ...(method === 'POST' ? {
-        'idempotency-key': crypto.randomUUID()
+        'idempotency-key': randomUUID()
       } : {}),
       ...(etag ? {
         'if-match': etag

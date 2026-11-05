@@ -7,6 +7,7 @@ const runtimeRecoveryStub = path.resolve(process.cwd(), "src/infrastructure/bots
 /** @type {import("next").NextConfig} */
 const nextConfig = {
   ...(process.env.AI_WORKSPACE_BUILD_DIR ? {distDir:process.env.AI_WORKSPACE_BUILD_DIR} : {}),
+  allowedDevOrigins: ["106.12.15.161"],
   devIndicators: false,
   reactStrictMode: true,
   // Pi loads project-local extensions, credentials and provider modules with
