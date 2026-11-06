@@ -1,6 +1,8 @@
-import {readFileSync} from "node:fs";
+import {existsSync,readFileSync} from "node:fs";
 import {join} from "node:path";
-const read=(name:string)=>readFileSync(join(process.cwd(),"src/infrastructure/database",name),"utf8");
+const packagedRoot=join(process.cwd(),"runtime/database");
+const schemaRoot=existsSync(packagedRoot)?packagedRoot:join(process.cwd(),"src/infrastructure/database");
+const read=(name:string)=>readFileSync(join(schemaRoot,name),"utf8");
 export const botSchema=read("bot-schema.sql");
 export const agentBindingSchema=read("agent-binding-schema.sql");
 export const roleSchema=read("role-schema.sql");

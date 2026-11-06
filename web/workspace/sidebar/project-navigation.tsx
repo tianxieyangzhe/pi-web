@@ -6,7 +6,7 @@ import { useProjectSessionNavigation } from "./use-project-session-navigation";
 
 type ResourceKind = "agent" | "mcp";
 
-export function ProjectNavigation({ deletingSessionId, onDeleteSession, projects, selection, navigation, creatingSessionProjectId, onNewProject, onNewProjectSession, workspaceNavigation, onCreateSession, onProjectSelect, onSessionSelect, onEditProject, onOpenResource }: {
+export function ProjectNavigation({ deletingSessionId, onDeleteSession, projects, selection, navigation, creatingSessionProjectId, onNewProject, onNewProjectSession, workspaceNavigation, onCreateSession, onSessionSelect, onEditProject, onOpenResource }: {
   deletingSessionId: string | null;
   onDeleteSession: (projectId: string, sessionId: string, label: string) => void;
   projects: Project[];
@@ -17,7 +17,6 @@ export function ProjectNavigation({ deletingSessionId, onDeleteSession, projects
   onNewProjectSession: () => void;
   workspaceNavigation?: import("react").ReactNode;
   onCreateSession: (projectId: string) => void;
-  onProjectSelect: (projectId: string) => void;
   onSessionSelect: (projectId: string, sessionId: string) => void;
   onEditProject: (projectId: string) => void;
   onOpenResource: (kind: ResourceKind) => void;
@@ -36,12 +35,9 @@ export function ProjectNavigation({ deletingSessionId, onDeleteSession, projects
               <div className="nav-row">
                 <button
                   className={`project-link${isSelected(selection,"project",project.id) ? " active" : ""}`}
-                  aria-expanded={navigation.expandedProjectIds.has(project.id)}
                   aria-current={isSelected(selection,"project",project.id)?"page":undefined}
-                  onClick={() => {
-                    navigation.toggleProject(project.id);
-                    onProjectSelect(project.id);
-                  }}
+                  aria-expanded={navigation.expandedProjectIds.has(project.id)}
+                  onClick={() => navigation.toggleProject(project.id)}
                 >
                   <FolderKanban size={15} /><span>{project.name}</span>
                 </button>

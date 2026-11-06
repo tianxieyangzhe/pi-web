@@ -1,6 +1,7 @@
 node_modules/
 .next/
 dist/
+release/
 .data/
 *.sqlite
 *.sqlite-shm

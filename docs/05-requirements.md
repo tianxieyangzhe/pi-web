@@ -10,6 +10,14 @@
 
 ## 当前规则
 
+SETTINGS-002（已实现，定向验证通过）：单击左侧独立项目名称或展开箭头仅切换会话列表展开状态，不改变当前选择、中间会话栏或设置页，不触发打开/关闭会话。齿轮按钮打开项目设置，单击会话条目才进入对应会话。左侧单击关闭辅助浮窗仍沿用04规则。不新增模型或API；此前名称点击打开设置的投影被本规则替代。tests/settings-layout-behavior.test.cjs和tests/session-auxiliary-dialog.test.cjs合计3项通过，覆盖名称连续点击只触发展开、箭头/齿轮/会话动作分离及浮窗关闭和设置回归；npm run typecheck、git diff --check通过。只用受控API及DOM，不启停用户服务或写用户数据库，真实浏览器待验。
+
+OPS-006依赖下载选项（已实现，打包定向通过；服务器安装待验）：发布脚本支持 --without-node-modules，包内不含依赖目录，包含与构建一致的package.json/package-lock.json，服务器只安装生产依赖即可启动，无应用源码或构建。tests/standalone-release.test.cjs共5项通过，新增排除依赖目录、清单及锁文件原样保留、缺锁文件拒绝和包内安装提示；脚本语法及git diff --check通过。默认随包依赖的方式保留，未执行服务器npm安装或启停用户服务。
+
+OPS-006（已实现，本机独立产物验证通过；Ubuntu实机待验）：npm run release 生成可独立部署的 standalone 发布目录；运行端仅需兼容 Node 和系统运行依赖，使用 node server.js 或随包 systemd 脚本。tests/standalone-release.test.cjs 四项验证包内容、静态资源/SQL、无应用源码及用户数据、覆盖保护、缺失构建拒绝、构建阶段内存库且不打开/创建用户库、systemd产物入口；与tests/next-dev-origins.test.cjs及tests/systemd-scripts.test.cjs合计9项通过。临时完整副本npm run release真实构建（含Next类型检查）通过，构建不创建.data；移出产物并删除副本src/web/node_modules后启动独立server.js，首页/静态JS及projects/agents/mcps/workspaces四API均200，Pi SDK从产物导入成功。全部使用临时库、隔离HOME和配置，仅启停临时测试进程，无真实模型调用或用户服务/数据库改写；脚本语法及git diff --check通过。原生依赖跨系统/架构不可直接复用，Linux产物须在兼容环境构建，未宣称Ubuntu真实模型验收。
+
+OPS-005（已实现，配置定向验证通过）：开发资源允许来源通过 AI_WORKSPACE_ALLOWED_DEV_ORIGINS 配置，支持多个 IP/域名与 Next 子域名模式，去掉空白和空项；未设置或空值不额外放行，保留 Next 默认规则。配置项仅开发模式使用，修改后重启。tests/next-dev-origins.test.cjs 两项通过，直接加载 Next 配置验证默认、空值、多来源及环境切换不残留部署 IP；node --check next.config.mjs、git diff --check通过。不启动服务或操作数据库，真实公网 HMR 待现场验证。
+
 OPS-004（已实现，函数与客户端定向验证通过；真实浏览器待验）：公网 HTTP 访问时，浏览器缺少 crypto.randomUUID 不得阻断创建表单、附件及 API 提交；统一使用安全随机 UUID，原生方法缺失时以 getRandomValues 生成 UUID v4，不使用 Math.random。既有 API 幂等键的作用域、重试复用、权限、模型及 Pi 归属不变，无数据库迁移。tests/browser-random-uuid.test.cjs（4项）验证原生与回退路径、UUID 格式与安全随机来源、项目/工作区/消息/历史Bot客户端实际提交、显式幂等键保留，以及无安全随机源时阻止提交；tests/session-subscription-client.test.cjs（3项）验证订阅/心跳/重连与发送，合计7项通过。git diff --check通过，web中无直接crypto.randomUUID调用；未启动服务、操作用户库或调用真实模型，公网浏览器现场待验。
 
 OPS-003（已实现，定向测试通过）：修复Linux旧glibc/SWC回退下next.config.ts扩展解析失败；配置与插件直接由Node加载，不启动服务，定向验证配置导入、webpack插件挂载及原子manifest行为。无模型/API或数据库变更。实际运行tests/atomic-manifest.test.cjs（5项，直接Node导入配置、开发插件挂载、manifest原子写/失败保留及真实临时Webpack编译）、tests/systemd-scripts.test.cjs（3项），共8项通过；npm run typecheck、git diff --check通过。未启动用户服务，未在CentOS实机验证SWC WASM或系统原生库兼容性。
@@ -19,6 +27,8 @@ OPS-002（已实现，定向测试通过）：启动默认绑定localhost，支�
 OPS-001（脚本已实现，受控测试通过；Linux实机待验）：提供可审查systemd unit生成/安装脚本及生产启动脚本；支持user/system作用域，固定cwd/INIT_CWD、明确运行用户HOME/Node/PATH、端口/监听地址可配、异常重启及journald。缺依赖/构建失败时明确退出，不自动构建/迁移/启停；安装不自动enable/start，已有不同unit默认不覆盖。验证参数与systemd转义、安装写入边界、启动参数/工作目录和预检，使用临时目录和假命令，不碰用户服务/数据库。实际运行tests/systemd-scripts.test.cjs三项通过（unit参数/转义、启动前置检查/exec与配置根、临时unit安装及覆盖保护）；bash -n scripts/start-systemd.sh、node --check scripts/systemd.cjs、git diff --check通过。未生产构建，未调用真实systemctl、安装unit或启停服务；Linux systemd实机验收留给部署步骤。
 
 SLIST-002（实现中）：两类侧栏时间显示持久lastOpenedAt；实际新开连接成功时记录，刷新/消息/心跳/打开幂等重试不变，失败不记录；历史无记录明确显示。标题只来自最新用户输入，无消息显示新会话，无文本输入有占位，不再回退purpose。SessionOpenHistory事实与文件在02定义，API在03，Workspace映射06；无SQL迁移、不改旧数据。
+
+SETTINGS-001创建后投影调整（已实现，定向验证通过）：新建Project成功后进入该项目设置页，以创建API返回的字段和writeETag初始化，未修改不提交；后续编辑仍调用该Project的PATCH并携带返回ETag。创建失败保留草稿，用户已切换页面时迟到的创建响应不抢回设置页；不新增模型、API或自动创建会话。tests/settings-layout-behavior.test.cjs一项通过，覆盖新建成功后的设置字段/未改禁用/后续PATCH身份与ETag、创建失败草稿和迟到响应，以及原有编辑/删除/Workspace反馈；git diff --check通过。只用受控API及JSDOM，不启动服务、不写用户数据库；真实浏览器待验。
 
 SETTINGS-001（已实现，定向验收通过）：项目新建/设置与工作区新建/设置采用相同主画布布局、目录选择、保存/取消/关闭和等待/失败反馈。Project复用03现有CRUD契约，Workspace复用06配置API；不增加模型、字段或接口，不调用Pi，不迁移SQL。定向验收覆盖POST不含status、PATCH仅变化字段及If-Match、保存等待/失败保留、取消无写入、晚响应不跳回，以及工作区同类反馈。实际运行tests/settings-layout-behavior.test.cjs、tests/workspace-settings-api.test.cjs、tests/catalog-contract.test.cjs、tests/session-auxiliary-dialog.test.cjs，四文件7项通过；补充未修改不提交后再次运行settings-layout-behavior单文件通过。npm run typecheck、git diff --check通过。只用JSDOM、受控API和临时库，未启动服务、调用模型或写用户数据；未做真实浏览器视觉验收。
 

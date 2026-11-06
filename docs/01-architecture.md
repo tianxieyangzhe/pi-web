@@ -88,6 +88,10 @@ AI Elements 不承担 API、NDJSON 解析、持久状态或权限校验。Tailwi
 
 ## 6. 持久化与运行边界
 
+OPS-006：发布支持 --without-node-modules 选项，跳过依赖目录并随包带入原始 package.json/package-lock.json；服务器执行 npm ci --omit=dev 安装锁定运行依赖后 node server.js 启动，不编译应用。默认继续随包带依赖。无依赖包不保证跨平台编译产物兼容，原生依赖由运行端安装。生产支持 Next standalone 独立发布目录，包含 server.js、编译产物、静态资源、追踪依赖、runtime/database SQL 和 systemd 启动工具，不依赖应用 TS/TSX 源码或服务器 npm install/build。Schema 在发布目录从 runtime/database 读取，源码运行仍读取原 SQL；不改目标模型或迁移。发布目录为稳定应用根，cwd/INIT_CWD、本地 Pi 配置、.data 和原生历史路径归属保持原契约；构建包不包含用户数据库、认证、模型配置或环境文件。原生依赖要求构建与运行平台/架构/Node ABI兼容。打包不覆盖已有输出、不迁移数据、不启停服务。Next生产构建阶段（NEXT_PHASE=phase-production-build）数据库模块仅初始化进程内临时内存库，不创建目录或打开用户库；正式运行仍按固定路径和历史兼容检查。
+
+OPS-005：next.config.mjs 从 AI_WORKSPACE_ALLOWED_DEV_ORIGINS 读取开发资源允许来源，以逗号分隔并去掉首尾空白及空项；未配置时为空数组，保留 Next 默认来源规则，不硬编码部署 IP。只配置开发资源/HMR 校验，不改变监听地址、业务 API、持久模型或 Pi 归属，不调用 Pi。
+
 OPS-004：web/api/random-uuid.ts 统一提供浏览器 API 请求键和本地附件标识的安全随机 UUID，兼容公网 HTTP；不依赖 Node crypto，不修改全局 crypto，不创建持久模型或调用 Pi。
 
 OPS-003：Next配置采用next.config.mjs，构建manifest插件采用显式.cjs导入，不依赖配置加载阶段的TypeScript扩展解析或SWC原生二进制；保留开发manifest原子替换行为。旧glibc平台的SWC回退与后续原生模块兼容性由部署环境验证，不自动升级系统库。

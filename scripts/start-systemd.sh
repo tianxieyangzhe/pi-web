@@ -14,6 +14,11 @@ if [[ ! "$app_port" =~ ^[0-9]{1,5}$ ]] || (( 10#$app_port < 1 || 10#$app_port > 
   exit 1
 fi
 "$node_binary" -e 'const [major,minor]=process.versions.node.split(".").map(Number);if(major<22||(major===22&&minor<19)){console.error("Node.js >=22.19.0 is required");process.exit(1)}'
+if [[ -f server.js ]]; then
+  export HOSTNAME="$app_host"
+  export PORT="$app_port"
+  exec "$node_binary" "$app_root/server.js"
+fi
 if [[ ! -f node_modules/next/dist/bin/next ]]; then
   echo 'Next.js is missing. Run npm ci in the application directory first.' >&2
   exit 1

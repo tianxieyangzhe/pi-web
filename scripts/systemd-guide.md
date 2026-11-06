@@ -1,10 +1,10 @@
 # 使用 systemd 运行
 
-适用 Linux + systemd。每个部署目录只运行一个实例，使用 Node.js >=22.19.0 和生产 `next start`。脚本不构建、不迁移数据库，也不自动启动服务。
+适用 Linux + systemd。每个部署目录只运行一个实例，使用 Node.js >=22.19.0。独立发布包优先运行 `node server.js`，源码部署使用生产 `next start`。脚本不构建、不迁移数据库，也不自动启动服务。
 
 ## 准备
 
-以将来运行服务的用户准备应用目录、配置与依赖：
+只部署产物时，在兼容生产平台的构建机执行 `npm ci && npm run release`，将 `release/` 内容部署到固定应用目录。服务器无需源码、安装依赖或构建；配置另行提供。在发布目录可用 `node scripts/systemd.cjs render` 和 `node scripts/systemd.cjs install` 替代下面的 `npm run systemd -- ...`，其余参数不变。\n\n保留源码部署时，以将来运行服务的用户准备应用目录、配置与依赖：
 
 ```bash
 cd /srv/ai-workspace
@@ -14,7 +14,7 @@ npm run build
 
 保持应用目录稳定。`WorkingDirectory` 和 `INIT_CWD` 都指向该目录；本地 `models.json`、`settings.json` 优先于服务用户 HOME 下的 `~/.pi/agent/` 对应文件。Pi 认证和全局配置使用**服务运行用户**的 HOME。已有 `.data`、Agent 文件、journal、Pi 原生会话文件和项目目录应继续由该用户访问，不删除或重新初始化。新机器构建仍需完整构建依赖，不要先用 `npm ci --omit=dev`。
 
-项目不再提供或依赖 `.env` 配置文件。模型使用 `models.json`、`settings.json` 与 Pi 原生认证来源；配置中显式引用环境变量时，通过服务环境提供。unit 不复制任何密钥。不加载交互式 shell 的 `.bashrc`/nvm，生成时固定当前 Node 的绝对路径及 PATH，升级 Node 后需重新生成 unit。
+生产模型配置不依赖 `.env` 文件。模型使用 `models.json`、`settings.json` 与 Pi 原生认证来源；配置中显式引用环境变量时，通过服务环境提供。unit 不复制任何密钥。不加载交互式 shell 的 `.bashrc`/nvm，生成时固定当前 Node 的绝对路径及 PATH，升级 Node 后需重新生成 unit。
 
 默认监听 `localhost:3000`，浏览器使用 `http://localhost:3000` 访问。显式传入 `--host 0.0.0.0` 时监听全部IPv4网卡，可从其他设备使用 `http://服务器IP:3000` 访问。用 `--host`、`--port` 指定本机地址与端口，例如 `--host 192.168.1.10`，IPv6可用 `--host ::`。远程连通还取决于宿主机防火墙、云安全组与路由配置。
 

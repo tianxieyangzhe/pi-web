@@ -6,8 +6,20 @@ const runtimeRecoveryStub = path.resolve(process.cwd(), "src/infrastructure/bots
 
 /** @type {import("next").NextConfig} */
 const nextConfig = {
+  output: "standalone",
+  outputFileTracingIncludes: {
+    "/*": [
+      "src/infrastructure/database/*.sql",
+      "node_modules/@earendil-works/pi-*/dist/**/*",
+      "node_modules/@earendil-works/pi-*/package.json",
+      "node_modules/better-sqlite3/build/Release/*.node",
+    ],
+  },
   ...(process.env.AI_WORKSPACE_BUILD_DIR ? {distDir:process.env.AI_WORKSPACE_BUILD_DIR} : {}),
-  allowedDevOrigins: ["106.12.15.161"],
+  allowedDevOrigins: (process.env.AI_WORKSPACE_ALLOWED_DEV_ORIGINS ?? "")
+    .split(",")
+    .map(origin => origin.trim())
+    .filter(Boolean),
   devIndicators: false,
   reactStrictMode: true,
   // Pi loads project-local extensions, credentials and provider modules with
