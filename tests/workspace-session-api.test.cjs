@@ -28,9 +28,10 @@ test('HTTP endpoints enforce scope, unknown fields, idempotency, conditional wri
   const lease=opened.payload.data.leaseId;
   assert.equal((await call('POST',[w.id,'sessions',sid,'messages'],{content:'hello'},{'idempotency-key':'m'})).status,409);
   const accepted=await call('POST',[w.id,'sessions',sid,'messages'],{content:'hello'},{'idempotency-key':'m','x-session-lease-id':lease});assert.equal(accepted.status,202);f.finish();await tick();
-  const memory=await call('GET',[w.id,'sessions',sid,'memory']);assert.equal(memory.status,200);const context={...memory.payload.data.sessionMemory.contextJson,summary:'corrected'};
-  const updated=await call('PATCH',[w.id,'sessions',sid,'memory','context'],{contextJson:context},{'if-match':memory.payload.data.writeETag});assert.equal(updated.status,200);assert.equal(updated.payload.data.sessionMemory.contextJson.summary,'corrected');
-  assert.equal((await call('PATCH',[w.id,'sessions',sid,'memory','context'],{contextJson:context},{'if-match':memory.payload.data.writeETag})).status,409);
+  for(const action of ['memory','memory/context','memory/summarize','unknown']) {
+    assert.equal((await call('GET',[w.id,'sessions',sid,...action.split('/')])).status,404);
+    assert.equal((await call('PATCH',[w.id,'sessions',sid,...action.split('/')],{})).status,404);
+  }
   f.service.close(sid,lease);
  }finally{f.close();}
 });

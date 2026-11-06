@@ -3,9 +3,11 @@ const {test}=require('node:test'),assert=require('node:assert/strict'),fs=requir
 const {targetSchema}=require('../src/infrastructure/database/schema.server.ts');
 const {matchesTargetSchema}=require('../src/infrastructure/database/schema-compatibility.ts');
 const {jsonBody}=require('../src/shared/protocol/api.ts');
-test('all retired memory/template HTTP methods return 404/no-store without loading services or reading history',async()=>{
- const routes=['projects/[projectId]/sessions/[sessionId]/memory','projects/[projectId]/sessions/[sessionId]/memory/context','projects/[projectId]/sessions/[sessionId]/memory/summarize','session-memory-templates','session-memory-templates/[templateId]'];
- for(const route of routes){const handlers=require('../src/app/api/'+route+'/route.ts');for(const method of ['GET','POST','PUT','PATCH','DELETE']){if(!handlers[method])continue;const response=await handlers[method](new Request('http://localhost/api/retired',{method}));assert.equal(response.status,404);assert.equal(response.headers.get('cache-control'),'no-store');assert.equal((await response.json()).error.code,'NOT_FOUND');}}
+test('retired memory endpoints have no Next route handlers',()=>{
+ const root=path.resolve(__dirname,'../src/app/api');
+ for(const endpoint of ['projects/[projectId]/sessions/[sessionId]/memory','projects/[projectId]/sessions/[sessionId]/memory/context','projects/[projectId]/sessions/[sessionId]/memory/summarize','session-memory-templates','session-memory-templates/[templateId]']) {
+  assert.equal(fs.existsSync(path.join(root,endpoint,'route.ts')),false,endpoint);
+ }
 });
 test('Schema preflight reads only; retired memory or missing uniqueness/trigger keeps old data incompatible and untouched',()=>{
  const db=new Database(':memory:');try{

@@ -1,7 +1,8 @@
+import { downloadFile, readFileBlob } from "./file-download";
 import { randomUUID } from "./random-uuid";
 import type {NativeContextInspection} from "../domain/native-context";
 import type { SessionModelView, RecoveryView } from "../../src/domain/session-tools";
-import type { Agent, AgentEvent, ConversationMessage, FilePreview, Mcp, Project, ProjectChanges, ProjectFileListing, Session } from "../domain/models";
+import type { Agent, FilePreview, Mcp, Project, ProjectChanges, ProjectFileListing, Session } from "../domain/models";
 
 type ApiEnvelope<T> = { data?: T; error?: { message?: string; code?: string } };
 const jsonHeaders = { "content-type": "application/json" };
@@ -13,46 +14,6 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const payload = await response.json().catch(() => ({})) as ApiEnvelope<T>;
   if (!response.ok) throw new Error(`${payload.error?.message ?? "请求失败"}（${response.status} ${url}）`);
   return payload.data as T;
-}
-
-async function* stream<T>(url: string, init: RequestInit, fallback: string, onAccepted?: () => void): AsyncGenerator<T> {
-  const started = performance.now();
-  let firstTextLogged = false;
-  let completeLogged = false;
-  const parseEvent = (line: string): T => {
-    const envelope = JSON.parse(line) as { event?: T; turnId?: unknown; runId?: unknown; sessionId?: unknown; payload?: unknown };
-    const event = (envelope.event ?? envelope.payload) as { type?: string; text?: string } | null;
-    const stage = !firstTextLogged && event?.type === "message_delta" && event.text ? "first_text_received"
-      : !completeLogged && event?.type === "complete" ? "complete_received" : null;
-    const turnId = envelope.turnId ?? envelope.runId;
-    if (stage && typeof turnId === "string" && typeof envelope.sessionId === "string") {
-      if (stage === "first_text_received") firstTextLogged = true;
-      else completeLogged = true;
-      try {
-        console.info(`[project-message-stream] ${JSON.stringify({ turnId, sessionId: envelope.sessionId, stage, elapsedMs: Math.round((performance.now() - started) * 10) / 10, at: new Date().toISOString() })}`);
-      } catch { /* best effort */ }
-    }
-    return (envelope.event ?? envelope) as T;
-  };
-  const response = await fetch(url, init);
-  if (!response.ok || !response.body) {
-    const payload = await response.json().catch(() => ({})) as ApiEnvelope<never>;
-    throw new Error(`${payload.error?.message ?? fallback}（${response.status} ${url}）`);
-  }
-  onAccepted?.();
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  while (true) {
-    const part = await reader.read();
-    if (part.done) break;
-    buffer += decoder.decode(part.value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() ?? "";
-    for (const line of lines) if (line.trim()) yield parseEvent(line);
-  }
-  buffer += decoder.decode();
-  if (buffer.trim()) yield parseEvent(buffer);
 }
 
 function mutation(method: string, body?: unknown): RequestInit {
@@ -106,11 +67,12 @@ export const api = {
   openSession: (projectId:string,sessionId:string) => request<{leaseId:string;status:string;outcome:string|null}>(`/api/projects/${projectId}/sessions/${sessionId}/runtime/open`, mutation("POST")),
   closeSession: (projectId:string,sessionId:string,leaseId:string) => fetch(`/api/projects/${projectId}/sessions/${sessionId}/runtime/close`, {...mutation("POST", {leaseId}), keepalive:true}).then(() => {}),
   listMessages: (projectId: string, sessionId: string) => request<import("../domain/models").SessionTree>(`/api/projects/${projectId}/sessions/${sessionId}/messages`, {cache:"no-store"}),
-  sendMessage: (projectId: string, sessionId: string, leaseId:string, content: string, steer=false, onAccepted?: () => void, references?: import("../../src/domain/message-references").MessageReference[]) => stream<import("../domain/models").PiStreamEvent>(`/api/projects/${projectId}/sessions/${sessionId}/messages`, { ...mutation("POST", { content,steer,references }), headers: { ...jsonHeaders, "idempotency-key": randomUUID(), "x-session-lease-id":leaseId } }, "无法发送项目消息", onAccepted),
   interruptProjectSession: (projectId: string, sessionId: string) => request<Session>(`/api/projects/${projectId}/sessions/${sessionId}/interrupt`, mutation("POST")),
   restoreProjectSession: (projectId: string, sessionId: string) => request<Session>(`/api/projects/${projectId}/sessions/${sessionId}/restore`, mutation("POST")),
   endProjectSession: (projectId: string, sessionId: string) => request<Session>(`/api/projects/${projectId}/sessions/${sessionId}/end`, mutation("POST")),
   listFiles: (projectId: string, path = "") => request<ProjectFileListing>(`/api/projects/${projectId}/files?path=${encodeURIComponent(path)}`),
+  readFileBlob: (projectId:string,path:string,signal?:AbortSignal) => readFileBlob(`/api/projects/${encodeURIComponent(projectId)}/files/download?path=${encodeURIComponent(path)}`,signal),
+  downloadFile: (projectId: string, path: string) => downloadFile(`/api/projects/${encodeURIComponent(projectId)}/files/download?path=${encodeURIComponent(path)}`, path),
   readFile: (projectId: string, path: string) => request<FilePreview>(`/api/projects/${projectId}/files/content?path=${encodeURIComponent(path)}`),
   listChanges: (projectId: string) => request<ProjectChanges>(`/api/projects/${projectId}/changes`),
 };

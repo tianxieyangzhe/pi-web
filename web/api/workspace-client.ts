@@ -1,3 +1,4 @@
+import { downloadFile, readFileBlob } from './file-download';
 import { randomUUID } from "./random-uuid";
 import type { WorkspaceRecord, WorkspaceSessionDTO, WorkspaceConfiguration } from '../../src/domain/workspace';
 import type { DirectoryListing } from '../../src/application/ports/workspace';
@@ -25,6 +26,8 @@ export const workspaceApi={
   switchModel:(id:string,sid:string,provider:string,modelId:string,lease:string,thinkingLevel?:import('../../src/domain/session-tools').SessionThinkingLevel)=>request<import('../../src/domain/session-tools').SessionModelView>(`${session(id,sid)}/model`,'PUT',{provider,modelId,thinkingLevel},{'x-session-lease-id':lease}),
   context:(id:string,sid:string)=>request<NativeContextInspection>(`${session(id,sid)}/context`),
   compact:async(id:string,sid:string,cancel=false)=>{await request(`${session(id,sid)}/compact${cancel?'/cancel':''}`,'POST');return workspaceApi.context(id,sid);},
+  readFileBlob:(id:string,projectId:string,path:string,signal?:AbortSignal)=>readFileBlob(`${base(id)}/projects/${encodeURIComponent(projectId)}/files/download?path=${encodeURIComponent(path)}`,signal),
+  downloadFile:(id:string,projectId:string,path:string)=>downloadFile(`${base(id)}/projects/${encodeURIComponent(projectId)}/files/download?path=${encodeURIComponent(path)}`,path),
   readFile:(id:string,projectId:string,path:string)=>request<import('../domain/models').FilePreview>(`${base(id)}/projects/${encodeURIComponent(projectId)}/files/content?path=${encodeURIComponent(path)}`),
   files:(id:string,projectId:string,path='')=>request<ProjectFileListing>(`${base(id)}/projects/${projectId}/files?path=${encodeURIComponent(path)}`),
 };

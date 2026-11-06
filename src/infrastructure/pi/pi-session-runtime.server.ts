@@ -31,7 +31,6 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { AgentSession as PiAgentSession, SessionEntry } from "@earendil-works/pi-coding-agent";
 import type { PiRuntimePort, SessionRuntimeInput } from "@/application/ports/pi-runtime";
-import { createPiProjectTools } from "@/infrastructure/projects/pi-project-tools.server";
 import { loadModelConfiguration, resolveConfiguredModel, resolveSessionModel } from "./model-config.server";
 import { branchEntries, fileDigest, persistManager, prepareFork, renderSessionExport } from "./session-artifacts.server";
 
@@ -41,7 +40,6 @@ import {sessionPreview,type SessionPreview} from "@/domain/session-preview";
 import { getSupportedThinkingLevels } from '@earendil-works/pi-ai';
 import { sessionThinkingLevels, type SessionThinkingLevel, type SessionModelSelection } from '@/domain/session-tools';
 import { emptyInspection, type NativeContextInspection } from "@/domain/native-context";
-import {toPiBotTools} from "./pi-bot-tools.server";
 import {projectTranscriptEntries} from "./transcript-projection";
 
 type Handle = {
@@ -53,7 +51,6 @@ type Handle = {
   cwd: string;
   isProjectSession: boolean;
   input: SessionRuntimeInput;
-  writeAccess: { allowed: boolean };
   useConfiguration:(configuration:Awaited<ReturnType<typeof loadModelConfiguration>>)=>void;
 };
 
@@ -114,10 +111,6 @@ export function visibleToolLabel(toolName: string): string {
     find: "查找文件",
     grep: "搜索内容",
     ls: "浏览目录",
-    project_edit: "修改项目文件",
-    project_list: "浏览项目目录",
-    project_read: "读取项目文件",
-    project_write: "写入项目文件",
     read: "读取文件",
     write: "写入文件",
   };
@@ -159,9 +152,8 @@ function loaderFor(input: SessionRuntimeInput, referenceScope: ReturnType<typeof
     additionalSkillPaths: [],
     appendSystemPrompt: [
       requestScopeInstructions,
-      ...(input.workspace ? [input.workspace.prompt] : []),
-      ...(input.roleInstructions ? [input.roleInstructions] : []),
-      ...(isRoleSnapshot(agent)&&!input.roleInstructions?[agent.definition.instructions]:[]),
+      ...(input.workspace ? [input.workspace.prompt] : input.nativeCodingTools ? ['本会话使用Pi原生read、bash、edit、write工具；以本轮实际声明的工具为准；可通过bash调用部署已有的Python环境，不擅自安装依赖。项目目录为cwd，不是文件系统沙箱；上传附件原件保持只读，编辑结果另存。'] : []),
+      ...(isRoleSnapshot(agent)?[agent.definition.instructions]:[]),
       
     ],
   });
@@ -251,7 +243,6 @@ export class PiSessionRuntime implements PiRuntimePort, PiContextPort {
     const referenceScope = createMessageReferenceScope();
     const searchScope = createServerWebSearchScope();
     const toolSearchScope = createToolSearchScope(this.toolSearchDependencies);
-    const writeAccess = { allowed: false };
     const loader = loaderFor(input, referenceScope, searchScope, toolSearchScope);
     await loader.reload();
     const configuration = await this.configuredModel();
@@ -259,10 +250,6 @@ export class PiSessionRuntime implements PiRuntimePort, PiContextPort {
     const model = input.selectedModel ? await resolveConfiguredModel(configuration,input.selectedModel) : await resolveSessionModel(configuration,selected&&'provider' in selected?{provider:selected.provider,modelId:selected.modelId}:configuration.model?{provider:configuration.model.provider,modelId:configuration.model.id}:undefined);
     let currentConfiguration=configuration;
     const modelRuntime=new Proxy(configuration.runtime,{get(_target,property){const value=Reflect.get(currentConfiguration.runtime,property,currentConfiguration.runtime);return typeof value==='function'?value.bind(currentConfiguration.runtime):value;}});
-    const customTools = input.workspace ? [] : [
-      ...await createPiProjectTools(input, () => !input.independentProjectTools || writeAccess.allowed),
-      ...toPiBotTools(input.collaborationTools ?? []),
-    ];
     const result = await createPersistentAgentSession({
       cwd: input.workingDirectory,
       sessionManager: manager,
@@ -270,10 +257,7 @@ export class PiSessionRuntime implements PiRuntimePort, PiContextPort {
       resourceLoader: loader,
       settingsManager: SettingsManager.inMemory(),
       model,
-      ...(input.workspace ? { tools: ['read', 'bash', 'edit', 'write', ...toolSearchNames] } : {
-        noTools: "builtin" as const,
-        ...(customTools.length ? { customTools } : {}),
-      }),
+      tools: ['read', 'bash', 'edit', 'write', ...toolSearchNames],
 
     });
     result.session.setActiveToolsByName(result.session.getActiveToolNames().filter(name => !toolSearchNames.includes(name)));
@@ -288,7 +272,6 @@ export class PiSessionRuntime implements PiRuntimePort, PiContextPort {
       cwd: input.workingDirectory,
       isProjectSession: input.projectSession !== false,
       input,
-      writeAccess,
       useConfiguration:configuration=>{currentConfiguration=configuration;},
     };
   }
@@ -350,7 +333,8 @@ export class PiSessionRuntime implements PiRuntimePort, PiContextPort {
     await this.refreshHandle(piHandle);
     if(webSearch)this.validateWebSearch(handle);
     if(toolSearch)this.validateToolSearch();
-    piHandle.writeAccess.allowed = allowProjectWrite;
+    const originalTools = piHandle.input.nativeCodingTools && !piHandle.input.workspace && !allowProjectWrite
+      ? piHandle.session.getActiveToolNames() : null;
     const turn: TurnState = {
       publicText: "",
       toolDetails: new Map(),
@@ -380,6 +364,7 @@ export class PiSessionRuntime implements PiRuntimePort, PiContextPort {
       mapEvent(event as PiEvent, emit, turn, piHandle.cwd);
     });
     try {
+      if(originalTools)piHandle.session.setActiveToolsByName(originalTools.filter(name=>name==='read'));
       piHandle.searchScope.begin(webSearch);
       piHandle.toolSearchScope.begin(toolSearch, piHandle.session);
       const referenceTurnId = piHandle.referenceScope.begin();
@@ -396,11 +381,13 @@ export class PiSessionRuntime implements PiRuntimePort, PiContextPort {
       if(promptStarted)await piHandle.session.waitForIdle();
       await Promise.all(pendingLinks);
       piHandle.searchScope.end();
-      await piHandle.toolSearchScope.end();
-      piHandle.referenceScope.end();
-      piHandle.writeAccess.allowed = false;
-      unsubscribe();
-      persistManager(piHandle.manager);
+      try { await piHandle.toolSearchScope.end(); }
+      finally {
+        piHandle.referenceScope.end();
+        if(originalTools)piHandle.session.setActiveToolsByName(originalTools);
+        unsubscribe();
+        persistManager(piHandle.manager);
+      }
     }
   }
 
@@ -449,33 +436,6 @@ export class PiSessionRuntime implements PiRuntimePort, PiContextPort {
     await (handle as Handle).session.abort();
   }
 
-  async projectHandle(input: SessionRuntimeInput) {
-    const existing = this.handles.get(input.session.id) ?? (input.session.nativeRef ? await this.restore(input) : (await this.open(input)).handle) as Handle;
-    const textOf = (content: unknown) => typeof content === "string" ? content : Array.isArray(content) ? content.map(part => part && typeof part === "object" && "text" in part ? String(part.text ?? "") : "").join("") : "";
-    return {
-      sessionId: input.session.id,
-      subscribe: (listener: (event: { type: "agent_settled"; aborted: boolean; endEntryId: string | null }) => void) => existing.session.subscribe(event => {
-        if (event.type !== "agent_end") return;
-        const end = [...existing.manager.getBranch()].reverse().find(entry => entry.type === "message" && (entry.message as { role?: string }).role === "assistant");
-        listener({ type: "agent_settled", aborted: event.willRetry !== true && !end, endEntryId: end?.id ?? null });
-      }),
-      prompt: async (content: string) => {
-        const before = new Set(existing.manager.getBranch().map(entry => entry.id));
-        await existing.session.prompt(content, { expandPromptTemplates: false });
-        const start = existing.manager.getBranch().find(entry => !before.has(entry.id) && entry.type === "message" && (entry.message as { role?: string }).role === "user");
-        if (!start) throw new DomainError("RUNTIME_ERROR", "项目调用未写入 Pi transcript", 503, true);
-        return { startEntryId: start.id };
-      },
-      steer: async (content: string) => { await existing.session.steer(content); },
-      readAssistant: async (startEntryId: string, endEntryId: string) => {
-        const branch = existing.manager.getBranch();
-        const start = branch.findIndex(entry => entry.id === startEntryId), end = branch.findIndex(entry => entry.id === endEntryId);
-        if (start < 0 || end < start) throw new DomainError("INVALID_STATE", "项目调用 transcript 边界无效", 409, true);
-        return branch.slice(start, end + 1).flatMap(entry => entry.type === "message" && (entry.message as { role?: string }).role === "assistant" ? [textOf((entry.message as { content?: unknown }).content)] : []).join("\n");
-      },
-    };
-  }
-
   async readTree(input: SessionRuntimeInput) {
     const live = this.handles.get(input.session.id);
     if (live) {this.snapshot(input);return structuredClone(snapshotTree(live.manager));}
@@ -494,7 +454,7 @@ export class PiSessionRuntime implements PiRuntimePort, PiContextPort {
     } else {
       manager = SessionManager.create(input.workingDirectory);
     }
-    return projectTranscriptEntries(manager.getBranch(), { workingDirectory: input.workingDirectory, coordinatorExecutionIds: input.coordinatorExecutionIds }).map(message => ({ ...message, sessionId: input.session.id, id: message.id || `${input.session.id}` }));
+    return projectTranscriptEntries(manager.getBranch(), { workingDirectory: input.workingDirectory }).map(message => ({ ...message, sessionId: input.session.id, id: message.id || `${input.session.id}` }));
   }
 
   private manager(input: SessionRuntimeInput): SessionManager | null {

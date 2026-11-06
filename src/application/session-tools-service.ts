@@ -23,7 +23,7 @@ export function createSessionToolsService(d: {
   function scope(projectId:string,id:string):SessionRuntimeInput {
     const session=d.sessions.get(id),project=d.projects.get(projectId);
     if(!session||!project||session.projectId!==projectId)throw new DomainError('NOT_FOUND','会话不存在',404,true);
-    return {session,workingDirectory:project.rootPath,allowProjectRead:true,allowProjectWrite:true,independentProjectTools:true,projectSession:true};
+    return {session,workingDirectory:project.rootPath,allowProjectRead:true,allowProjectWrite:true,nativeCodingTools:true,projectSession:true};
   }
   function persistentETag(value:Session){return String((d.present(value) as {writeETag?:string}).writeETag??hash(canonical({id:value.id,projectId:value.projectId,purpose:value.purpose,agentId:value.agentId,endedAt:value.endedAt??null,updatedAt:value.updatedAt??null})));}
   function pending(projectId:string,id:string) { return d.operations.list(projectId,id).filter(record=>!['completed','failed','acknowledged'].includes(record.phase)); }
@@ -115,6 +115,7 @@ export function createSessionToolsService(d: {
       if(prior&&prior.payloadSha256!==hash(canonical(payload)))throw new DomainError('IDEMPOTENCY_CONFLICT','请求键已用于不同消息',409,true);
       if(prior){if(prior.phase==='completed'||active.has(operationId))return {accepted:true,sessionId:id,operationId};throw new DomainError('REQUEST_UNKNOWN','此前请求结果待核对',409,true);}
       assertKnown(projectId,id);if(sessionLocks.has(id))throw new DomainError('SESSION_BUSY','会话正在执行',409,true);
+      if(!d.runtime.getHandle(id))throw new DomainError('RUNTIME_NOT_OPEN','会话运行连接已失效，请重新连接后发送，输入和文件将保留',409,true);
       if(body.webSearch===true){const handle=d.runtime.getHandle(id);if(!handle||!d.runtime.validateWebSearch)throw new DomainError('WEB_SEARCH_UNSUPPORTED','当前运行时不支持服务端搜索，请关闭联网搜索',422,true);d.runtime.validateWebSearch(handle);}
       if(body.toolSearch===true){if(!d.runtime.validateToolSearch)throw new DomainError('TOOL_SEARCH_UNAVAILABLE','当前运行时未装配工具搜索，请关闭工具搜索或重启服务',422,true);d.runtime.validateToolSearch();}
       let record=d.operations.prepare(projectId,id,'message',key,payload,{baseline:d.runtime.operationEvidence(input)});

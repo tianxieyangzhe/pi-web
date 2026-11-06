@@ -3,8 +3,8 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { DomainError } from '@/domain/errors';
 
-// Captured before any business cwd is selected; npm preserves the invocation directory here.
-export const applicationConfigRoot = path.resolve(process.env.INIT_CWD || process.cwd());
+import { applicationConfigRoot } from '../application-config-root';
+export { applicationConfigRoot } from '../application-config-root';
 export type ConfigurationSource = 'local' | 'global' | 'native';
 function configurationError(): never {
   throw new DomainError('MODEL_CONFIGURATION_ERROR', 'Pi 模型或默认设置配置无效，请检查启动目录中的配置文件', 503, true);

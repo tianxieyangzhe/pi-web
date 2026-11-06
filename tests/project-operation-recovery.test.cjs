@@ -5,6 +5,18 @@ const {operationIdentity,createdSessionId}=require('../src/domain/project-operat
 const {createSessionToolsService}=require('../src/application/session-tools-service.ts');
 const {sessionLocks}=require('../src/application/session-lock.ts');
 function fixture(){const root=fs.mkdtempSync(path.join(os.tmpdir(),'project-operations-'));const operations=createProjectOperationStore(root),rows=new Map([['s',{id:'s',projectId:'p',purpose:'original',agentId:null,agentSnapshot:null,nativeRef:{kind:'pi',sessionId:'native',sessionFile:'/temp/native',cwd:'/temp'},endedAt:null}]]);let calls=0,sqlFails=false,settle;const runtime={validateForkCandidate:()=>({fileSha256:'candidate-hash'}),operationEvidence:input=>({nativeRef:input.session.nativeRef,fileSha256:'unchanged'}),readTree:async()=>({entries:[],activeLeafId:null}),models:async()=>({current:null,defaults:{provider:null,modelId:null},sources:{models:'native',settings:'native'},models:[],canSwitch:true,unavailableReason:null}),switchModel:async()=>{calls++;},fork:async()=>{calls++;return {kind:'pi',sessionId:'child',sessionFile:'/temp/child',cwd:'/temp'};},export:async()=>'',getHandle:()=>({})};const sessions={get:id=>rows.get(id)??null,updateRuntime:(id,patch)=>Object.assign(rows.get(id),patch),create:input=>{if(sqlFails)throw Error('SQL failed');const row={...input,id:input.stableId};rows.set(row.id,row);return row;}};const execution={assertLease(){},hasLease:()=>true,open:async()=>({leaseId:'l',status:'ready'}),interrupt:async()=>{settle?.();},restore:async()=>rows.get('s'),accept:(id,text,refs,callback)=>{calls++;settle=()=>callback();return {accepted:true,sessionId:id};}};const create=()=>createSessionToolsService({sessions,projects:{get:()=>({id:'p',status:'active',rootPath:'/temp'})},operations,runtime,execution,assertWritable(){},present:value=>value,catalog:{}});return {root,operations,rows,runtime,sessions,execution,create,get calls(){return calls;},failSql(value){sqlFails=value;},settle:()=>settle?.(),close(){sessionLocks.delete('s');fs.rmSync(root,{recursive:true,force:true});}};}
+test('missing runtime or expired lease rejects file messages before journal writes and allows a fresh submission',()=>{
+ const f=fixture();try{
+  const service=f.create(),body={content:'读取文件',references:[{name:'notes.txt',data:Buffer.from('notes').toString('base64')}],webSearch:true};
+  const ref=structuredClone(f.rows.get('s').nativeRef);f.runtime.getHandle=()=>undefined;
+  assert.throws(()=>service.accept('p','s',body,'file','lease'),e=>e.code==='RUNTIME_NOT_OPEN');assert.equal(f.calls,0);assert.equal(f.operations.list('p','s').length,0);assert.deepEqual(f.rows.get('s').nativeRef,ref);
+  f.runtime.getHandle=()=>({});f.runtime.validateWebSearch=()=>{};
+  f.execution.assertLease=()=>{throw new (require('../src/domain/errors.ts').DomainError)('RUNTIME_NOT_OPEN','expired',409,true);};
+  assert.throws(()=>service.accept('p','s',body,'file','expired'),e=>e.code==='RUNTIME_NOT_OPEN');assert.equal(f.operations.list('p','s').length,0);
+  f.execution.assertLease=()=>{};const accepted=service.accept('p','s',body,'file','fresh');assert.equal(accepted.accepted,true);assert.equal(f.calls,1);f.settle();
+  f.runtime.getHandle=()=>undefined;assert.equal(service.accept('p','s',body,'file','fresh').operationId,accepted.operationId);assert.equal(f.calls,1,'completed replay must not resend even if runtime is gone');
+ }finally{f.close();}
+});
 test('Project search intent validates before journal writes, reaches execution and participates in idempotency',()=>{
  const f=fixture();try{const service=f.create();
   for(const webSearch of [null,1,'true'])assert.throws(()=>service.accept('p','s',{content:'search',webSearch},'bad','lease'),e=>e.code==='INVALID_INPUT');

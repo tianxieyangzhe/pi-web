@@ -43,7 +43,6 @@ export function Conversation({ tree, temporary, pendingText, running, afterTurns
       </div>;
     })}
     {pendingText && <article className="ml-auto grid w-3/4 min-w-0 gap-1 rounded-lg bg-emerald-50/70 px-3 py-2 text-left"><span className="text-[11px] text-zinc-500">你 · 等待原生输入事件确认</span><div className="whitespace-pre-wrap text-sm leading-6 [overflow-wrap:anywhere]">{pendingText}</div></article>}
-    {running && !visibleTemporary.some(item => temporaryMessage(item)?.role === "assistant" || item.events.some(event => event.type.startsWith("tool_"))) && <p className="m-0 flex items-center gap-2 py-1 text-xs text-zinc-500" role="status"><LoaderCircle className="animate-spin" size={14} aria-hidden="true" />正在思考</p>}
     {visibleTemporary.map(item => {
       const message = temporaryMessage(item);
       if (message?.role === "custom" && message.customType === "user_reference_files") return <Disclosure key={item.key} title="本轮附件 · 同步中"><MessageContent message={message} /><Disclosure title="完整实时事件"><Raw value={item.events} /></Disclosure></Disclosure>;
@@ -51,5 +50,6 @@ export function Conversation({ tree, temporary, pendingText, running, afterTurns
       const tool = toolEvents.length ? Object.assign({}, ...toolEvents.map(event => event.payload)) as Record<string, unknown> : null;
       return <article className={`grid min-w-0 gap-1 ${message?.role==='user'?'ml-auto w-3/4 rounded-lg bg-emerald-50/70 px-3 py-2 text-left':''}`} key={item.key}><span className="text-[11px] text-zinc-500">{String(message?.role ?? "Pi")} · {item.entryId ? "等待历史核对" : "未确认持久化"}</span>{message ? <MessageContent message={message} /> : tool ? <Disclosure title={`工具 · ${String(tool.toolName ?? "tool")} · ${toolEvents.at(-1)?.type === "tool_execution_end" ? "已返回" : "执行中"}`}><Raw value={tool.args} />{tool.result != null || tool.partialResult != null ? <Raw value={tool.result ?? tool.partialResult} /> : null}<Disclosure title="完整工具事件"><Raw value={item.events} /></Disclosure></Disclosure> : <Disclosure title="实时事件"><Raw value={item.events} /></Disclosure>}</article>;
     })}
+    {running && <p className="m-0 flex items-center gap-2 py-1 text-xs text-zinc-500" role="status"><LoaderCircle className="animate-spin" size={14} aria-hidden="true" />正在等待</p>}
   </section>;
 }

@@ -17,9 +17,21 @@ test('clipboard image preserves bytes; rejects unsupported types and unreadable 
  assert.throws(()=>clipboardFiles({...data,items:[{kind:'file',type:'image/svg+xml',getAsFile:()=>new File(['svg'],'a.svg',{type:'image/svg+xml'})}]}),/只支持/);
  assert.throws(()=>clipboardFiles({...data,items:[{kind:'file',type:'image/png',getAsFile:()=>null}]}),/无法读取/);
 });
+test('clipboard preserves ordinary files, mixed images and files, and files-only fallback',async()=>{
+ const text=new File(['文件内容\r\n第二行'],'说明.md',{type:'text/markdown'});
+ const image=new File([new Uint8Array([137,80,78,71,13,10,26,10])],'截图.png',{type:'image/png'});
+ const data={items:[text,image].map(file=>({kind:'file',type:file.type,getAsFile:()=>file})),files:[text,image],getData:()=> '文件名不应替代内容'};
+ const files=clipboardFiles(data);assert.deepEqual(files,[text,image]);assert.equal(files[0].name,'说明.md');assert.equal(files[1].name,'截图.png');assert.equal(await files[0].text(),'文件内容\r\n第二行');
+ assert.deepEqual(clipboardFiles({...data,items:[]}),[text,image]);
+ assert.deepEqual(clipboardFiles({...data,items:[data.items[0]],files:[text]}),[text]);
+ assert.throws(()=>clipboardFiles({...data,items:[{kind:'file',type:'',getAsFile:()=>null}]}),/无法读取/);
+});
 test('paste respects combined attachment count and byte limits',()=>{
  const small=new File(['x'],'x.txt');assert.throws(()=>validateAttachments([small],10),/10/);
- assert.throws(()=>validateAttachments([new File([new Uint8Array(2*1024*1024+1)],'large')],0),/2 MiB/);
- const full=new File([new Uint8Array(2*1024*1024)],'full');assert.throws(()=>validateAttachments(Array(5).fill(full),0),/8 MiB/);
- validateAttachments(Array(4).fill(full),6);
+ const file=size=>({name:'size.txt',size});
+ assert.throws(()=>validateAttachments([file(50_000_000)],0),/50 MB/);
+ validateAttachments([file(49_999_999)],0);
+ validateAttachments([file(25_000_000),file(25_000_000)],0);
+ assert.throws(()=>validateAttachments([file(25_000_000),file(25_000_001)],0),/50 MB/);
+ validateAttachments(Array(4).fill(file(3*1024*1024)),6);
 });

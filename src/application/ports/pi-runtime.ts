@@ -9,11 +9,7 @@ export type SessionRuntimeInput = {
   allowProjectWrite: boolean;
   allowProjectRead?:boolean;
   projectSession?: boolean;
-  independentProjectTools?: boolean;
-  coordinatorExecutionIds?: ReadonlySet<string>;
-  roleInstructions?: string;
-  collaborationTools?: import("./bot").BotTool[];
-  executionIdentity?: string;
+  nativeCodingTools?: boolean;
   workspace?: { id: string; defaultProjectId: string; projects: import("@/domain/workspace").WorkspaceProject[]; prompt: string };
 };
 
@@ -30,11 +26,9 @@ export interface PiRuntimePort {
   validateWebSearch?(handle: PiSessionHandle): void;
   send(handle: PiSessionHandle, message: string, emit: (event: AgentEvent) => void, onAssistantStream?: () => void, references?: import("@/domain/message-references").ReferenceContent, allowProjectWrite?: boolean, webSearch?: boolean, toolSearch?: boolean): Promise<void>;
   interrupt(handle: PiSessionHandle): Promise<void>;
-  projectHandle?(input: SessionRuntimeInput): Promise<import("@/infrastructure/pi/coordinator-bridge-plugin").ProjectSessionHandle>;
   readMessages(input: SessionRuntimeInput): Promise<Array<{
     id: string;
     role: "user" | "assistant";
-    origin?: "user" | "coordinator";
     content: string;
     createdAt: string;
     entries?: Array<{ id: string; kind: "text" | "tool"; text?: string; activity?: ActivityEvent }>;

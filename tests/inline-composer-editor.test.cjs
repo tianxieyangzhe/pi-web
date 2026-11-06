@@ -52,6 +52,21 @@ test('long paste replaces selection with a chip at the caret; surrounding text r
   assert.equal(editor.textContent,'');
  }finally{await h.close();}
 });
+test('DOM paste submits the same complete image and file snapshots as the upload button',async()=>{
+ const sent=[],h=await harness((content,refs)=>sent.push({content,refs}));
+ try{
+  const bytes=new Uint8Array([137,80,78,71,13,10,26,10,1,2,3]);
+  const files=[new File([bytes],'截图.png',{type:'image/png'}),new File(['完整文件\r\n第二行'],'说明.md',{type:'text/markdown'})];
+  await paste(h.editor(),'clipboard names',files);assert.equal(h.editor().querySelectorAll('[data-attachment-id]').length,2);
+  await submit(h);
+  await act(async()=>{
+   const input=h.container.querySelector('input[type=file]');Object.defineProperty(input,'files',{configurable:true,value:files});input.dispatchEvent(new window.Event('change',{bubbles:true}));
+  });
+  await submit(h);assert.equal(sent.length,2);assert.deepEqual(sent[0],sent[1]);
+  assert.equal(sent[0].refs[0].name,'截图.png');assert.deepEqual(Buffer.from(sent[0].refs[0].data,'base64'),Buffer.from(bytes));
+  assert.equal(Buffer.from(sent[0].refs[1].data,'base64').toString(),'完整文件\r\n第二行');
+ }finally{await h.close();}
+});
 test('images and uploaded files use the saved input cursor; remove button and keyboard deletion remove send material',async()=>{
  const sent=[],h=await harness((content,refs)=>sent.push({content,refs}));
  try{

@@ -13,15 +13,15 @@ test('real in-memory Pi branch does not project reference files',async()=>{
 test('tool results stay at their transcript time instead of nesting under assistant text',()=>{
   const projected=projectTranscriptEntries([
     {id:'user',type:'message',timestamp:'2026-07-15T00:00:00.000Z',message:{role:'user',content:'先看文件'}},
-    {id:'assistant',type:'message',timestamp:'2026-07-15T00:00:01.000Z',message:{role:'assistant',content:[{type:'text',text:'我先读取'},{type:'toolCall',id:'call-1',name:'project_read',arguments:{path:'README.md'}}]}},
-    {id:'result',type:'message',timestamp:'2026-07-15T00:00:02.000Z',message:{role:'toolResult',toolCallId:'call-1',toolName:'project_read',isError:false,content:[{type:'text',text:'secret output'}]}},
+    {id:'assistant',type:'message',timestamp:'2026-07-15T00:00:01.000Z',message:{role:'assistant',content:[{type:'text',text:'我先读取'},{type:'toolCall',id:'call-1',name:'read',arguments:{path:'README.md'}}]}},
+    {id:'result',type:'message',timestamp:'2026-07-15T00:00:02.000Z',message:{role:'toolResult',toolCallId:'call-1',toolName:'read',isError:false,content:[{type:'text',text:'secret output'}]}},
     {id:'after',type:'message',timestamp:'2026-07-15T00:00:03.000Z',message:{role:'assistant',content:[{type:'text',text:'读取完成'}]}},
   ],{workingDirectory:'/tmp/project'});
   assert.deepEqual(projected.map(item=>item.id),['user','assistant','result','after']);
   assert.equal(projected[1].content,'我先读取');
   assert.equal(projected[1].entries,undefined);
   assert.equal(projected[2].entries[0].kind,'tool');
-  assert.equal(projected[2].entries[0].activity.summary,'project_read');
+  assert.equal(projected[2].entries[0].activity.summary,'read');
   assert.equal(projected[2].entries[0].activity.detail,'目标：README.md');
   assert.equal(JSON.stringify(projected).includes('secret output'),false);
   assert.equal(JSON.stringify(projected).includes('读取文件'),false);

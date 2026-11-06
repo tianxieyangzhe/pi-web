@@ -50,8 +50,12 @@ export function subscribeSession(base: string, options: { onReady: (lease: Sessi
   return () => { disposed = true; ++generation; if (reconnect) clearTimeout(reconnect); release(); };
 }
 
+export class SessionMessageError extends Error {
+  constructor(message:string,readonly code:string|undefined,readonly status:number){super(message);this.name='SessionMessageError';}
+}
+
 export async function submitSessionMessage(base: string, leaseId: string, content: string, references?: import("../../src/domain/message-references").MessageReference[], webSearch?: boolean, toolSearch?: boolean) {
   const response = await fetch(`${base}/messages`, { method: "POST", headers: { "content-type": "application/json", accept: "application/json", "idempotency-key": randomUUID(), "x-session-lease-id": leaseId }, body: JSON.stringify({ content, references, webSearch, toolSearch }) });
-  if (!response.ok) { const payload = await response.json(); throw new Error(payload.error?.message ?? "消息提交失败"); }
+  if (!response.ok) { const payload = await response.json(); throw new SessionMessageError(payload.error?.message ?? "消息提交失败",payload.error?.code,response.status); }
   return (await response.json()).data;
 }

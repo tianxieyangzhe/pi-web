@@ -1,7 +1,7 @@
 require('./register.cjs');
 const {test}=require('node:test'),assert=require('node:assert/strict');
 const {SessionPresence}=require('../src/application/session-presence.ts');
-test('last page disconnect keeps busy coordinator; reopening cancels timeout; idle settlement releases',async t=>{
+test('last page disconnect keeps busy session; reopening cancels timeout; idle settlement releases',async t=>{
  t.mock.timers.enable({apis:['setTimeout']});let now=0,busy=true,released=0,aborts=0;
  const presence=new SessionPresence({busy:()=>busy,release:async()=>{released++;},abort:async()=>{aborts++;}},()=>now);
  const a=presence.open('s'),b=presence.open('s');presence.release('s',a);presence.assertLease('s',b);assert.equal(released,0);

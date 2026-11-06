@@ -1,6 +1,27 @@
 # 05｜需求：模型与 API 的完成条件
 
-本文范围：独立项目与通用需求验收。Bot 的全部专属设计、模型、API、交互与需求统一见 [06｜Bot](06-bot.md)，本文不定义或复写其规则。
+## FILE-003 会话目录文件链接修复
+
+状态：已实现，API定向验收通过。实际Word链接指向应用.data/session-files内所属Pi会话目录，被项目路径解析误拒绝；新增两类会话文件预览/下载API，通过数据库nativeRef限定目录。点击文件链接先打开预览，下载按钮固定预览左上角；当前会话文件可读，其他会话/目录越界拒绝。
+
+实际验证：tests/session-file-api.test.cjs新增4项，直接验证两类Session API的绝对回复路径预览→返回相对路径下载、原件字节/中文名、跨会话/任意宿主路径/符号链接/敏感路径拒绝、归属/缺失/无nativeRef错误；结合tests/file-download-api.test.cjs的9项共13项通过。npm run typecheck、git diff --check通过。另只读核验用户所述实际0024oceanbase数据库适配.docx存在、17274字节，路径位于其原生Session ID派生目录；不改文件或历史。未编写或运行非API测试、全量测试、生产构建或浏览器验收，未启停用户服务或改数据库。
+
+
+## FILE-002 Excel、PPT与PDF预览
+
+状态：已实现，API定向验收通过。独立项目与Workspace复用FILE-001 API与文件浮窗，Excel(.xlsx)按工作表展示单元格、PPT(.pptx)按幻灯片展示文字与表格，PDF浏览器原生页预览；原件下载保留。旧.xls/.ppt明确提示转换或下载。Excel不重算公式、日期保留存储值，PPT不保证图片/动画/主题版式；PDF浏览器支持情况需现场确认。
+
+实际验证：仅修改tests/file-download-api.test.cjs，9项API接口测试通过（既有5项、新增4项）。两类API覆盖工作表/幻灯片关系顺序、共享/内联字符串及转义名称、单元格位置和缓存/无缓存公式、PPT文本/表格、PDF元数据/签名/下载MIME和字节、损坏/实体定义/旧格式/投影上限回退，兼验Word与原路径/容量限制。npm run typecheck及git diff --check通过。未新增或运行组件/函数/页面测试，未运行全量测试、生产构建或浏览器验收；使用临时文件与受控服务，无用户文档/数据库修改、Pi调用、第三方上传或服务启停。
+
+
+## FILE-001 生成文件下载与预览
+
+状态：已实现，API定向验收通过。两类会话中的真实项目文件链接打开现有文件浮窗；DOCX可预览标题、表格、段落及代码内容并下载原件；其他不支持预览的文件仍可下载且明确提示。下载中文名/字节完整；不存在、跨归属、敏感路径、越界符号链接拒绝；失败不伪造成功。
+
+实际验证：tests/file-download-api.test.cjs共5项通过，直接调用Project Route Handler及Workspace API，临时文件验证中文名/MIME/长度/no-store,no-transform/nosniff、下载字节不变、Word标题与7个表格和代码块、HTML仅作为数据、纯文本/损坏Word/二进制回退、路径/归属/目录拒绝及512KiB预览和50MB下载边界。npm run typecheck、git diff --check通过。仅新增API接口测试；未写页面/组件/函数测试，未运行全量测试、生产构建或浏览器验收。测试文档为临时夹具，不代表已检查用户所述实际文件；不修改用户文档、不迁移数据库、不调用模型或启停服务。
+
+
+本文范围：独立项目与通用需求验收。Workspace的专属设计、模型、API、交互与需求统一见 [06｜Workspace](06-workspace.md)，本文不定义或复写其规则。
 
 本文决定做什么、不做什么，以及何时算完成。每项需求使用稳定 ID，并只按两个要点验收：模型事实是否正确，API 是否按契约读写模型并使用规定的 Pi 能力。
 
@@ -11,6 +32,8 @@
 ## 当前规则
 
 SETTINGS-002（已实现，定向验证通过）：单击左侧独立项目名称或展开箭头仅切换会话列表展开状态，不改变当前选择、中间会话栏或设置页，不触发打开/关闭会话。齿轮按钮打开项目设置，单击会话条目才进入对应会话。左侧单击关闭辅助浮窗仍沿用04规则。不新增模型或API；此前名称点击打开设置的投影被本规则替代。tests/settings-layout-behavior.test.cjs和tests/session-auxiliary-dialog.test.cjs合计3项通过，覆盖名称连续点击只触发展开、箭头/齿轮/会话动作分离及浮窗关闭和设置回归；npm run typecheck、git diff --check通过。只用受控API及DOM，不启停用户服务或写用户数据库，真实浏览器待验。
+
+OPS-006发布说明补充：README明确直接执行package-release只复制已有构建、不编译或检查源码新鲜度；自定义release-new目录时构建/压缩-C/上传文件必须一致，服务器解压后对比release.json的buildId，并通过pm2 describe核对script path与exec cwd，重启后刷新页面。Build ID只标识产物，不证明运行进程已加载；保留数据及原生历史。此次仅文档修改，人工对照package.json和打包脚本、git diff --check验证，不新增模型/API、不运行构建或服务，也不改已有release目录。
 
 OPS-006依赖下载选项（已实现，打包定向通过；服务器安装待验）：发布脚本支持 --without-node-modules，包内不含依赖目录，包含与构建一致的package.json/package-lock.json，服务器只安装生产依赖即可启动，无应用源码或构建。tests/standalone-release.test.cjs共5项通过，新增排除依赖目录、清单及锁文件原样保留、缺锁文件拒绝和包内安装提示；脚本语法及git diff --check通过。默认随包依赖的方式保留，未执行服务器npm安装或启停用户服务。
 
@@ -52,19 +75,53 @@ SCONN-001验收记录：新增tests/session-connection-contract.test.cjs（4项�
 
 Session 独占 Pi 原生树，Project、Agent、模型配置、消息、工具、附件、订阅、手动压缩与会话检查按各自契约保留。应用级记忆功能整体退役，不保留后台总结、模板、内容校正或自动摘要命名。历史数据处理与目标表调整见 02/06，本轮已实现通用与独立项目代码，定向验证记录见 §16；不操作用户数据库。
 
+## DBUP-002 当前7表迁移
+
+状态：已完成正式迁移及只读核验。验收：只读预检固定来源/目标及数据摘要，拒绝打开连接和版本冲突；完整旧库及Markdown归档；7表迁移保留全部现存项目/会话/Workspace、nativeRef及创建身份；只映射项目Agent新版本与会话引用，不重放退役调用；单事务失败回滚，目标完整性/外键/逐行值核验及幂等重复执行。模型映射唯一见02 §11.2。脚本为scripts/migrate-current-schema.cjs，指南为scripts/current-schema-migration-guide.md；tests/current-schema-migration.test.cjs三项通过（只读预检/全量归档及身份与版本映射/重复执行、冲突与连接拒绝、提交前失败回滚）。正式执行前无其他数据库连接，planSha256=8957d83c45ba6930044d90110b641b0da5a6489d6be6bccef365d0e71a39ecde，执行返回migrated，再次预检current；matchesTargetSchema=true、integrity_check=ok、foreign_key_check=0，4个Agent及8个独立Session加载通过。保留6个Project、0个MCP、4个项目Agent、8个Session、1个Workspace、5个WorkspaceProject、1个WorkspaceSession；原生引用逐字不变，4个项目Agent从v2映射v3，旧文件不变。完整旧库及10份旧Markdown归档在.data/ai-workspace-v5.sqlite.current-schema-60130881-c8d2-498d-a100-75a277d4b41a/，before.sqlite SHA256=60f6c8a11b2e1330b32cb73f1c4df1be61482db73ab5ac0aa047d017ca488c50，权限0400；含退役表和协调Agent、unknown调用原文。未操作用户服务、Pi transcript、journal或配置。本文其他历史阶段“尚未迁移”记录以本节最新事实为准，不扩大后续迁移授权。
+
+## ROUTE-CLEAN-001 退役入口与死代码清理
+
+状态：已完成。删除5个固定404的记忆/模板路由、旧记忆迁移脚本及指南、未接入的NDJSON链路/轮询器/旧会话投影/旧角色版本与选择器、死DTO/状态端口/样式及专用旧测试；清理源码空目录。仅供受控SDK测试的Pi初始化辅助移到tests/support，生产初始化路径不变。验收当前消息POST为202且SSE可用、退役路由无注册、未知Workspace路径404、类型边界完整；不修改用户数据库、备份或发布产物。
+
+实际验证14个定向测试文件共45项通过：tests/session-memory-retirement.test.cjs（无退役路由、只读Schema门禁/JSON解析）；tests/workspace-session-api.test.cjs（消息接受、租约、未知路径404和恢复）；tests/session-subscription.test.cjs与tests/session-subscription-client.test.cjs（SSE、连接关闭和独立JSON提交）；tests/message-references-composer.test.cjs（输入保留、附件与当前JSON提交）；tests/agent-ui-flow.test.cjs（保留的Agent目录入口）；tests/project-message-timing.test.cjs（现行打开/关闭生命周期与执行计时）；tests/project-session-model-contract.test.cjs（模型/创建API）；tests/pi-auto-compaction.test.cjs、tests/pi-native-snapshot.test.cjs、tests/project-native-tools.test.cjs、tests/server-web-search.test.cjs、tests/tool-search.test.cjs、tests/workspace-runtime.test.cjs（测试辅助移动后真实SDK受控流、原生工具、搜索、历史和恢复）。初次执行的计时旧夹具缺少现行open/close，修正后该文件3项单独复验通过；45项为各文件最终通过数，不重复计数。npm run typecheck与git diff --check通过。未运行全量测试、生产构建或真实供应商模型。
+
 ## 3. 会话区整改验收
 
 | ID | 状态 | 需求 | 验收条件 |
 | --- | --- | --- | --- |
 | PSES-008 | 正式版功能完整；验证范围见记录 | 服务端主导会话订阅 | 项目会话使用独立于消息 POST 的 SSE；打开并订阅后复用 Pi 句柄。服务端发出连接级 ping，页面仅收到后 POST pong，无页面定时保活或 transcript 轮询。应答严格匹配连接、会话及未过期挑战；多页面互不覆盖，断线释放该页面使用权但不伪造执行终态，后台使用权独立。重连重新打开、先订阅后读快照，去重及关联按 `03`，不自动重发输入；异常与未知明确显示。 |
+| BOT-REMOVE-001 | 已完成（源码及定向验收；迁移见DBUP-002） | 旧Coordinator/Task/Bot整体退役 | 删除旧Coordinator/Task/Bot的模型、API/服务/Runtime/工具/启动恢复/类型/客户端/SQL访问/专属Schema/旧迁移及测试，无兼容入口或未来接入计划；删除旧调度能力模型与Task引用查询，历史会话仅保留不可执行的Agent引用标识；Agent仅project用途和文件读写能力；目标14表减为7表，旧库不自动迁移、不删除历史文件；独立项目与Workspace原生执行、附件、恢复和全树正常。模型及历史归档边界见02，专属退役见06。 |
+| PSES-028 | 已实现；定向验证通过，真实模型待验 | 独立项目Pi原生工具 | 独立项目会话使用read/bash/edit/write，不注册project_*或Bot协作工具；cwd为所属项目，角色不限制工具；原生bash可执行已有Python，原生文件工具可读取会话附件；内部read轮次仅启用read，完成/失败/中止恢复；搜索开关可组合；精确恢复与历史project_*原文保留，API参考/预览检查不变，无SQL或历史迁移。工具服从宿主权限，不宣称cwd为沙箱。 |
+| PSES-027 | 已实现；定向验证通过，真实浏览器待验 | 拖入文件 | 共享Composer接受本机单个/多个文件与图片拖入，保留原名和字节，沿用现有上传references契约、数量/字节限制、内联块和失败保留；目录/读取失败/超限整批拒绝，不改变草稿和已有附件；运行/提交/阻塞时拒绝拖入；只拦截文件并防止浏览器打开，不拦截普通文本，不自动发送；服务器项目参考仍不复制。验证：tests/message-references-composer.test.cjs、tests/prompt-input-submit.test.cjs、tests/prompt-input-ime.test.cjs共20项通过，npm run typecheck通过；受控事件验证混合文件字节、失败保留、仅附件、files回退、目录/读取错误/单个与合计超限/混合数量限制、忙碌禁用和文本拖放；未启动服务或调用真实模型。 |
+| PSES-026 | 已完成 | 附件提交连接恢复 | 消息接受前租约失效/句柄缺失明确报RUNTIME_NOT_OPEN，不准备message journal、不写附件/Pi；客户端按错误码重建连接，保留输入和文件，不自动重发；普通校验不重连，旧请求迟到错误不破坏新连接或其他会话。验收：tests/session-message-reconnect.test.cjs、tests/session-subscription-client.test.cjs、tests/session-event-state.test.cjs、tests/project-operation-recovery.test.cjs、tests/message-upload-api.test.cjs、tests/message-references-composer.test.cjs，共24项通过；npm run typecheck通过。模拟网络/Runtime及临时journal，无真实浏览器、服务重启或真实模型验证。 |
+| PSES-025 | 已实现；定向验证通过，真实模型与浏览器待验 | 非图片附件工具读取 | 上传/粘贴的Word、Excel、PPT、MD、TXT等非图片文件统一存于应用按Pi会话隔离目录；不按2MB分流，不将正文/base64直接送模型；模型按位置通过工具读取，常见OpenXML/OpenDocument提供文本副本，旧格式/加密/损坏/超限提取明确报告；图片仍image输入。跨轮与恢复不丢文件，应用存储原件不变、去重不覆盖、存储校验拒绝跨会话与符号链接；独立项目原生工具权限按PSES-028，不将存储校验宣称为工具沙箱；不新增SQL或改写历史。 |
+| PSES-024 | 已实现；定向验证通过，真实模型与浏览器待验 | 项目参考按需读取 | 上传/粘贴图片发送内容快照，非图片按PSES-025落盘；项目参考仅发送服务端校验的位置，不预读正文、不占快照字节额度，仍与上传共用10项数量；项目归属、路径/敏感文件/符号链接/普通文件校验不放松；模型通过已有read/bash读取执行时最新内容，不因选择而获得新权限。定位和工具历史归原Pi，不新增SQL或附件存储；服务器已有项目文件一律引用原位置，不复制原件；旧工作目录文件入口按BOT-REMOVE-001整体删除；旧快照不改写。 |
+| PSES-023 | 已实现；定向验证通过，真实供应商待验 | 参考文件容量 | 上传/粘贴快照单个<50,000,000字节、合计≤50,000,000字节；前后端共享额度，项目引用按PSES-024改为位置不计字节，消息JSON容纳base64与正文元数据；超限413且不调用Pi，预览额度不变；大于旧2MiB/8MiB的有效材料可通过，精确边界和混合来源合计纳入验证。OpenAI依据及实际上下文限制见03 §5。 |
+| PSES-022 | 已实现；定向验证通过，真实模型待验 | 附件跨轮追问 | 同一 Session 活动分支内的图片、上传文件和长文本快照，以及PSES-024项目位置，在第二轮未附材料时仍进入模型请求；精确恢复后继续可用，不混入其他分支；压缩由 Pi 原生处理，不额外过滤附件，不保证压缩后原图细节；不新增 SQL、摘要或附件存储。 |
 | PSES-011 | 正式版功能完整；定向验证通过 | 本轮附件归组与原生关联 | 参考 custom_message 可可靠关联原生 entry，不残留重复临时块；唯一后继链（允许首轮 system 消息）通向用户消息时附件显示于该用户正文后，只投影一次，完整内容可查看；分叉、无用户子节点或无法确认关联时不猜测、不丢失节点。 |
-| PSES-010 | 正式版功能完整；验证范围见记录 | 图片与大段文本粘贴 | 项目输入框支持粘贴 PNG/JPEG/GIF/WebP，缩略图可移除；上传/项目文件及粘贴材料均在输入区光标处内联插入，不在工具栏下方显示；选择/键盘删除同步移除发送材料，弹窗返回恢复插入位置；超过 10 行或 1000 字符仅显示粘贴行数，原文不丢失；短文本原生粘贴，支持附件单独发送；遵守 references 混合限额，校验失败不丢输入、接受前失败保留材料，不污染切换后的草稿。 |
+| PSES-010 | 文件粘贴修复及定向验证通过；真实浏览器与供应商识别待验 | 图片、文件与大段文本粘贴 | 项目输入框支持粘贴 PNG/JPEG/GIF/WebP，缩略图可移除；剪贴板普通文件、混合图片/文件及仅 files 可读时均保留全部材料、文件名和字节，读取失败明确报错，不忽略文件或发送文件名代替内容；实际供应商请求包含本轮文本和原生图片内容；实际模型仅支持文本时，所有图片来源统一明确报告 MODEL_IMAGE_UNSUPPORTED，不追加参考节点、不调用 prompt，不以图片占位文字继续回答；上传/项目文件及粘贴材料均在输入区光标处内联插入，不在工具栏下方显示；选择/键盘删除同步移除发送材料，弹窗返回恢复插入位置；超过 10 行或 1000 字符仅显示粘贴行数，原文不丢失；短文本原生粘贴，支持附件单独发送；遵守 references 混合限额，校验失败不丢输入、接受前失败保留材料，不污染切换后的草稿。 |
 | PSES-009 | 正式版功能完整；定向验收通过 | 恢复会话不重复记录相同配置 | 项目 Runtime 使用初始化适配；仅配置节点的空会话重复恢复不增加相同 model_change/thinking_level_change，不改变叶子或历史字节；实际变化及缺失配置仍记录，按当前分支比较，其他分支不干扰；失败恢复原方法，旧重复节点保留。使用临时目录和受控 SDK 初始化验证，不访问真实模型或用户历史。 |
 | UI-041 | 正式版功能完整；验证范围见记录 | 紧凑 Tailwind Pi 对话流 | 项目会话使用全树对话流；正文安全 Markdown、thinking 和完整工具内容可查看，原始节点可展开；分支与活动路径不丢失。采用 `04` 紧凑 Tailwind 间距，无多层大 padding、固定消息高度或内容截断。定向投影测试覆盖消息、分支、未知块及敏感原文；真实浏览器外观仍需单独验收。 |
 
-PSES-011 验证记录：`tests/native-session-subscription.test.cjs` 验证 custom 原生对象关联、通知前已追加时同步发送 entry_link、真实 Pi sendCustomMessage 及普通消息/工具关联；`tests/reference-tree-projection.test.cjs` 验证完整原文保留、唯一归组、不跨分支及无法归组时保留；`tests/session-tree-projection.test.cjs` 复验原始内容；`tests/pi-reference-integration.test.cjs` 使用 Pi 内存 Session 和受控模型流，验证首次 system 节点及恢复后多轮附件归组，并保留模型请求的本轮材料隔离。共 10 项通过，类型检查与 diff 检查通过。未调用真实模型、改写用户历史或操作服务，浏览器体验待验收。
+BOT-REMOVE-001验收：最新一轮12个目标文件41项全部通过：tests/retired-model-boundaries.test.cjs、tests/current-schema.test.cjs、tests/agent-definition.test.cjs、tests/agent-storage.test.cjs、tests/catalog-contract.test.cjs、tests/project-session-model-contract.test.cjs、tests/session-execution-optional-role.test.cjs、tests/session-deletion.test.cjs验证模型/协议、旧调度配置不访问、MCP仅查询Session、7表目标、旧库只读且字节不变、Agent版本与删除事务；tests/project-native-tools.test.cjs、tests/workspace-runtime.test.cjs、tests/project-session-tree.test.cjs、tests/session-file-storage.test.cjs验证原生工具/Python、附件、精确身份恢复与历史全树。此前本项另有tests/standalone-release.test.cjs、tests/project-session-optional-role.test.cjs、tests/session-memory-retirement.test.cjs、tests/session-files-pi.test.cjs、tests/message-references.test.cjs、tests/project-operation-recovery.test.cjs、tests/session-connection-contract.test.cjs、tests/browser-random-uuid.test.cjs、tests/session-execution-cancel.test.cjs、tests/transcript-projection.test.cjs定向通过。npm run typecheck和git diff --check通过。旧协调/Task/Bot源码、SQL查询/表、工具/入口、旧迁移脚本和参考快照已清理；文档改为06-workspace.md，旧模型仅保留本项退役边界说明。未运行全量测试、生产构建或真实模型/浏览器，未操作用户服务、数据库或Pi历史。
+
+PSES-011 验证记录：`tests/native-session-subscription.test.cjs` 验证 custom 原生对象关联、通知前已追加时同步发送 entry_link、真实 Pi sendCustomMessage 及普通消息/工具关联；`tests/reference-tree-projection.test.cjs` 验证完整原文保留、唯一归组、不跨分支及无法归组时保留；`tests/session-tree-projection.test.cjs` 复验原始内容；`tests/pi-reference-integration.test.cjs` 使用 Pi 内存 Session 和受控模型流，验证首次 system 节点及恢复后多轮附件归组，当时验证模型请求的本轮材料隔离；该隔离规则已由 PSES-022 替代。共 10 项通过，类型检查与 diff 检查通过。未调用真实模型、改写用户历史或操作服务，浏览器体验待验收。
 
 PSES-010 候选块光标修正：`tests/inline-composer-editor.test.cjs` 九项通过，新增验证块前后独立光标边界、插入完成后光标落在块后、左右键整块跨越、连续候选不嵌套或跳过、Backspace/Delete 整块删除，以及光标占位字符不进入发送正文；原有上传、项目文件选择、替换、失败恢复与 IME 用例同时通过。类型检查通过。使用 DOM 测试环境，真实浏览器光标视觉仍待现场验证。
+
+PSES-028 验证记录：tests/project-native-tools.test.cjs以实际Pi SDK和受控流验证独立项目原生read/bash/edit/write、临时Python脚本执行及cwd、附件绝对路径读取、无角色/能力全关不限制工具、内部read轮次仅read且不可调用bash/edit/write、成功/异常/中止后恢复、精确冷恢复及历史project_read调用和原文前缀不变。tests/tool-search.test.cjs额外验证只读轮次与web_fetch组合及失败恢复；tests/session-files-pi.test.cjs改为原生read读取并恢复附件；旧包装及其测试已由BOT-REMOVE-001整体删除。结合tests/project-session-optional-role.test.cjs、tests/session-file-storage.test.cjs、tests/session-execution-optional-role.test.cjs、tests/project-session-lifecycle.test.cjs、tests/workspace-runtime.test.cjs、tests/pi-native-snapshot.test.cjs、tests/pi-auto-compaction.test.cjs，共10文件28项通过；npm run typecheck及git diff --check通过。早期独立项目project_*路径及逐轮包装验收由本项取代，不改旧历史。仅临时文件/内存数据库与受控SDK，无真实模型、用户服务启停、数据库迁移或用户历史改写；未安装Office库或新增下载API。
+
+PSES-025 验证记录：`tests/session-file-storage.test.cjs` 验证小于/超过2MiB的非图片都保留内部file材料、图片仍为image、Office/OLE/PDF格式校验、原件字节与0400权限、会话隔离/同名去重/重开及损坏拒绝、DOCX/XLSX/PPTX/ODT文本副本、损坏与ZIP展开超限明确报告、Pi参考消息不含正文/base64、符号链接/跨会话拒绝；当前工具策略与原生执行验证见PSES-028及BOT-REMOVE-001。`tests/session-files-pi.test.cjs` 使用实际Pi会话和受控流，验证首请求只有位置，原生read后才获得正文，重建会话后的第二轮仍可读取附件。结合`tests/message-references.test.cjs`、`tests/message-upload-api.test.cjs`、`tests/message-reference-scope.test.cjs`、`tests/project-reference-locations.test.cjs`、`tests/pi-reference-integration.test.cjs`、`tests/project-session-optional-role.test.cjs`共8文件29项通过；npm run typecheck及git diff --check通过。新增小型ZIP依赖fflate；不调用网络模型、不启动或停止用户服务、不写用户库和原生历史，测试只用临时目录/内存库。PDF及旧DOC/XLS/PPT仅保存原件，额外解析器是否可用由部署环境决定，不宣称已完成这些格式的文本提取。此前上传文本直接进入上下文的验收由本条替代。
+
+PSES-024 验证记录：`tests/project-reference-locations.test.cjs` 用临时内存库验证Workspace消息API同时保留上传快照和项目位置、跨工作区/敏感路径拒绝；实际Pi会话+受控模型流先只接收位置，再调用原生read，模型下一次请求才收到选择后修改的最新文件内容。`tests/message-references.test.cjs` 验证独立项目应用端口传递位置、普通/超过50MB项目文件均不读字节、越界符号链接/敏感目录/目录/缺失文件拒绝、禁止客户端注入absolutePath、数量与重复校验、项目位置不占快照额度；结合`tests/message-references-composer.test.cjs`、`tests/message-upload-api.test.cjs`共4文件23项通过，npm run typecheck及git diff --check通过。未调用真实模型、启停用户服务、写用户数据库或改写原生历史，无迁移。额外运行既有tests/workspace-session-api.test.cjs时，旧memory端点预期200但当前退役接口404，造成1项失败；该文件的其他3项通过，此既有测试未按退役契约更新，不作为本项通过证据。
+
+PSES-023 验证记录：新增共享 message-reference-limits，统一浏览器、服务端解析、Project/Workspace参考读取及消息HTTP上限。`tests/clipboard-input.test.cjs` 验证单个49,999,999字节通过/50,000,000拒绝、合计50,000,000通过/+1拒绝；`tests/message-references.test.cjs` 验证超过旧单个/合计限制的有效内容、50MB精确总量、当时上传与项目引用快照混合超限（项目引用现由PSES-024改为位置）、单文件50MB拒绝及临时项目文件读取门禁；`tests/message-upload-api.test.cjs` 验证Project/Workspace对超过旧12MiB请求返回202、非法材料400、Content-Length及无该头流读取超限413，base64/正文/元数据预算充足；结合`tests/message-references-composer.test.cjs`共4文件25项通过，类型检查和git diff --check通过。只用临时目录与受控API，无真实模型、用户服务和数据库操作。资料核对为OpenAI当前图片/文件输入文档；统一50MB为应用选择，不宣称模型必定接收同样大小文本或已支持PDF。
+
+PSES-022 验证记录：删除 referenceTurnId 的跨轮有效期过滤，模型上下文与压缩都直接遵循所属 Pi 活动分支及有效窗口。`tests/pi-reference-integration.test.cjs` 使用真实 Pi 内存 Session 和受控模型流，在 Chat Completions/Responses 实际供应商请求中检查第一轮图片和文本、第二轮无新附件追问、重建 AgentSession 后第三轮都包含原始材料；切到材料节点之前的独立分支后，两种请求均不包含这些材料。`tests/message-reference-scope.test.cjs` 验证来源标识不再注册上下文/压缩过滤，图片能力检查仍有效；结合 `tests/reference-tree-projection.test.cjs` 和 `tests/message-references.test.cjs` 共17项通过，git diff --check通过。无类型边界变化，未重复类型检查；未调用网络或真实模型、未启停用户服务、未改写用户库与原生历史。旧的“只保留本轮附件”验收由本条替代；原生压缩后不保证保留原图细节。
+
+PSES-010 图片能力与入口一致性补验：只读核对现场 Pi 历史发现原生参考节点已含完整 JPEG；对应型号未配置 input，Pi 实际解析为仅 text，供应商转换会用占位文字替换图片。应用在追加参考前新增 MODEL_IMAGE_UNSUPPORTED 检查，不覆盖 Pi 配置；现场只修正 krill-openai/gpt-6.1-sol-fast 的图片声明，离线解析确认 text/image。`tests/inline-composer-editor.test.cjs` 新增真实 DOM 粘贴与上传按钮提交同一图片/文件的字节一致性验证；`tests/message-reference-scope.test.cjs` 验证仅文本/缺模型时拒绝图片且不写参考节点、普通文本仍可发送。与 `tests/clipboard-input.test.cjs`、`tests/message-references-composer.test.cjs`、`tests/message-references.test.cjs`、`tests/pi-reference-integration.test.cjs` 共37项通过，类型检查与 diff 检查通过。未发送真实模型请求、启停服务、改写数据库或原生历史；真实系统剪贴板及供应商视觉结果仍待验，不将现场配置缺项当作已证明所有粘贴故障的唯一原因。
+
+PSES-010 文件粘贴修复验证：`tests/clipboard-input.test.cjs` 覆盖普通文件、图片/文件混合、files 回退、原名与完整字节、读取失败及限额；`tests/message-references-composer.test.cjs` 覆盖混合粘贴到 references 实际提交和失败保留；`tests/pi-reference-integration.test.cjs` 使用真实 Pi 内存会话及受控模型流，离线截获 Chat Completions/Responses 供应商请求，验证本轮文本及 image 数据完整、当时后续轮次按旧契约隔离（现由 PSES-022 替代）；结合 `tests/message-reference-scope.test.cjs` 共15项通过，类型检查与 diff 检查通过。未调用网络或真实模型、未启动用户服务或改写历史；不证明真实浏览器剪贴板与供应商视觉识别成功。
 
 PSES-010 光标内联整改验证：`tests/inline-composer-editor.test.cjs` 使用 jsdom 和 React DOM 验证光标/选区插入、图片与上传的原位置、项目文件弹窗返回、删除与替换时材料同步、失败恢复、会话切换、换行与 IME；jsdom 仅为开发测试依赖。结合 `tests/message-references-composer.test.cjs`、`tests/prompt-input-submit.test.cjs`、`tests/prompt-input-ime.test.cjs`、`tests/clipboard-input.test.cjs` 共 24 项通过，类型检查与 diff 检查通过。旧的工具栏下方附件列表规则已由本轮输入区内联块替代；未启动服务、调用真实模型或操作用户数据库，真实浏览器视觉及系统剪贴板待验收。
 
@@ -78,7 +135,7 @@ PSES-010 光标内联整改验证：`tests/inline-composer-editor.test.cjs` 使�
 | PSES-001 | 代码已接入；本轮目标Schema定向通过，历史库未迁移 | 项目 Session 独立执行 | Session 固定绑定 Project；项目 Agent 可选且不决定项目读写工具。无角色、历史角色或停用角色可发送；项目文件操作受项目路径保护和用户意图约束。空角色可在目标库创建，旧库不自动迁移。项目消息直接进入 Pi，停止覆盖排队、启动和运行。 |
 | PSES-007 | 项目会话代码已接入；完整边界待验收 | 页面打开与 Pi 句柄生命周期 | 选中项目 Session 时建立或恢复对应 Pi Session，展示其完整 Session Tree 和活动分支；首次空会话可恢复身份及历史只读恢复须满足 `03` §5 的精确身份与只读边界，新增契约按 §15 定向验收；发送复用已打开句柄并调用 prompt，不在发送时创建新 Session。切离后空闲句柄释放；运行中的会话继续，结束后释放，切离且无其他页面使用达五分钟仍运行则请求中止并等待真实结束。重新打开取消待释放；多页面、后台执行、事件竞态、断线、重启及失败按 `03` 处理；不删除历史、不重复发送、不伪造完成，测试覆盖这些边界。 |
 | PSES-006 | 代码已接入；真实模型和浏览器待验证 | 会话参考文件 | 输入框提供独立的本地上传和文件参考两个入口；参考通过目录浏览选择，不输入路径。项目会话限所属项目；材料可多选和移除，按 PSES-010 插入输入区光标位置，不在两个入口下方另设已选列表；发送后的参考节点按 PSES-011 归组，完整原文仍可查看。本次选中的材料仅供该次用户输入发起的运行使用，不随下一次输入自动进入模型请求，不建立持续授权。接受前失败保留输入和选择。 |
-| UI-040 | 待实现并验证 | 项目会话等待反馈 | 发起项目消息后，在运行且尚未展示本轮文本、thinking 或工具活动时显示“正在思考”及转圈；展示其中任一内容、结束或失败后不再显示。该提示仅表示等待响应，不表示实际模型 thinking，不进入 transcript。 |
+| UI-040 | 已实现；定向验证通过，真实浏览器待验 | 会话等待反馈 | 项目和工作区会话在 running=true 的整轮执行期间，于全部历史/实时节点之后只显示一处“正在等待”及转圈，统一替代“正在思考”；出现文本、thinking、工具活动/结果或实时节点持久化后均保留，直到服务端事件确认完成、失败或中止，running=false 后隐藏；不依据内容推断完成，不新增状态或 transcript。 |
 | PSES-005 | 待验证 | 项目消息延迟诊断 | 服务端按一次发送记录阶段耗时，区分 Pi 句柄复用/创建/恢复、prompt、首个 assistant 流事件、首段可见文本、首个工具活动和完成或失败；另以流 turnId 关联服务端首段文字入队及完成事件、浏览器收到对应事件的时间，区分传输与生成延迟。各端耗时各自基于单调时钟，跨端时钟可能不同；不记录消息、思考、工具参数/结果、文件路径或密钥，不影响流和执行结果。 |
 | PSES-002 | 项目会话代码已接入；完整边界待验收 | Pi Session Tree 完整投影 | 项目会话的 messages API 恢复所属 Pi 的全部分支及节点，保留节点身份、父子关系、原生追加顺序和活动叶子；内部节点、thinking、原始工具参数和敏感结果不因类型或内容过滤。活动指针、异常节点、空树、读取错误和重启恢复按 `03` 如实返回；按部署边界校验读取许可和归属、禁止缓存及日志泄露，覆盖事件订阅竞态、临时关联、只读页面快照和重连，运行事件按原生树核对，不伪装为空历史或持久节点；不复制持久对话、不改历史。 |
 | PSES-004 | 代码已实现；压缩/取消API定向通过，真实模型待验 | 用户手动原生上下文压缩 | 按PSES-021开启Pi默认自动压缩并保留手动入口；压缩只改变Pi有效窗口，完整历史继续可恢复 |
@@ -89,7 +146,9 @@ PSES-006 历史位置验证（已被 PSES-010 内联块替代，不作为当前�
 
 PSES-006 历史手动路径验证（独立项目参考选择已不提供路径输入，不作为当前交互验收）：`tests/message-references-composer.test.cjs` 覆盖弹窗、默认目录、手动跳转及越界拒绝；`tests/message-references.test.cjs` 覆盖服务端目录边界和文件范围，12 项通过；类型检查通过。未进行真实浏览器验收。
 
-UI-040 历史代码验证（未覆盖当前 thinking 展示契约）：`tests/project-session-waiting.test.cjs` 覆盖等待时的状态文字和转圈，以及首段文字、工具活动或结束后隐藏；2 项测试和类型检查通过，真实浏览器待验证。
+UI-040 统一等待验收：`tests/project-session-waiting.test.cjs` 验证空响应、thinking、文本、工具执行/更新/返回、实时节点被历史接替时始终只在末尾显示一处带转圈的“正在等待”，running=false 时隐藏；`tests/session-event-state.test.cjs` 验证消息/工具/turn_end/agent_end 不提前结束等待，complete/error/agent_settled 终结、中止保持等待及旧会话事件隔离；结合 `tests/session-tree-presentation.test.cjs` 共3文件5项通过，git diff --check通过。只使用受控事件和最小DOM，不启动服务、不调用模型、不操作数据库；无类型边界变化，未运行类型检查或生产构建，真实浏览器视觉待验。原“正在思考”首段后隐藏规则由本条取代。
+
+UI-040 旧规则验证（被本次整轮等待替代，不作为当前验收）：`tests/project-session-waiting.test.cjs` 覆盖等待时的状态文字和转圈，以及首段文字、工具活动或结束后隐藏；2 项测试和类型检查通过，真实浏览器待验证。
 
 PSES-005 代码验证：`tests/project-message-timing.test.cjs` 覆盖阶段顺序、去重、失败和日志内容边界；`tests/session-execution-cancel.test.cjs` 覆盖停止链路。5 项测试与类型检查通过。流诊断追加验证：`tests/project-message-stream-timing.test.cjs` 覆盖首段与完成事件的入队、解析、关联及日志隐私；`tests/project-message-stream-acceptance.test.cjs` 覆盖流接收语义，4 项测试通过；真实服务及模型耗时待复验。
 
@@ -239,10 +298,10 @@ GAP-001～005 已落到通用/独立项目模型与 API：目标 Schema 移除�
 | tests/project-files-api.test.cjs；tests/file-link-preview.test.cjs | 文件realpath/敏感路径/UTF-8/容量、非Git目录、范围和源码行号解析 |
 | tests/project-operation-recovery.test.cjs | journal重启/链损坏/载荷冲突、删除后410、SQL失败候选显式提交、消息重试不重发、取消等待真实终结与父锁 |
 | tests/pi-session-fork-export.test.cjs | 实际Pi SDK受控模型流、整份配置优先、容量与输出上限更新、同型号不伪造切换、配置节点落盘后继续发送、原始路径/label保留、派生篡改拒绝、惰性HTML/JSONL与下载取消清理 |
-| tests/session-memory-retirement.test.cjs；tests/ui-polling-activity.test.cjs | 退役HTTP路由404/no-store且不装配服务、旧结构和缺少约束门禁、UTF-8/空请求、轮询去重与晚响应丢弃 |
+| tests/session-memory-retirement.test.cjs | 退役HTTP路由不再注册、旧结构和缺少约束门禁、UTF-8/空请求；旧轮询实现及其测试由ROUTE-CLEAN-001删除 |
 | tests/project-session-lifecycle.test.cjs；tests/session-execution-optional-role.test.cjs；tests/project-session-tree.test.cjs；tests/session-deletion.test.cjs；tests/pi-context.test.cjs | 并发打开与租约/句柄复用、历史角色不阻塞独立发送、全分支与敏感原文只读读取、单行删除/引用回滚、压缩取消与成功竞态 |
 | tests/session-auxiliary-dialog.test.cjs；tests/agent-ui-flow.test.cjs | 实际Workspace/辅助弹窗最小DOM、互斥入口、Esc取消/焦点返回、丢弃未提交选择、树定位/展开/高亮、左侧动作/会话变化关闭、源码预览同窗及晚响应不能重开；Agent/导航静态投影 |
-| tests/agent-markdown-migration.test.cjs；tests/optional-role-migration.test.cjs；tests/memory-storage.test.cjs；tests/workspace-storage-migration.test.cjs | 仅在临时库验证此前离线迁移目标及历史值/约束保留、失败回滚和连接门禁；旧脚本读取scripts/historical-schema冻结快照，不把当前Schema变更带入旧授权 |
+| 旧离线迁移验收（已退役） | 当时目标的临时库验证及历史保留记录以git历史为准；相关Bot依赖、旧脚本、冻结Schema和测试已由BOT-REMOVE-001移除，旧授权不适用于当前7表目标 |
 
 验证限制：配置和消息使用受控SDK/Runtime，不调用真实模型或真实认证；jsdom替代原生dialog方法，只验证调用、状态和定位，真实浏览器Tab焦点约束、窄屏视觉与浏览器下载仍待现场验收。未注入每一种文件系统故障、硬断电或多进程崩溃；已列的定向结果不替代这些边界。
 
@@ -250,7 +309,7 @@ GAP-001～005 已落到通用/独立项目模型与 API：目标 Schema 移除�
 
 ## 17. 数据库显式升级（DBUP-001）
 
-状态：用户明确要求“直接迁移数据库”后，正式迁移及迁移后只读核验已完成。范围为 02 §11.1；不扩展 GAP-006。脚本 scripts/upgrade-session-schema.cjs 与执行指南 scripts/session-schema-upgrade-guide.md 已提供。tests/session-schema-upgrade.test.cjs 的7项验证只读预检、归档摘要和只读权限、全部同名列保留、原库内事务重建、目标兼容、历史创建键NULL、外键/完整性、冲突/未知结构/活连接拒绝、失败回滚、锁不自动破除、过期摘要/符号链接拒绝及重复执行只读。结合 tests/session-memory-retirement.test.cjs 与 tests/project-session-model-contract.test.cjs，共14项通过，git diff --check通过。仅Schema比较的表名等价规范化发生TS内部调整，类型边界未变，本轮未额外运行类型检查或全量测试。
+历史记录：用户当时明确要求“直接迁移数据库”后，旧目标迁移及只读核验已完成。以下不代表当前7表目标已迁移；本节旧脚本、指南及测试已由BOT-REMOVE-001退役，追溯以git历史为准。范围为 02 §11.1；不扩展 GAP-006。脚本 scripts/upgrade-session-schema.cjs 与执行指南 scripts/session-schema-upgrade-guide.md 已提供。tests/session-schema-upgrade.test.cjs 的7项验证只读预检、归档摘要和只读权限、全部同名列保留、原库内事务重建、目标兼容、历史创建键NULL、外键/完整性、冲突/未知结构/活连接拒绝、失败回滚、锁不自动破除、过期摘要/符号链接拒绝及重复执行只读。结合 tests/session-memory-retirement.test.cjs 与 tests/project-session-model-contract.test.cjs，共14项通过，git diff --check通过。仅Schema比较的表名等价规范化发生TS内部调整，类型边界未变，本轮未额外运行类型检查或全量测试。
 
 正式执行前重新预检为 ready、冲突零项并确认无其他打开连接；来源摘要 15f005c7e038263a22e942d0796e552d90b2947a38387aba653b6d10d9e3c5b0，目标摘要 e7bee0c5415d7bd99a769b993b855b2eaa20153b021d2be53c25126c59759889。脚本返回 migrated，后续预检返回 current，实际运行时 matchesTargetSchema=true、integrity_check=ok、foreign_key_check=0。事务中已逐表验证所有保留列值一致；6个项目、5个Agent、8个独立项目会话和1个工作区会话保留，9条记忆记录在只读备份中核验存在。
 

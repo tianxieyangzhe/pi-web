@@ -8,7 +8,7 @@ import type { PiRuntimePort, SessionRuntimeInput } from "@/application/ports/pi-
 
 import { sessionLocks as locks, acquireSession,acquireProjectWrite,projectWriteRoots } from "./session-lock";
 import { createProjectMessageTiming } from "./project-message-timing";
-import { parseMessageReferences, type ProjectMessageReference } from "@/domain/message-references";
+import { parseMessageReferences, type ProjectMessageReference, type ProjectReferenceTarget } from "@/domain/message-references";
 
 class EventQueue {
   private values: AgentEvent[] = [];
@@ -38,12 +38,9 @@ export function createSessionExecutionService(dependencies: {
   sessions: SessionRepositoryPort;
   catalog: SessionCatalogPort;
   projects: ProjectRepositoryPort;
-  readProjectReference?: (reference: ProjectMessageReference) => { name: string; data: string };
+  resolveProjectReference?: (reference: ProjectMessageReference) => ProjectReferenceTarget;
   runtime: PiRuntimePort;
   openHistory?:import('./ports/session-open-history').SessionOpenHistory;
-  assertSessionAllowed?: (sessionId:string)=>void;
-  coordinatorExecutionIds?: (sessionId:string)=>ReadonlySet<string>;
-  backgroundInUse?: (sessionId: string) => boolean;
 }) {
   const { sessions, catalog, projects, runtime } = dependencies;
   const controls = new Map<string, {
@@ -74,7 +71,7 @@ export function createSessionExecutionService(dependencies: {
       const timer = setTimeout(() => schedule(id), Math.max(1, expiry - Date.now())); timer.unref?.(); timers.set(id, timer); return;
     }
     if (openings.has(id)) return;
-    if (dependencies.backgroundInUse?.(id) || (!controls.has(id) && locks.has(id))) {
+    if (!controls.has(id) && locks.has(id)) {
       const timer = setTimeout(() => schedule(id), 1000); timer.unref?.(); timers.set(id, timer); return;
     }
     if (controls.has(id)) {
@@ -136,7 +133,7 @@ export function createSessionExecutionService(dependencies: {
     return {
       session: { ...value, agentSnapshot: role },
       allowProjectRead: true,
-      independentProjectTools: true,
+      nativeCodingTools: true,
       workingDirectory: project.rootPath,
       allowProjectWrite,
     };
@@ -223,14 +220,13 @@ export function createSessionExecutionService(dependencies: {
     send(sessionId: string, instruction: string, operation?: "read" | "project_write" | "external_write", references?: unknown, webSearch = false, toolSearch = false): AsyncGenerator<AgentEvent> {
       const value = session(sessionId);
       operation ??= 'project_write';
-      dependencies.assertSessionAllowed?.(sessionId);
       if (locks.has(sessionId) || ["starting", "running", "interrupting"].includes(value.state)) {
         throw new DomainError("SESSION_BUSY", "项目工作线正在运行", 409, true);
       }
       if (value.state === "unavailable") throw new DomainError("SESSION_RESTORE_REQUIRED", "项目工作线需要先恢复", 409, true);
 
       if (!runtime.getHandle(sessionId)) throw new DomainError("RUNTIME_NOT_OPEN", "请先打开项目会话", 409, true);
-      const referenceContent = parseMessageReferences(references, new Set([value.projectId]), dependencies.readProjectReference);
+      const referenceContent = parseMessageReferences(references, new Set([value.projectId]), dependencies.resolveProjectReference);
       acquireSession(sessionId);
       lastTimeouts.delete(sessionId);
       const timing = createProjectMessageTiming(sessionId);
@@ -350,7 +346,6 @@ export function createSessionExecutionService(dependencies: {
     async deleteSession(projectId: string, sessionId: string) {
       const value = session(sessionId);
       if (value.projectId !== projectId) throw new DomainError('NOT_FOUND', '项目会话不存在', 404, true);
-      if (value.botConversationId) throw new DomainError('SESSION_REFERENCED', '此会话关联历史 Bot，不能删除', 409, true);
       if (openings.has(sessionId) || controls.has(sessionId) || ['starting','running','interrupting'].includes(value.state)) throw new DomainError('SESSION_BUSY', '请等待会话操作结束后删除', 409, true);
       if (value.state === 'unavailable') throw new DomainError('REQUEST_UNKNOWN', '请先核对并恢复会话', 409, true);
       acquireSession(sessionId);

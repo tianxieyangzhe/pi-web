@@ -4,7 +4,7 @@ import type { AgentDefinition } from "./models";
 export type AgentMarkdownView = {
   agentId?: string;
   revision?: number;
-  kind: "coordinator" | "project";
+  kind: "project";
   name: string;
   description: string | null;
   definition: AgentDefinition;

@@ -1,7 +1,7 @@
 import { randomUUID } from "../../api/random-uuid";
 import { ArrowUp, ChevronDown, Globe, LoaderCircle, Square } from "lucide-react";
-import { useEffect,useState,useRef, type FormEvent, type KeyboardEvent, type ClipboardEvent } from "react";
-import type { MessageReference, ProjectMessageReference, BotMessageReference } from "../../../src/domain/message-references";
+import { useEffect,useState,useRef, type FormEvent, type KeyboardEvent, type ClipboardEvent, type DragEvent } from "react";
+import type { MessageReference, ProjectMessageReference } from "../../../src/domain/message-references";
 import type { Project } from "../../domain/models";
 import { ReferencePicker, ProjectReferencePicker, readReference } from "./reference-picker";
 import { attachmentOnlyMessage, clipboardFiles, validateAttachments } from "./clipboard";
@@ -12,21 +12,21 @@ const drafts=new Map<string,string>();
 const draftVersions=new Map<string,number>();
 const fileIds = new WeakMap<File, string>();
 function fileId(file: File) { let id=fileIds.get(file); if (!id) {id=randomUUID();fileIds.set(file,id);} return id; }
-function projectId(item: ProjectMessageReference | BotMessageReference) { return JSON.stringify(item); }
+function projectId(item: ProjectMessageReference) { return JSON.stringify(item); }
 function fileAttachment(file: File): InlineAttachment { return {id:fileId(file),file,label:/^已粘贴 \d+ 行\.txt$/.test(file.name)?file.name.slice(0,-4):file.name}; }
 
 export function shouldSubmitOnEnter(event:Pick<KeyboardEvent<HTMLElement>,"key"|"shiftKey"|"nativeEvent">,compositionActive:boolean) {
   return event.key==="Enter"&&!event.shiftKey&&!compositionActive&&!event.nativeEvent.isComposing&&event.nativeEvent.keyCode!==229;
 }
 
-export function PromptInput({ placeholder, running, stopping = false, blocked = false, draftKey, blockedReason, onSubmit, onStop, referenceProjects = [], referenceWorkspace, listReferenceFiles }: { placeholder: string; running: boolean; stopping?: boolean; blocked?: boolean; draftKey?:string;blockedReason?:string; onSubmit: (value: string, references: MessageReference[], webSearch?: boolean, toolSearch?: boolean) => void | Promise<void>; onStop?: () => void; referenceProjects?: Project[]; referenceWorkspace?: {botId:string;conversationId:string}; listReferenceFiles?:(projectId:string,path:string)=>Promise<import('../../domain/models').ProjectFileListing> }) {
+export function PromptInput({ placeholder, running, stopping = false, blocked = false, draftKey, blockedReason, onSubmit, onStop, referenceProjects = [], listReferenceFiles }: { placeholder: string; running: boolean; stopping?: boolean; blocked?: boolean; draftKey?:string;blockedReason?:string; onSubmit: (value: string, references: MessageReference[], webSearch?: boolean, toolSearch?: boolean) => void | Promise<void>; onStop?: () => void; referenceProjects?: Project[]; listReferenceFiles?:(projectId:string,path:string)=>Promise<import('../../domain/models').ProjectFileListing> }) {
   const [value, setValue] = useState(()=>draftKey?drafts.get(draftKey)??'':'');
   const [searchMode,setSearchMode]=useState<"builtin"|"tool"|"none">("builtin");
   useEffect(()=>setSearchMode("builtin"),[draftKey]);
   const [submitting,setSubmitting]=useState(false);
   const [references,setReferences]=useState<File[]>([]);
   const [referenceError,setReferenceError]=useState("");
-  const [projectReferences,setProjectReferences]=useState<Array<ProjectMessageReference | BotMessageReference>>([]);
+  const [projectReferences,setProjectReferences]=useState<Array<ProjectMessageReference>>([]);
   useEffect(()=>{setReferences([]);setProjectReferences([]);setReferenceError("");},[draftKey]);
   const currentKey=useRef(draftKey);currentKey.current=draftKey;
   const currentValue=useRef(value);currentValue.current=value;
@@ -45,7 +45,7 @@ export function PromptInput({ placeholder, running, stopping = false, blocked = 
     const present = new Set(attachmentIds(currentValue.current));
     setReferences(next.filter(file => present.has(fileId(file))));
   }
-  function selectProjects(next: Array<ProjectMessageReference | BotMessageReference>) {
+  function selectProjects(next: Array<ProjectMessageReference>) {
     const keys = new Set(next.map(projectId));
     let nextValue = currentValue.current;
     for (const item of projectReferences) if (!keys.has(projectId(item))) nextValue=nextValue.replaceAll(attachmentToken(projectId(item)), "");
@@ -97,16 +97,42 @@ export function PromptInput({ placeholder, running, stopping = false, blocked = 
       selectFiles(next); setReferenceError("");
     } catch (error) { event.preventDefault(); setReferenceError(error instanceof Error ? error.message : "粘贴失败"); }
   }
+  function isFileDrag(data: DataTransfer) {
+    return Array.from(data.types).includes("Files") || Array.from(data.items).some(item => item.kind === "file");
+  }
+  function onDragOver(event: DragEvent<HTMLFormElement>) {
+    if (!isFileDrag(event.dataTransfer)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = running || submitting || blocked ? "none" : "copy";
+  }
+  function onDrop(event: DragEvent<HTMLFormElement>) {
+    if (!isFileDrag(event.dataTransfer)) return;
+    event.preventDefault();
+    if (running || submitting || blocked || submitLock.current) return;
+    try {
+      const items = Array.from(event.dataTransfer.items).filter(item => item.kind === "file");
+      if (items.some(item => item.webkitGetAsEntry?.()?.isDirectory)) throw new Error("暂不支持拖入文件夹，请选择其中的文件");
+      const files = items.length ? items.map(item => {
+        const file = item.getAsFile();
+        if (!file) throw new Error("无法读取拖入的文件，请重新选择");
+        return file;
+      }) : Array.from(event.dataTransfer.files);
+      if (!files.length) throw new Error("无法读取拖入的文件，请重新选择");
+      const next = [...references, ...files];
+      validateAttachments(next, projectReferences.length);
+      selectFiles(next); setReferenceError("");
+    } catch (error) { setReferenceError(error instanceof Error ? error.message : "拖入文件失败"); }
+  }
   function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
     if (shouldSubmitOnEnter(event,compositionActive.current)) {
       event.preventDefault(); submit();
     }
   }
-  return <form className="prompt-input flex w-full! flex-wrap items-start rounded-lg!" onSubmit={submit}>
+  return <form className="prompt-input flex w-full! flex-wrap items-start rounded-lg!" onSubmit={submit} onDragOver={onDragOver} onDrop={onDrop}>
     <InlineComposerEditor key={draftKey} editorRef={editor} attachments={attachments} value={value} onChange={edit} onCompositionStart={()=>{compositionActive.current=true;}} onCompositionEnd={()=>{compositionActive.current=false;}} onKeyDown={onKeyDown} onPaste={onPaste} placeholder={placeholder} disabled={running||submitting} />
     <div className="prompt-input__references min-w-0 flex-1 gap-x-3! gap-y-0.5! py-1! [&_.reference-picker__trigger]:py-0.5!">
       <ReferencePicker key={`upload:${draftKey}`} selected={references} onChange={selectFiles} projectCount={projectReferences.length} disabled={running||submitting||blocked}/>
-      <ProjectReferencePicker key={`project:${draftKey}`} onDone={() => editor.current?.focus()} projects={referenceProjects} workspace={referenceWorkspace} listFiles={listReferenceFiles} selected={projectReferences} onChange={selectProjects} uploadCount={references.length} disabled={running||submitting||blocked}/>
+      <ProjectReferencePicker key={`project:${draftKey}`} onDone={() => editor.current?.focus()} projects={referenceProjects} listFiles={listReferenceFiles} selected={projectReferences} onChange={selectProjects} uploadCount={references.length} disabled={running||submitting||blocked}/>
       <label className={`relative inline-flex h-6 shrink-0 items-center self-center rounded border border-slate-200 bg-white shadow-none [text-shadow:none] ${searchMode!=="none"?"text-sky-700":"text-slate-500"}`} title="内置搜索：OpenAI服务端执行，需Responses模型；工具搜索：使用部署主机网络直接访问网页，无地址时搜索Bing，无需Key">
         <Globe size={12} aria-hidden="true" className="pointer-events-none absolute left-1.5 top-1/2 -translate-y-1/2"/>
         <select aria-label="联网搜索" value={searchMode} disabled={running||submitting||blocked} onChange={event=>{setSearchMode(event.target.value as "builtin"|"tool"|"none");editor.current?.focus();}} className="h-full! min-w-0 cursor-pointer appearance-none! rounded! border-0! bg-transparent! py-0! pr-5! pl-6! text-[11px]! leading-normal! font-normal! text-inherit! shadow-none! [text-shadow:none]! disabled:cursor-not-allowed disabled:opacity-50"><option value="builtin">内置搜索 · 服务端</option><option value="tool">工具搜索 · 应用端</option><option value="none">无搜索</option></select>

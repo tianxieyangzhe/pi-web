@@ -114,22 +114,42 @@ export function FileBrowser({ projectId, projectName, rootPath, onOpenFile }: { 
   );
 }
 
-export function FilePreviewPane({ projectName, rootPath, preview, line, onClose }: { projectName: string; rootPath: string; preview: FilePreview; line?: number; onClose: () => void }) {
+export function FilePreviewPane({ projectName, rootPath, preview, line, onClose, onDownload, loadPdf }: { projectName: string; rootPath: string; preview: FilePreview; line?: number; onClose: () => void; onDownload: () => Promise<void>; loadPdf: (signal: AbortSignal) => Promise<Blob> }) {
+  const [pdf,setPdf]=useState<{preview:FilePreview;url?:string;error?:string}|null>(null);
+  const pdfLoader=useRef(loadPdf);pdfLoader.current=loadPdf;
+  useEffect(()=>{
+    if(preview.format!=='pdf'){setPdf(null);return;}
+    let active=true,url:string|undefined;const controller=new AbortController();
+    setPdf({preview});
+    void pdfLoader.current(controller.signal).then(async blob=>{
+      if(blob.type!=='application/pdf'||!(await blob.slice(0,1024).text()).includes('%PDF-'))throw new Error('PDF文件已变化或格式无效，请重新打开');
+      if(!active)return;
+      url=URL.createObjectURL(blob);setPdf({preview,url});
+    }).catch(error=>{if(active)setPdf({preview,error:error instanceof Error?error.message:'PDF预览加载失败'});});
+    return()=>{active=false;controller.abort();if(url)URL.revokeObjectURL(url);};
+  },[preview]);
+  const [downloading,setDownloading]=useState(false),[downloadError,setDownloadError]=useState('');
+  const downloadVersion=useRef(0);
+  useEffect(()=>{downloadVersion.current++;setDownloading(false);setDownloadError('');return()=>{downloadVersion.current++;};},[preview]);
+  async function download(){const version=++downloadVersion.current;setDownloading(true);setDownloadError('');try{await onDownload();}catch(error){if(version===downloadVersion.current)setDownloadError(error instanceof Error?error.message:'下载失败');}finally{if(version===downloadVersion.current)setDownloading(false);}}
   const contentRef=useRef<HTMLPreElement>(null);
   const lines=line?preview.content.split('\n'):[];
   useEffect(()=>{if(line)contentRef.current?.querySelector(`[data-line="${line}"]`)?.scrollIntoView?.({block:'center'});},[preview,line]);
   const normalizedRootPath = rootPath.replace(/[\\/]+$/, "");
   const separator = rootPath.includes("\\") ? "\\" : "/";
-  const absolutePath = `${normalizedRootPath || separator}${normalizedRootPath ? separator : ""}${preview.path.split(/[\\/]/).join(separator)}`;
+  const absolutePath = rootPath ? `${normalizedRootPath || separator}${normalizedRootPath ? separator : ""}${preview.path.split(/[\\/]/).join(separator)}` : preview.path;
 
   return (
     <aside className="file-preview-column" aria-label="文件预览">
       <header className="file-preview-column__header">
+        <button className="file-preview-column__download" disabled={downloading} onClick={()=>void download()}>{downloading?'正在下载…':'下载原件'}</button>
         <b>{projectName} · 文件预览</b>
         <button aria-label="关闭文件预览" onClick={onClose}><X size={15} /></button>
       </header>
       <div className="file-preview-column__path" title={absolutePath}>{absolutePath}</div>
-      <pre ref={contentRef} className="file-preview-column__content">{line?lines.map((text,index)=><span className={index+1===line?'bg-amber-100':''} data-line={index+1} key={index}>{text}{index<lines.length-1?'\n':''}</span>):preview.content}</pre>
+      {downloadError&&<p role="alert" className="px-3 text-sm text-red-700">{downloadError}</p>}
+      {preview.notice&&<p className="px-3 text-xs text-slate-500">{preview.notice}</p>}
+      {preview.format==='pdf'?<div className="flex min-h-0 flex-1 flex-col px-3 pb-3">{pdf?.preview===preview&&pdf.error?<p role="alert" className="text-sm text-red-700">{pdf.error}，可下载原件查看。</p>:pdf?.preview===preview&&pdf.url?<iframe title={`${preview.path} · PDF预览`} src={pdf.url} className="min-h-80 w-full flex-1 border-0"/>:<p role="status" className="text-sm text-slate-500">正在加载PDF…</p>}</div>:['docx','xlsx','pptx'].includes(preview.format??'')?<div className="min-h-0 flex-1 overflow-auto p-4 text-sm text-slate-800">{preview.blocks?.map((block,index)=>block.type==='table'?<div key={index} className="my-3 overflow-auto"><table className="w-full border-collapse"><tbody>{block.rows.map((row,r)=><tr key={r}>{row.map((cell,c)=><td key={c} className="whitespace-pre-wrap border border-slate-300 p-2 align-top">{cell}</td>)}</tr>)}</tbody></table></div>:block.type==='heading'?<div key={index} role="heading" aria-level={block.level} className={`mb-2 mt-4 font-semibold ${block.level===1?'text-xl':block.level===2?'text-lg':'text-base'}`}>{block.text}</div>:block.type==='code'?<pre key={index} className="my-2 overflow-auto rounded bg-slate-100 p-3 font-mono text-xs whitespace-pre"><code>{block.text}</code></pre>:<p key={index} className="my-2 whitespace-pre-wrap">{block.text||'\u00a0'}</p>)}</div>:preview.format!=='binary'&&<pre ref={contentRef} className="file-preview-column__content">{line?lines.map((text,index)=><span className={index+1===line?'bg-amber-100':''} data-line={index+1} key={index}>{text}{index<lines.length-1?'\n':''}</span>):preview.content}</pre>}
     </aside>
   );
 }

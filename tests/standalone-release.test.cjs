@@ -6,7 +6,7 @@ test('release packages compiled assets and SQL without application source or pri
  const f=fixture();try{
   for(const file of ['.next/standalone/server.js','.next/BUILD_ID','.next/static/chunks/app.js','public/icon.svg','.next/standalone/node_modules/runtime/index.js','scripts/start-systemd.sh','scripts/systemd.cjs'])f.put(file);
   for(const file of ['src/secret.ts','web/page.tsx','.env.local','.env.production','models.json','settings.json','auth.json','.data/database.sqlite'])f.put('.next/standalone/'+file,'private');
-  const names=['core-schema.sql','bot-schema.sql','agent-binding-schema.sql','role-schema.sql','workspace-schema.sql'];for(const name of names)f.put('src/infrastructure/database/'+name,'SQL '+name);
+  const names=['core-schema.sql','role-schema.sql','workspace-schema.sql'];for(const name of names)f.put('src/infrastructure/database/'+name,'SQL '+name);
   const destination=packageRelease(f.root);
   assert.equal(fs.readFileSync(path.join(destination,'runtime/database/core-schema.sql'),'utf8'),'SQL core-schema.sql');
   for(const file of ['server.js','.next/static/chunks/app.js','public/icon.svg','node_modules/runtime/index.js','scripts/start-systemd.sh','release.json'])assert.ok(fs.existsSync(path.join(destination,file)),file);
@@ -18,7 +18,7 @@ test('release packages compiled assets and SQL without application source or pri
 test('dependency download mode omits node_modules and preserves matching manifests and lockfile',()=>{
  const f=fixture();try{
   for(const file of ['.next/standalone/server.js','.next/BUILD_ID','.next/static/chunks/app.js','.next/standalone/node_modules/runtime/index.js','scripts/start-systemd.sh','scripts/systemd.cjs'])f.put(file);
-  for(const name of ['core-schema.sql','bot-schema.sql','agent-binding-schema.sql','role-schema.sql','workspace-schema.sql'])f.put('src/infrastructure/database/'+name);
+  for(const name of ['core-schema.sql','role-schema.sql','workspace-schema.sql'])f.put('src/infrastructure/database/'+name);
   f.put('package.json',JSON.stringify({name:'fixture',dependencies:{next:'1.0.0'}}));
   assert.throws(()=>packageRelease(f.root,undefined,{withoutNodeModules:true}),/ENOENT/);
   assert.equal(fs.existsSync(path.join(f.root,'release')),false);
@@ -35,7 +35,7 @@ test('missing standalone build refuses packaging without creating destination',(
 });
 test('production build loads packaged SQL in memory without opening or creating user databases',()=>{
  const f=fixture();try{
-  for(const name of ['core-schema.sql','bot-schema.sql','agent-binding-schema.sql','role-schema.sql','workspace-schema.sql'])f.put('runtime/database/'+name,fs.readFileSync(path.join(__dirname,'../src/infrastructure/database',name),'utf8'));
+  for(const name of ['core-schema.sql','role-schema.sql','workspace-schema.sql'])f.put('runtime/database/'+name,fs.readFileSync(path.join(__dirname,'../src/infrastructure/database',name),'utf8'));
   const {execFileSync}=require('node:child_process');
   const script=`const assert=require('node:assert/strict');const {database,schemaCompatible}=require(${JSON.stringify(path.join(__dirname,'../src/infrastructure/database/database.server.ts'))});assert.equal(database.name,':memory:');assert.equal(schemaCompatible,true);assert.ok(database.prepare("SELECT name FROM sqlite_master WHERE name='projects'").get());database.close();`;
   const run=()=>execFileSync(process.execPath,['-r',path.join(__dirname,'register.cjs'),'-e',script],{cwd:f.root,env:{...process.env,NEXT_PHASE:'phase-production-build'},stdio:'pipe'});

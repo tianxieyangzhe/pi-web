@@ -9,7 +9,6 @@ export function deleteSessionRecord(db: Database.Database, kind: 'project' | 'wo
     db.transaction(() => {
       const row = db.prepare(`SELECT * FROM ${table} WHERE id=? AND ${owner}=?`).get(id, ownerId) as Record<string, unknown> | undefined;
       if (!row) throw new DomainError('NOT_FOUND', '会话不存在', 404, true);
-      if (kind === 'project' && row.bot_conversation_id) throw new DomainError('SESSION_REFERENCED', '此会话关联历史 Bot，不能删除', 409, true);
       db.prepare(`DELETE FROM ${table} WHERE id=? AND ${owner}=?`).run(id, ownerId);
     })();
   } catch (error) {

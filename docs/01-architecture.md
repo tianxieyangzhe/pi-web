@@ -1,6 +1,14 @@
 # 01｜架构：模型与 Pi 的归属
 
-本文范围：应用架构、独立项目执行与通用组件治理。Bot 的全部专属设计、模型、API、交互与需求统一见 [06｜Bot](06-bot.md)，本文不定义或复写其规则。
+FILE-003：会话文件只读用例位于application/session-file-service，基础设施复用会话附件目录与有界文件读取，bootstrap注入SQL Session查询；不通过项目文件API绕过归属、不改变Pi/文件归属。
+
+
+FILE-002：Excel/PPT结构提取复用infrastructure/references/file-preview中的受限ZIP/XML数据解析；PDF使用浏览器原生查看器与现有下载端口，不引入Office服务/第三方上传或新依赖；复用已有FilePreviewPane和原生iframe，不新增可见组件。
+
+
+ROUTE-CLEAN-001：删除退役记忆/模板固定404路由、旧记忆改名脚本、未接入生产调用链的NDJSON适配、轮询器、旧会话组件及其专用测试；移除源码树内空目录。当前原生Pi/SSE、租约、恢复、Agent采用、导出和已完成迁移脚本保留；不操作数据库、备份、原生历史或构建/发布产物。
+
+本文范围：应用架构、独立项目执行与通用组件治理。Workspace 的专属设计、模型、API、交互与需求统一见 [06｜Workspace](06-workspace.md)，本文不定义或复写其规则。
 
 本文只定义代码位置、依赖方向，以及模型与 Pi 的归属。字段以 `02` 为准，API 以 `03` 为准，完成条件以 `05` 为准。页面投影不是本文职责。
 
@@ -8,9 +16,11 @@
 
 每个独立项目 Session 对应独立 Pi AgentSession/SessionManager，cwd 为所属 Project.rootPath，按精确 nativeRef 恢复并复用句柄；Workspace 的专属 cwd 和归属见 06。用户消息、完整 Session Tree、全部分支、活动指针、模型变化与压缩结果只归 Pi，不维护第二份持久对话或应用摘要上下文。
 
+PSES-024：项目文件位置由infrastructure/projects按所属项目根解析，application只接收内部定位描述并装配参考文本，不读取正文；上传/粘贴图片继续解析内容快照；非图片按PSES-025存储并提供位置。两者均经所属Pi sendCustomMessage记录，再prompt原样用户意图；模型通过已有read读取必要片段、bash/rg搜索，cwd/nativeRef/session文件/恢复身份与工具权限不变，不注册新工具。PSES-025附件存储位于infrastructure/references，ZIP/XML提取使用fflate和现有linkedom；文件归属/生命周期见02，API及失败边界见03。Pi适配在prompt前按原生sessionId物化文件，独立项目和Workspace均使用Pi原生read读取附件位置；附件存储校验不构成原生工具的文件系统沙箱。
+
 会话主线为“验证归属及运行许可 → Pi prompt 原样用户文本 → 原生历史与回复”。不运行回答后的应用级自动总结，不创建记忆对象或模板，不以摘要改写提示词。Pi 原生手动上下文压缩继续保留，它与被删除的应用记忆能力是不同的操作。
 
-项目 Runtime 的 AgentSession 初始化共用 infrastructure/pi/create-session.server.ts，在 SDK 初始化期间避免重复追加相同原生配置；比较及失败规则见 03 的 PSES-009，不改 Pi SDK 或已有 transcript。独立项目工具由执行策略和路径保护装配，与可选 Agent 指导及其能力开关独立。
+项目 Runtime 的 AgentSession 初始化共用 infrastructure/pi/create-session.server.ts，在 SDK 初始化期间避免重复追加相同原生配置；比较及失败规则见 03 的 PSES-009，不改 Pi SDK 或已有 transcript。PSES-028：独立项目直接装配Pi原生read/bash/edit/write，与Workspace一致，不注册project_*或额外Bot协作工具；cwd为所属Project.rootPath，原生工具按宿主进程权限执行，cwd不是路径沙箱。Agent仅附加指导，不决定工具许可。内部read请求在prompt前仅激活read，排除可写命令工具；终结后恢复原工具集。project_*包装与Bot功能全部删除，不保留旧Runtime或协作装配，目标模型及历史数据边界见02 BOT-REMOVE-001，专属入口退役见06 BOT-REMOVE-001。历史工具节点原样保留，当前系统说明以实际Pi工具为准。
 
 ## 2. 资源归属
 
@@ -51,7 +61,7 @@ web/workspace/conversation/  中间画布、输入与消息 UI
   project-session/           项目会话及流式状态
 web/workspace/files/         文件浏览和预览
 web/workspace/inspector/     会话检查弹窗、树导航与 Session 设置
-web/api/                     同源 REST/NDJSON Client
+web/api/                     同源 REST/SSE Client
 web/domain/                  浏览器端 DTO 与事件类型
 web/styles/                  全局视觉样式
 ~~~
@@ -63,6 +73,8 @@ web/styles/                  全局视觉样式
 依赖方向为 `app → application → domain + ports`、`infrastructure → ports + domain` 和 `app → web/workspace → web/api + web/domain`。只有 composition root 同时认识应用服务与基础设施。`page.tsx` 和 `route.ts` 只做入口与装配，不承载完整业务实现；页面不直接访问 Pi、SQLite 或 Node 文件系统。
 
 Next.js 同时提供页面和同源 API；不增加独立 Vite 服务或第二个浏览器端口。文件树、预览与 Git 变化仍由独立项目 API 读取；目录列表不依赖 Git 状态。
+
+FILE-001：文件读取/下载用例在application/project-file-service，bootstrap/project-files装配基础设施，route仅映射请求/响应；Workspace按原application端口校验归属。DOCX结构提取在infrastructure/references/file-preview，响应DTO在domain/file-preview。不新增UI组件，复用以下已登记的FilePreviewPane与文件浮窗，以原生标题/表格/代码和按钮投影API，无新增依赖。
 
 ## 5. AI Elements 组件治理
 
@@ -83,7 +95,7 @@ Next.js 同时提供页面和同源 API；不增加独立 Vite 服务或第二�
 | 项目导航与会话布局 | 通用应用布局 | AI Elements 不提供应用布局语义；主会话只保留导航与对话，辅助内容使用独立模态。Agent 编辑工作区的 Markdown 列按自身契约保留 |
 
 
-AI Elements 不承担 API、NDJSON 解析、持久状态或权限校验。Tailwind CSS 与现有项目样式系统承载视觉样式。
+AI Elements 不承担 API、SSE解析、持久状态或权限校验。Tailwind CSS 与现有项目样式系统承载视觉样式。
 
 
 ## 6. 持久化与运行边界

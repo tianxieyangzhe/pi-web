@@ -17,8 +17,6 @@ export function createSessionRepository(db: Database.Database, assertWritable: (
       id: String(row.id), projectId: String(row.project_id), purpose: String(row.purpose ?? ''),
       agentId: row.agent_id as string|null, agentSnapshot: row.agent_snapshot_json ? hydrateAgentSnapshot(json(row.agent_snapshot_json, null)) : null,
       nativeRef: ref, nativeMetadata: {}, mcpIds: [], mcpSnapshots: [],
-      botConversationId: row.bot_conversation_id as string|null, participantName: row.participant_name as string|null,
-      assignment: row.assignment as string|null, collaborationState: row.collaboration_state as Session['collaborationState'], botJoinedAt: row.bot_joined_at as string|null,
       status: endedAt ? 'closed' : 'open',
       state: states.get(String(row.id)) ?? (['starting','running','interrupting','unavailable'].includes(String(row.state)) ? 'unavailable' : ref ? 'idle' : 'not_started'),
       endedAt, createdAt: String(row.created_at), updatedAt: String(row.updated_at ?? row.created_at), lastActivityAt: row.last_activity_at as string|null,

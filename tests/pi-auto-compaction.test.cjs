@@ -4,7 +4,7 @@ const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),Modu
 test('Project and Workspace use Pi default automatic compaction through send, native persistence, idle settlement, manual compact and cold restore',async()=>{
  const pi=await import('@earendil-works/pi-coding-agent'),ai=await import('@earendil-works/pi-ai'),load=Module._load;
  Module._load=function(spec,...args){return spec==='@earendil-works/pi-coding-agent'?pi:spec==='@earendil-works/pi-ai'?ai:load.call(this,spec,...args);};
- let PiSessionRuntime,initializeSession;try{({PiSessionRuntime}=require('../src/infrastructure/pi/pi-session-runtime.server.ts'));({initializeSession}=require('../src/infrastructure/pi/initialize-session.server.ts'));}finally{Module._load=load;}
+ let PiSessionRuntime,initializeSession;try{({PiSessionRuntime}=require('../src/infrastructure/pi/pi-session-runtime.server.ts'));({initializeSession}=require('./support/initialize-pi-session.ts'));}finally{Module._load=load;}
  const root=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'pi-auto-compaction-')));
  const registry=await pi.ModelRuntime.create({credentials:{async read(){},async list(){return []},async modify(){},async delete(){}},modelsPath:null,allowModelNetwork:false,refreshOnCreate:false});
  registry.registerProvider('fixture',{baseUrl:'http://localhost',apiKey:'fake',api:'openai-completions',models:[{id:'fixture',name:'fixture',reasoning:false,input:['text'],cost:{input:0,output:0,cacheRead:0,cacheWrite:0},contextWindow:128000,maxTokens:1000}]});
@@ -13,7 +13,7 @@ test('Project and Workspace use Pi default automatic compaction through send, na
   const manager=initializeSession('auto-'+workspace,root,root);
   for(let i=0;i<12;i++)manager.appendMessage({role:'user',content:`history ${i} `+'long original history '.repeat(3000),timestamp:Date.now()});
   const nativeRef={kind:'pi',sessionId:manager.getSessionId(),sessionFile:manager.getSessionFile(),cwd:root};
-  const input={session:{id:'auto-'+workspace,nativeRef,agentSnapshot:null,state:'idle'},workingDirectory:root,independentProjectTools:true,allowProjectRead:true,allowProjectWrite:true,...(workspace?{workspace:{id:'w',defaultProjectId:'p',projects:[],prompt:'test'}}:{})};
+  const input={session:{id:'auto-'+workspace,nativeRef,agentSnapshot:null,state:'idle'},workingDirectory:root,nativeCodingTools:true,allowProjectRead:true,allowProjectWrite:true,...(workspace?{workspace:{id:'w',defaultProjectId:'p',projects:[],prompt:'test'}}:{})};
   let handle=await runtime.restore(input);try{
    assert.deepEqual(handle.session.settingsManager.getCompactionSettings(),defaults);assert.equal((await runtime.inspect(input)).autoCompactionEnabled,true);assert.equal(runtime.getHandle(input.session.id,input),handle);
    let calls=0;const events=[];

@@ -25,8 +25,7 @@
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
     description TEXT,
-    kind TEXT CHECK(kind IS NULL OR kind IN ('coordinator','project')),
-    bot_id TEXT REFERENCES bots(id) ON DELETE RESTRICT,
+    kind TEXT CHECK(kind IS NULL OR kind = 'project'),
     project_id TEXT REFERENCES projects(id) ON DELETE RESTRICT,
     source_template_id TEXT REFERENCES agents(id) ON DELETE RESTRICT,
     definition_json TEXT CHECK(definition_json IS NULL OR (json_valid(definition_json) AND json_type(definition_json)='object')),
@@ -44,11 +43,6 @@
     id TEXT PRIMARY KEY,
     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE RESTRICT,
     purpose TEXT NOT NULL DEFAULT '' CHECK(length(purpose)<=500),
-    bot_conversation_id TEXT REFERENCES bot_conversations(id) ON DELETE RESTRICT,
-    participant_name TEXT,
-    assignment TEXT,
-    collaboration_state TEXT CHECK(collaboration_state IS NULL OR collaboration_state IN ('active','disabled')),
-    bot_joined_at TEXT,
     updated_at TEXT NOT NULL,
     agent_id TEXT REFERENCES agents(id) ON DELETE RESTRICT,
     agent_snapshot_json TEXT CHECK(agent_snapshot_json IS NULL OR (json_valid(agent_snapshot_json) AND json_type(agent_snapshot_json)='object')),
@@ -63,7 +57,6 @@
     create_request_sha256 TEXT,
     CHECK((agent_id IS NULL AND agent_snapshot_json IS NULL) OR (agent_id IS NOT NULL AND agent_snapshot_json IS NOT NULL AND json_extract(agent_snapshot_json,'$.agentId') IS agent_id)),
     CHECK((create_request_key_hash IS NULL AND create_request_sha256 IS NULL) OR (create_request_key_hash IS NOT NULL AND create_request_sha256 IS NOT NULL AND length(create_request_key_hash)=64 AND create_request_key_hash NOT GLOB '*[^0-9a-f]*' AND length(create_request_sha256)=64 AND create_request_sha256 NOT GLOB '*[^0-9a-f]*')),
-    UNIQUE(id,bot_conversation_id),
     UNIQUE(project_id,create_request_key_hash)
   );
   CREATE INDEX sessions_project_idx ON sessions(project_id,created_at,id);

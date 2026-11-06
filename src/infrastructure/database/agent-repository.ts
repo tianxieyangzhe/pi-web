@@ -9,8 +9,7 @@ import { readAgentVersion, writeAgentVersion } from "../agents/agent-file-store.
 export function createAgentRepository(database:Database.Database,assertSchemaCompatible:()=>void=()=>{}):AgentRepositoryPort {
 function assertRoles() {
   const columns = database.prepare("PRAGMA table_info(agents)").all() as Array<{name:string}>;
-  const tables=database.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as Array<{name:string}>;
-  if (!columns.some(x => x.name === "content_sha256") || !columns.some(x => x.name === "definition_json") || !["bot_project_agents","bot_conversation_project_agents","bot_projects","bot_conversation_projects"].every(name=>tables.some(table=>table.name===name))) throw new DomainError("MIGRATION_REQUIRED", "角色 Markdown 与 Bot 绑定结构需要离线迁移；旧内容已保留", 409, true);
+  if (!columns.some(x => x.name === "content_sha256") || !columns.some(x => x.name === "definition_json")) throw new DomainError("MIGRATION_REQUIRED", "角色 Markdown 结构需要离线迁移；旧内容已保留", 409, true);
 }
 
 function map(row: Record<string, unknown>): Agent {
@@ -33,7 +32,7 @@ function map(row: Record<string, unknown>): Agent {
         legacySource=instruction;
         if(kind&&!definition){
           const oldCaps=oldDefinition?.capabilities as Record<string,unknown>|undefined,
-            capabilities={readFiles:false,writeFiles:false,readProjects:false,dispatchTasks:false,dispatchProjectWrites:false,exchangeMessages:false,...oldCaps};
+            capabilities={readFiles:false,writeFiles:false,...oldCaps};
           try{definition=validateDefinition({instructions:instruction,capabilities},kind);}catch{definition=null;}
         }
       }
@@ -44,7 +43,6 @@ function map(row: Record<string, unknown>): Agent {
     name,
     description,
     kind,
-    botId: row.bot_id as string | null,
     projectId: row.project_id as string | null,
     sourceTemplateId: row.source_template_id as string | null,
     definition,
@@ -78,12 +76,12 @@ const repository:AgentRepositoryPort = {
   create(input: AgentWrite): Agent {
     assertRoles(); assertSchemaCompatible();
     if (!input.kind || !input.definition) throw new DomainError("INVALID_ROLE", "新角色必须有用途和完整定义", 422, true);
-    if (input.botId || input.projectId || input.sourceTemplateId) throw new DomainError("INVALID_ROLE", "Agent 定义独立保存；Bot/Project 关系在 Bot 配置中建立", 422, true);
+    if (input.projectId || input.sourceTemplateId) throw new DomainError("INVALID_ROLE", "Agent 定义独立保存；项目关系在Session中建立", 422, true);
     const id = entityId("agent"), revision = 1, date = now();
     const file = writeAgentVersion({ agentId:id, revision, kind:input.kind, name:input.name, description:input.description, definition:input.definition });
     try {
       database.transaction(() => {
-        database.prepare("INSERT INTO agents(id,name,description,kind,bot_id,project_id,source_template_id,definition_json,extension_json,policy_json,revision,content_sha256,status,created_at,updated_at) VALUES(?,?,?,?,NULL,NULL,NULL,NULL,'{}','{}',?,?,?, ?,?)").run(id,input.name,input.description,input.kind,revision,file.contentSha256,input.status,date,date);
+        database.prepare("INSERT INTO agents(id,name,description,kind,project_id,source_template_id,definition_json,extension_json,policy_json,revision,content_sha256,status,created_at,updated_at) VALUES(?,?,?,?,NULL,NULL,NULL,'{}','{}',?,?,?, ?,?)").run(id,input.name,input.description,input.kind,revision,file.contentSha256,input.status,date,date);
       })();
     } catch (error) {
       // Keep the immutable candidate for review; only the committed index is executable.
@@ -96,7 +94,7 @@ const repository:AgentRepositoryPort = {
     const current = this.get(id);
     if (!current) return null;
     if (!expected || roleETag(current) !== expected) throw new DomainError("WRITE_CONFLICT", "角色已更新或缺少条件凭据，请重新读取", 409, true);
-    if (current.kind && patch.kind !== undefined && patch.kind !== current.kind || patch.botId !== undefined && patch.botId !== current.botId || patch.projectId !== undefined && patch.projectId !== current.projectId || patch.sourceTemplateId !== undefined && patch.sourceTemplateId !== current.sourceTemplateId) throw new DomainError("INVALID_ROLE", "Agent 用途和绑定关系不在角色编辑器中修改", 409, true);
+    if (current.kind && patch.kind !== undefined && patch.kind !== current.kind || patch.projectId !== undefined && patch.projectId !== current.projectId || patch.sourceTemplateId !== undefined && patch.sourceTemplateId !== current.sourceTemplateId) throw new DomainError("INVALID_ROLE", "Agent 用途和绑定关系不在角色编辑器中修改", 409, true);
     const nextName = patch.name ?? current.name,
       nextDescription = patch.description === undefined ? current.description : patch.description,
       nextDefinition = patch.definition === undefined ? current.definition : patch.definition,
@@ -126,7 +124,7 @@ const repository:AgentRepositoryPort = {
   },
   isInUse(id: string): boolean {
     assertRoles();
-    return !!database.prepare(`SELECT 1 FROM bots WHERE coordinator_agent_id=? UNION ALL SELECT 1 FROM bot_conversations WHERE coordinator_agent_id=? UNION ALL SELECT 1 FROM sessions WHERE agent_id=? UNION ALL SELECT 1 FROM bot_project_agents WHERE agent_id=? UNION ALL SELECT 1 FROM bot_conversation_project_agents WHERE agent_id=? LIMIT 1`).get(id,id,id,id,id);
+    return !!database.prepare('SELECT 1 FROM sessions WHERE agent_id=? LIMIT 1').get(id);
   }
 };
 

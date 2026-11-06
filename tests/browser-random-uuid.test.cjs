@@ -22,7 +22,6 @@ test('HTTP clients submit valid keys and preserve an explicit retry key',()=>wit
  const {api}=require('../web/api/client.ts');
  const {workspaceApi}=require('../web/api/workspace-client.ts');
  const {submitSessionMessage}=require('../web/api/session-events.ts');
- const {botApi}=require('../web/api/bot-client.ts');
  const previousFetch=global.fetch,calls=[];
  global.fetch=async(url,init)=>{calls.push({url,headers:new Headers(init.headers)});return Response.json({data:{}});};
  try{
@@ -34,8 +33,6 @@ test('HTTP clients submit valid keys and preserve an explicit retry key',()=>wit
   assert.equal(new Set(calls.slice(0,3).map(call=>call.headers.get('idempotency-key'))).size,3);
   assert.equal(calls[2].headers.get('x-session-lease-id'),'lease');
   assert.equal(calls[3].headers.get('idempotency-key'),'retained-retry-key');
-  await botApi.createConversation('bot',{});
-  assert.match(calls[4].headers.get('idempotency-key'),uuidV4);
  }finally{global.fetch=previousFetch;}
 }));
 test('missing secure randomness fails before sending a request',()=>withCrypto({},async()=>{

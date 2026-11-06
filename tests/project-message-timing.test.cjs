@@ -18,14 +18,15 @@ test('timing uses monotonic elapsed milliseconds, logs each stage once and toler
 test('project send records runtime and first events without recording content',async()=>{
   const original=console.info, lines=[];
   console.info=(line)=>lines.push(line);
-  let session={id:'timing-session',projectId:'p',sessionMemoryId:'m',state:'idle',agentId:null,agentSnapshot:null,mcpIds:[],nativeRef:null};
+  let session={id:'timing-session',projectId:'p',state:'idle',agentId:null,agentSnapshot:null,mcpIds:[],nativeRef:null};
   const handle={};
   const service=createSessionExecutionService({
     sessions:{get:()=>session,updateRuntime:(_,patch)=>(session={...session,...patch})},
-    catalog:{},projects:{get:()=>({rootPath:'/private/project',status:'active'})},sessionMemories:{get:()=>({projectId:'p'})},
-    runtime:{getHandle:()=>handle,send:async(_handle,_message,emit,onAssistantStream)=>{onAssistantStream();onAssistantStream();emit({type:'message_delta',text:'private answer'});emit({type:'activity',kind:'tool',state:'running',summary:'private tool'});emit({type:'message_delta',text:'more'});}},
+    catalog:{},projects:{get:()=>({rootPath:'/private/project',status:'active'})},
+    runtime:{getHandle:()=>handle,close:async()=>{},send:async(_handle,_message,emit,onAssistantStream)=>{onAssistantStream();onAssistantStream();emit({type:'message_delta',text:'private answer'});emit({type:'activity',kind:'tool',state:'running',summary:'private tool'});emit({type:'message_delta',text:'more'});}},
   });
   try {
+    await service.open('timing-session','open');
     const events=[];
     for await (const event of service.send('timing-session','private prompt')) events.push(event);
     assert.ok(events.some(e=>e.type==='complete'));
@@ -33,17 +34,18 @@ test('project send records runtime and first events without recording content',a
     assert.deepEqual(entries.map(e=>e.stage),['accepted','handle_reused','prompt_start','assistant_stream','first_text','first_tool','completed']);
     assert.ok(entries.every(e=>e.id===entries[0].id && e.sessionId==='timing-session'));
     assert.doesNotMatch(lines.join('\n'),/private|\/private/);
-  } finally {console.info=original;}
+  } finally {await service.close('timing-session');console.info=original;}
 });
 
 test('failed runtime send records failure without error message',async()=>{
   const original=console.info,lines=[];console.info=line=>lines.push(line);
-  let session={id:'timing-failure',projectId:'p',sessionMemoryId:'m',state:'idle',agentId:null,agentSnapshot:null,mcpIds:[],nativeRef:null};
-  const service=createSessionExecutionService({sessions:{get:()=>session,updateRuntime:(_,patch)=>(session={...session,...patch})},catalog:{},projects:{get:()=>({rootPath:'/tmp',status:'active'})},sessionMemories:{get:()=>({projectId:'p'})},runtime:{getHandle:()=>({}),send:async()=>{throw new Error('sensitive failure');}}});
+  let session={id:'timing-failure',projectId:'p',state:'idle',agentId:null,agentSnapshot:null,mcpIds:[],nativeRef:null};
+  const service=createSessionExecutionService({sessions:{get:()=>session,updateRuntime:(_,patch)=>(session={...session,...patch})},catalog:{},projects:{get:()=>({rootPath:'/tmp',status:'active'})},runtime:{getHandle:()=>({}),close:async()=>{},send:async()=>{throw new Error('sensitive failure');}}});
   try {
+    await service.open('timing-failure','open');
     const events=[];for await(const event of service.send('timing-failure','secret')) events.push(event);
     assert.ok(events.some(e=>e.type==='error'));
     assert.ok(lines.some(line=>line.includes('"stage":"failed"')));
     assert.doesNotMatch(lines.join('\n'),/secret|sensitive/);
-  } finally {console.info=original;}
+  } finally {await service.close('timing-failure');console.info=original;}
 });

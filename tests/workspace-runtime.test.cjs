@@ -5,7 +5,7 @@ const {workspacePrompt}=require('../src/domain/workspace.ts');
 test('production runtime restores exact native identity, uses native coding tools, and retains full native branches',async()=>{
  const pi=await import('@earendil-works/pi-coding-agent'),ai=await import('@earendil-works/pi-ai'),Module=require('node:module'),original=Module._load;
  Module._load=function(spec,...args){return spec==='@earendil-works/pi-coding-agent'?pi:spec==='@earendil-works/pi-ai'?ai:original.call(this,spec,...args);};
- let PiSessionRuntime,initializeSession;try{({PiSessionRuntime}=require('../src/infrastructure/pi/pi-session-runtime.server.ts'));({initializeSession}=require('../src/infrastructure/pi/initialize-session.server.ts'));}finally{Module._load=original;}
+ let PiSessionRuntime,initializeSession;try{({PiSessionRuntime}=require('../src/infrastructure/pi/pi-session-runtime.server.ts'));({initializeSession}=require('./support/initialize-pi-session.ts'));}finally{Module._load=original;}
  const {ModelRuntime,SessionManager}=pi;
  const {pathToFileURL}=require('node:url');
  const transport=await import(pathToFileURL(path.join(__dirname,'../node_modules/@earendil-works/pi-ai/dist/api/openai-completions.js')).href);
@@ -15,7 +15,7 @@ test('production runtime restores exact native identity, uses native coding tool
  const runtime=new PiSessionRuntime(async()=>({runtime:modelRuntime,model:modelRuntime.getModel('fake','fake')}));
  const manager=initializeSession('fixture',a,root);const nativeRef={kind:'pi',sessionId:manager.getSessionId(),sessionFile:manager.getSessionFile(),cwd:a};
  const w={id:'w',name:'Work',projects:[{id:'a',workspaceId:'w',name:'a',rootPath:a},{id:'b',workspaceId:'w',name:'b',rootPath:b}]};
- const input={session:{id:'s',nativeRef,agentSnapshot:null,state:'idle'},workingDirectory:a,allowProjectRead:true,allowProjectWrite:true,independentProjectTools:true,workspace:{...w,defaultProjectId:'a',prompt:workspacePrompt(w,'a')}};
+ const input={session:{id:'s',nativeRef,agentSnapshot:null,state:'idle'},workingDirectory:a,allowProjectRead:true,allowProjectWrite:true,nativeCodingTools:true,workspace:{...w,defaultProjectId:'a',prompt:workspacePrompt(w,'a')}};
  let handle;
  try{
   handle=await runtime.restore(input);assert.equal(handle.session.sessionId,nativeRef.sessionId);assert.equal(handle.session.sessionFile,nativeRef.sessionFile);

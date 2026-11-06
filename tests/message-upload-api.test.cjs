@@ -1,18 +1,29 @@
 require('./register.cjs');
 const {test}=require('node:test'),assert=require('node:assert/strict');
-const root=require.resolve('../src/bootstrap/composition-root.server.ts');let sends=0;
 const {parseMessageReferences}=require('../src/domain/message-references.ts');
-const execution={referenceContractVersion:3,send(_id,_text,_op,refs){parseMessageReferences(refs,new Set(['p']),()=>({name:'x',data:'eA=='}));return (async function*(){sends++;yield {type:'complete'};})();}};
-require.cache[root]={id:root,filename:root,loaded:true,exports:{services:{projectSessions:{get(){}},bots:{participantForSession:()=>null},execution}}};
+const {MAX_MESSAGE_BODY_BYTES}=require('../src/domain/message-reference-limits.ts');
+let accepts=0;
+function accept(_owner,_id,body){parseMessageReferences(body.references);accepts++;return {accepted:true,sessionId:'s'};}
+const root=require.resolve('../src/bootstrap/composition-root.server.ts');
+require.cache[root]={id:root,filename:root,loaded:true,exports:{services:{projectSessions:{get(){}},sessionTools:{accept}}}};
 const {POST}=require('../src/app/api/projects/[projectId]/sessions/[sessionId]/messages/route.ts');
-const context={params:Promise.resolve({projectId:'p',sessionId:'s'})};
-const req=refs=>new Request('http://localhost',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({content:'hello',references:refs})});
-test('project upload rejects stale service and invalid bytes before acceptance',async()=>{
- let response=await POST(req([{name:'x',data:'eA=='}]),context);assert.equal(response.status,503);response=await POST(req(undefined),context);assert.equal(response.status,503);assert.equal(sends,0);execution.referenceContractVersion=6;
- response=await POST(req([{name:'x',data:'bad'}]),context);assert.equal(response.status,400);assert.equal(sends,0);
- response=await POST(req([{name:'x',data:'eA=='}]),context);assert.equal(response.status,200);await response.text();assert.equal(sends,1);
+const {createWorkspaceApi}=require('../src/shared/protocol/workspace-api.server.ts');
+const workspace=createWorkspaceApi({session(){},accept});
+const endpoints=[request=>POST(request,{params:Promise.resolve({projectId:'p',sessionId:'s'})}),request=>workspace(request,['w','sessions','s','messages'])];
+const req=(body,headers={})=>new Request('http://localhost',{method:'POST',headers:{'content-type':'application/json',...headers},body:JSON.stringify(body)});
+test('project and workspace message APIs accept payloads beyond the former JSON limit and reject invalid references',async()=>{
+ const data=Buffer.alloc(10*1024*1024,65).toString('base64');
+ for(const call of endpoints){
+  const before=accepts;let response=await call(req({content:'hello',references:[{name:'large.txt',data}]}));assert.equal(response.status,202);assert.equal(accepts,before+1);
+  response=await call(req({content:'hello',references:[{name:'x',data:'bad'}]}));assert.equal(response.status,400);assert.equal(accepts,before+1);
+  response=await call(req({content:'hello'},{'content-length':String(MAX_MESSAGE_BODY_BYTES+1)}));assert.equal(response.status,413);assert.equal(accepts,before+1);
+ }
 });
-test('JSON body limits streamed bytes before parsing',async()=>{
+test('message JSON budget covers base64 padding, maximum body text, and metadata',()=>{
+ const base64=Math.ceil(50_000_000/3)*4;
+ assert(MAX_MESSAGE_BODY_BYTES>base64+32*1024+10*4096*6);
+});
+test('JSON body limits streamed bytes without Content-Length before parsing',async()=>{
  const {jsonBody}=require('../src/shared/protocol/api.ts');let cancelled=false;
  const body=new ReadableStream({pull(c){c.enqueue(new Uint8Array(11));},cancel(){cancelled=true;}});
  const request=new Request('http://localhost',{method:'POST',body,duplex:'half'});

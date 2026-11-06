@@ -102,7 +102,7 @@ npm run typecheck
 node --test tests/standalone-release.test.cjs
 ```
 
-详细设计见 [架构](docs/01-architecture.md)、[模型](docs/02-data-model.md)、[API](docs/03-interaction-logic.md)、[页面](docs/04-ui-layout.md)、[需求](docs/05-requirements.md)及[工作区与 Bot](docs/06-bot.md)。
+详细设计见 [架构](docs/01-architecture.md)、[模型](docs/02-data-model.md)、[API](docs/03-interaction-logic.md)、[页面](docs/04-ui-layout.md)、[需求](docs/05-requirements.md)及[工作区](docs/06-workspace.md)。
 
 ## 2. 构建不包含 node_modules
 
@@ -129,14 +129,25 @@ release/
 
 如果项目有 `public/`，也会一并复制。发布包不包含 `node_modules`、应用 TS/TSX 源码、用户 `.data`、模型配置、认证或环境文件。
 
-输出目录已存在时拒绝覆盖。后续可重新构建并打包到一个新的目录：
+输出目录已存在时拒绝覆盖。后续可构建并打包到一个新的目录，例如 `release-new/`：
 
 ```bash
-npm run build
-node scripts/package-release.cjs /新的/输出目录 --without-node-modules
+npm run release -- release- --without-node-modules
 ```
 
-打包默认输出并传到服务器：
+它等价于先运行 `npm run build`，再运行 `node scripts/package-release.cjs release-new --without-node-modules`。**直接运行打包脚本只复制已有编译产物，不会编译最新源码，也不检查构建是否过期。** `--without-node-modules` 只控制是否携带依赖，不改变构建行为。
+
+**构建输出、压缩来源和上传文件必须对应同一份新包。** 如果生成的是 `release-new/`，就必须从该目录压缩；同时存在的旧 `release/` 不会自动更新：
+
+```bash
+node -p "require('./release-new/release.json').buildId"
+tar -czf ai-workspace-new.tar.gz -C release-new .
+scp ai-workspace-new.tar.gz 用户名@服务器IP:/tmp/
+```
+
+记录上面输出的 Build ID，服务器解压后核对。Build ID 用于辨认构建产物，不是 Git commit，也不是运行进程已加载新包的证明。
+
+如果使用开头命令生成的默认 `release/`，则从默认目录打包并上传（与上面的自定义目录方案二选一）：
 
 ```bash
 tar -czf ai-workspace-release.tar.gz -C release .
@@ -208,7 +219,15 @@ PM2 按用户隔离，始终用同一用户管理。后台运行不等于开机�
 pm2 stop ai-workspace
 ```
 
-将新包解压到同一发布目录，替换程序产物，保留现有运行数据和配置。依赖清单或锁文件变化、依赖不完整或 Node ABI 变化时，重新安装依赖后启动：
+将实际上传的新包解压到同一发布目录，替换程序产物，保留现有运行数据和配置。例如上传的是 `ai-workspace-new.tar.gz`：
+
+```bash
+cd /opt/ai-workspace
+tar -xzf /tmp/ai-workspace-new.tar.gz
+node -p "require('./release.json').buildId"
+```
+
+服务器输出的 Build ID 必须与本地新发布目录记录的一致；不一致先核对压缩来源、上传文件和解压目录，不要继续用旧包重启。依赖清单或锁文件变化、依赖不完整或 Node ABI 变化时，重新安装依赖后启动：
 
 ```bash
 cd /opt/ai-workspace
@@ -217,6 +236,18 @@ pm2 restart ai-workspace
 ```
 
 `package.json`、`package-lock.json` 和 Node ABI 均未变化且依赖完整时，可保留已有 `node_modules` 并跳过安装。`npm ci` 会重建依赖目录，只在停服后执行；不使用会让新旧进程重叠的零停机 reload。
+
+### 更新后仍看不到新功能
+
+按以下顺序核对：
+
+1. 源码已更新，并重新执行了构建；单独执行 `node scripts/package-release.cjs` 不会构建。
+2. 压缩命令的 `-C` 指向本次实际生成的目录，例如 `release-new`，没有继续打包旧 `release`。
+3. 在服务器实际部署目录运行 `node -p "require('./release.json').buildId"`，与本地新包的 Build ID 对比。
+4. 运行 `pm2 describe ai-workspace`，核对 `script path` 指向该目录的 `server.js`，`exec cwd` 也是该固定目录；从其他目录执行 `pm2 restart` 不会改变原来的启动路径。
+5. 确认新包已解压、需要的依赖已安装并重启正确进程，再强制刷新浏览器；有反向代理时核对其目标端口是否对应此进程。
+
+目录中的 Build ID 一致但未重启，运行进程仍可能保留旧代码。不要靠删除 `.data`、Pi 历史或模型配置排查版本问题。
 
 部署路径保持稳定，更新和备份时保留：
 

@@ -178,9 +178,9 @@ export function createCatalogService({
     const current = id ? agentRepository.get(id) : null;
     if (id && !current) throw new DomainError('NOT_FOUND', '角色不存在', 404, true);
     if(current)match(current,String(body.writeETag??""));
-    if(current&&(current.botId||current.projectId||current.sourceTemplateId))throw new DomainError("INVALID_ROLE","历史归属资料请创建新的独立Agent",409,true);
+    if(current&&(current.projectId||current.sourceTemplateId))throw new DomainError("INVALID_ROLE","历史归属资料请创建新的独立Agent",409,true);
     if(body.description!==undefined&&body.description!==null&&typeof body.description!=="string")throw new DomainError("INVALID_INPUT","Agent说明无效",400,true);
-    const kind = enumValue(body.kind ?? current?.kind, ['coordinator', 'project'] as const, 'kind');
+    const kind = enumValue(body.kind ?? current?.kind, ['project'] as const, 'kind');
     if (current?.kind && kind !== current.kind) throw new DomainError('INVALID_ROLE', '角色用途不可在编辑时改变', 409, true);
     const name = requiredText(body.name ?? current?.name, 'name', '角色名称'),
       description = optionalText(body.description === undefined ? current?.description : body.description);
@@ -190,7 +190,6 @@ export function createCatalogService({
       name,
       description,
       kind,
-      botId: null,
       projectId: null,
       sourceTemplateId: null,
       definition,

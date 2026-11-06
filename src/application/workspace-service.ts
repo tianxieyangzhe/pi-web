@@ -8,7 +8,7 @@ import type { PiContextPort } from "./ports/pi-context";
 import type { JsonObject, Session, SessionState } from "@/domain/models";
 import { SessionPresence } from "./session-presence";
 import { SessionEvents } from "./session-events";
-import { parseMessageReferences, type ReferenceContent } from "@/domain/message-references";
+import { parseMessageReferences, type ReferenceContent, type ProjectReferenceTarget } from "@/domain/message-references";
 
 type Runtime = PiRuntimePort & PiContextPort & Partial<Pick<SessionToolsRuntimePort,'models'|'switchModel'>> & {
   recordRequest?(input:SessionRuntimeInput,type:string,data:unknown):string;
@@ -27,7 +27,7 @@ export function unresolvedRequests(entries: Array<{type:string;data:unknown}>) {
   }
   return [...pending.values()];
 }
-export function createWorkspaceService(d: { repository: WorkspaceRepository; directories: WorkspaceDirectories; runtime: Runtime; openHistory?:import('./ports/session-open-history').SessionOpenHistory; preview?:(value:WorkspaceSession)=>import('@/domain/session-preview').SessionPreview; listFiles?: (workspaceId:string,projectId:string,path:string)=>Promise<unknown>; readFile?: (workspaceId:string,projectId:string,path:string)=>Promise<{path:string;content:string;size:number}>; readReference?: (workspaceId:string,reference:{projectId:string;path:string})=>{name:string;data:string} }) {
+export function createWorkspaceService(d: { repository: WorkspaceRepository; directories: WorkspaceDirectories; runtime: Runtime; sessionFiles?:ReturnType<typeof import('./session-file-service').createSessionFileService>; openHistory?:import('./ports/session-open-history').SessionOpenHistory; preview?:(value:WorkspaceSession)=>import('@/domain/session-preview').SessionPreview; listFiles?: (workspaceId:string,projectId:string,path:string)=>Promise<unknown>; readFile?: (workspaceId:string,projectId:string,path:string)=>Promise<import('@/domain/file-preview').FilePreview>; downloadFile?: (workspaceId:string,projectId:string,path:string)=>Promise<import('@/domain/file-preview').FileDownload>; resolveReference?: (workspaceId:string,reference:{projectId:string;path:string})=>ProjectReferenceTarget }) {
   const r=d.repository, rt=d.runtime;
   const running = new Map<string,{kind:'message'|'compact'|'model';done:Promise<void>}>();
   const states = new Map<string,SessionState>();
@@ -42,9 +42,9 @@ export function createWorkspaceService(d: { repository: WorkspaceRepository; dir
     const workspace=r.get(value.workspaceId);if(!workspace)throw new DomainError('NOT_FOUND','工作区不存在',404,true);
     const project=workspace.projects.find(p=>p.id===value.defaultProjectId);if(!project)throw new DomainError('START_PROJECT_UNAVAILABLE','默认项目不可用',409,true);
     // Runtime adapter only: no independent Project or Session is created by this projection.
-    const session:Session={id:value.id,projectId:value.defaultProjectId,purpose:value.purpose,state:state(value),nativeRef:value.nativeRef,status:value.endedAt?'closed':'open',endedAt:value.endedAt,createdAt:value.createdAt,updatedAt:value.createdAt,lastActivityAt:null,agentId:null,agentSnapshot:null,mcpIds:[],mcpSnapshots:[],nativeMetadata:{},botConversationId:null,participantName:null,assignment:null,collaborationState:null,botJoinedAt:null};
+    const session:Session={id:value.id,projectId:value.defaultProjectId,purpose:value.purpose,state:state(value),nativeRef:value.nativeRef,status:value.endedAt?'closed':'open',endedAt:value.endedAt,createdAt:value.createdAt,updatedAt:value.createdAt,lastActivityAt:null,agentId:null,agentSnapshot:null,mcpIds:[],mcpSnapshots:[],nativeMetadata:{}};
     if(value.nativeRef && value.nativeRef.cwd!==project.rootPath)throw new DomainError('NO_NATIVE_REF','默认目录与原生身份不一致',409,true);
-    return {session,workingDirectory:project.rootPath,allowProjectRead:true,allowProjectWrite:true,independentProjectTools:true,workspace:{id:workspace.id,defaultProjectId:project.id,projects:workspace.projects,prompt:workspacePrompt(workspace,project.id)}};
+    return {session,workingDirectory:project.rootPath,allowProjectRead:true,allowProjectWrite:true,nativeCodingTools:true,workspace:{id:workspace.id,defaultProjectId:project.id,projects:workspace.projects,prompt:workspacePrompt(workspace,project.id)}};
   }
   async function evidence(value:WorkspaceSession) {
     const handle=rt.getHandle(value.id);
@@ -76,11 +76,22 @@ export function createWorkspaceService(d: { repository: WorkspaceRepository; dir
   }
   return {
     events,
+    async sessionFilePreview(workspaceId:string,sessionId:string,path:string) {
+      scope(workspaceId,sessionId);
+      if(!d.sessionFiles)throw new DomainError('FILE_PREVIEW_UNAVAILABLE','会话文件服务尚未加载，请重启服务',503,true);
+      return d.sessionFiles.preview(workspaceId,sessionId,path);
+    },
+    async sessionFileDownload(workspaceId:string,sessionId:string,path:string) {
+      scope(workspaceId,sessionId);
+      if(!d.sessionFiles)throw new DomainError('FILE_DOWNLOAD_UNAVAILABLE','会话文件服务尚未加载，请重启服务',503,true);
+      return d.sessionFiles.download(workspaceId,sessionId,path);
+    },
     list:()=>r.list(),
     get:(id:string)=>{const value=r.get(id);if(!value)throw new DomainError('NOT_FOUND','工作区不存在',404,true);return value;},
     directories:(path?:string)=>d.directories.list(path),
     async files(workspaceId:string,projectId:string,path:string) { const workspace=r.get(workspaceId);if(!workspace?.projects.some(p=>p.id===projectId))throw new DomainError('NOT_FOUND','工作区项目不存在',404,true);return d.listFiles?.(workspaceId,projectId,path); },
     async readFile(workspaceId:string,projectId:string,path:string) { const workspace=r.get(workspaceId);if(!workspace?.projects.some(p=>p.id===projectId))throw new DomainError('NOT_FOUND','工作区项目不存在',404,true);if(!d.readFile)throw new DomainError('FILE_PREVIEW_UNAVAILABLE','文件预览尚未加载，请重启服务',503,true);return d.readFile(workspaceId,projectId,path); },
+    async downloadFile(workspaceId:string,projectId:string,path:string) { const workspace=r.get(workspaceId);if(!workspace?.projects.some(p=>p.id===projectId))throw new DomainError('NOT_FOUND','工作区项目不存在',404,true);if(!path)throw new DomainError('INVALID_PATH','缺少文件相对路径',400,true);if(!d.downloadFile)throw new DomainError('FILE_DOWNLOAD_UNAVAILABLE','文件下载尚未加载，请重启服务',503,true);return d.downloadFile(workspaceId,projectId,path); },
     async save(id:string|null,body:Record<string,unknown>,credential:string) {
       const configuration=parseWorkspaceConfiguration(body);
       if(!credential)throw new DomainError('PRECONDITION_REQUIRED',id?'缺少 If-Match':'缺少 Idempotency-Key',428,true);
@@ -156,7 +167,7 @@ export function createWorkspaceService(d: { repository: WorkspaceRepository; dir
         if(existing){if(existing.hash!==hash)throw new DomainError('IDEMPOTENCY_CONFLICT','请求键已用于其他消息',409,true);return {accepted:true,sessionId:id};}
         await assertKnown(value);
         const handle=await handleFor(value),workspace=r.get(workspaceId)!;
-        const references=parseMessageReferences(body.references,new Set(workspace.projects.map(p=>p.id)),d.readReference?reference=>d.readReference!(workspaceId,reference):undefined);
+        const references=parseMessageReferences(body.references,new Set(workspace.projects.map(p=>p.id)),d.resolveReference?reference=>d.resolveReference!(workspaceId,reference):undefined);
         if(body.webSearch===true){if(!rt.validateWebSearch)throw new DomainError('WEB_SEARCH_UNSUPPORTED','当前运行时不支持服务端搜索，请关闭联网搜索',422,true);rt.validateWebSearch(handle);}
         if(body.toolSearch===true){if(!rt.validateToolSearch)throw new DomainError('TOOL_SEARCH_UNAVAILABLE','当前运行时未装配工具搜索，请关闭工具搜索或重启服务',422,true);rt.validateToolSearch();}
         rt.requestEntry(handle,'workspace_request',{key,hash});

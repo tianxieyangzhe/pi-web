@@ -90,13 +90,9 @@ export const mcpRepository = {
           `SELECT id FROM sessions WHERE EXISTS (
             SELECT 1 FROM json_each(mcp_ids_json) WHERE value = ?
           )
-           UNION ALL
-           SELECT id FROM tasks WHERE EXISTS (
-             SELECT 1 FROM json_each(mcp_ids_json) WHERE value = ?
-           )
            LIMIT 1`,
         )
-        .get(id, id),
+        .get(id),
     );
   },
 };

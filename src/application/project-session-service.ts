@@ -1,4 +1,3 @@
-import { roleState } from '@/domain/role-state';
 import { isRoleSnapshot, snapshotReference } from '@/domain/agent-definition';
 import { DomainError } from '@/domain/errors';
 import type { Session, JsonObject } from '@/domain/models';
@@ -19,7 +18,6 @@ export function parseSessionCreation(body: Record<string,unknown>) {
 }
 export function createProjectSessionService(dependencies: {
   projects: ProjectRepositoryPort; sessions: SessionRepositoryPort; operations: ProjectOperationStore;
-  roleStatus?: (s: Session) => ReturnType<typeof roleState>;
   role?: (agentId: string, projectId: string) => import('@/domain/models').AgentSnapshot;
   openHistory?:import('./ports/session-open-history').SessionOpenHistory;
   preview?:(session:Session)=>import('@/domain/session-preview').SessionPreview;
@@ -45,7 +43,7 @@ export function createProjectSessionService(dependencies: {
       else if(name==='cancelCompaction')reason=busy?null:'COMPACTION_NOT_RUNNING';
       else if(unknown)reason='REQUEST_UNKNOWN';
       else if(busy)reason='SESSION_BUSY';
-      else if(name==='delete')reason=value.botConversationId?'SESSION_REFERENCED':null;
+      else if(name==='delete')reason=null;
       else if(name==='fork')reason=!active?'PROJECT_UNAVAILABLE':!history?'NO_NATIVE_REF':null;
       else if(name==='restore')reason=history?null:'NO_NATIVE_REF';
       else if(!active)reason='PROJECT_UNAVAILABLE';

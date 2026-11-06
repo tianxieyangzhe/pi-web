@@ -1,6 +1,6 @@
 # 02｜模型：持久事实与 SQL
 
-本文范围：独立项目与通用资源模型。Bot 的全部专属设计、模型、API、交互与需求统一见 [06｜Bot](06-bot.md)，本文不定义或复写其规则。
+本文范围：独立项目与通用资源模型。Workspace 的专属设计、模型、API、交互与需求统一见 [06｜Workspace](06-workspace.md)，本文不定义或复写其规则。
 
 本文是独立项目与通用持久模型的唯一来源。每项改动先在这里定位对象、表、约束和关系，再允许 `03` 定义 API 如何改变这些事实。
 
@@ -52,6 +52,12 @@ purpose 是已有的用户意图/会话说明；类型为 string，持久值非 
 nativeRef 含 kind、sessionFile、sessionId、cwd，首次建立后不可替换或清空，只在服务端用于精确恢复。每个 Session 对应独立 Pi Session Tree，节点 ID、父子关系、内容及活动叶子由 Pi SessionManager 管理。单独切换叶子不保证跨重启持久化，恢复以 Pi 原生结果为准；历史分支不因不活动而消失。对话与树预览均是该树的投影，不新增持久副本。
 
 项目资源定义分别保存，不把角色正文、工具配置或其他资源关系写成会话任意 JSON。Agent 的完整规则见 §7。
+
+PSES-024：项目文件参考只是所属Pi参考消息中的位置描述，不形成持久文件授权或内容快照；模型读取内容时由Pi原生工具调用/结果持有当时证据。上传/粘贴图片仍为Pi内容快照。非图片上传/粘贴按PSES-025落盘并以位置进入Pi。项目位置不新增持久对象；已有Pi快照保持原样，不迁移或改写历史。
+
+PSES-025：新增应用管理的不可变附件文件，不新增SQL表或业务列。文件归所属Pi原生sessionId，目录为<applicationConfigRoot>/.data/session-files/<SHA256(sessionId)>/<SHA256(原文件名+NUL+原始字节)>/；该身份与Pi恢复一致，不使用cwd或客户端路径决定归属。目录中original.<安全扩展名>保存完整原始字节；content.txt为可选、由原件确定生成的UTF-8读取副本。Pi参考消息记录原名、原件位置、读取位置及提取结果，文件不拥有独立transcript。存储按不同会话分目录、同会话同名同字节去重，同名不同内容创建新身份；文件已存在须校验字节，不覆盖损坏或被替换文件。目录0700，文件0400；应用只操作自己创建的目录，拒绝符号链接。会话关闭、进程重启、压缩及业务记录删除不自动删除附件，以免已有Pi分支引用失效；无自动GC或迁移，旧快照不转存。失败前已落盘的不可变文件可保留，Pi写入不承诺与磁盘跨介质原子性；不得重用其他会话文件或从损坏文件静默重建。文件存储不影响上传额度和已有SQL结构。PSES-028使用Pi原生工具后，分目录和0400仍是存储约束，不声明宿主同用户进程具备跨会话文件系统隔离；原生bash不受附件存储服务的路径检查约束。会话归属、Pi身份、原件不可变的应用存储策略不变，不新增SQL或迁移。
+
+BOT-REMOVE-001：Bot整体退役，只保留Project、Agent、Session及Workspace模型。目标Schema从14张表减为7张：projects、mcps、agents、sessions、workspaces、workspace_projects、workspace_sessions；退役bots、bot_conversations、project_calls及四张Bot项目/Agent关系表，移除agents.bot_id和sessions的bot_conversation_id/participant_name/assignment/collaboration_state/bot_joined_at及依赖索引、外键、触发器。旧Coordinator、Task、Bot及派发/协作模型整体退役，不保留模型、API、旧Schema副本或未来接入计划；Agent用途仅project，能力仅readFiles/writeFiles；旧AgentPolicy/PiAgentExtension及maxParallelTasks一并移除，历史会话仅提取旧引用的agentId/revision/name作为不可执行标识，不加载旧能力或调度配置，原始JSON在数据库中保持不变；MCP引用检查仅查询现存Session，不查询退役Task；Agent仍为独立版本化Markdown，不拥有transcript。Session仍独占原Pi身份，不再有Bot父级或协调来源派生。舍弃保留空表/隐藏JSON兼容方案，避免无功能的持久关系继续控制独立会话。历史映射：退役表、列、协调Agent和旧Markdown须在用户另行决定迁移时完整归档；源码退役阶段只实施目标Schema与代码删除；其后用户另行授权的DBUP-002已按§11.2完成迁移，不清库、不删除原Pi文件。已有旧库由通用Schema校验阻止写入并报告SCHEMA_INCOMPATIBLE；读取现存Project/Session及Pi全树不调用Bot兼容逻辑。旧目标迁移脚本、Schema副本及旧OpenCode协调/子代理参考快照退役，不保留旧模型设计副本；追溯使用git历史。
 
 ## 4. 表数量与模型可读性：退役应用记忆
 
@@ -117,7 +123,7 @@ type NativeContextInspection = {
 type AgentSnapshotRef = {
   agentId: EntityId;
   revision: number;
-  kind: "coordinator" | "project";
+  kind: "project";
   contentSha256: string;
   name: string;
   description: string | null;
@@ -130,7 +136,7 @@ Session 的持久字段与运行投影只按 §3 定义。Agent 引用和快照�
 
 ## 8. 用户删除独立项目会话（PSES-012）
 
-用户确认后，在事务中只 DELETE sessions 的指定 id/project_id 行；Project、Agent、其他会话和 Pi 文件不变。历史 Bot 或其他外键引用返回 SESSION_REFERENCED 并回滚。运行、打开、压缩或结果未知时不删除。源 nativeRef 不改写；只释放空闲句柄，不删除原生历史。旧库结构未兼容时按 §4 阻止写入，不暗中删改退役数据。
+用户确认后，在事务中只 DELETE sessions 的指定 id/project_id 行；Project、Agent、其他会话和 Pi 文件不变。外键引用返回 SESSION_REFERENCED 并回滚，不推导Bot父级或专属删除许可。运行、打开、压缩或结果未知时不删除。源 nativeRef 不改写；只释放空闲句柄，不删除原生历史。旧库结构未兼容时按 §4 阻止写入，不暗中删改退役数据。
 
 ## 9. 会话检查与模型配置投影
 
@@ -178,7 +184,7 @@ contextWindow 与 maxTokens 是 Pi 解析结果中的正整数，无法确认时
 | --- | --- | --- |
 | Project / projects | id→id TEXT PK；name→name TEXT NOT NULL（1..120 字符）；description→description TEXT NULL（≤2000 字符）；kind→kind TEXT NOT NULL（code/knowledge/general，创建默认 code）；rootPath→root_path TEXT NOT NULL；status→status TEXT NOT NULL（active/disabled/archived，创建 active）；createdAt/updatedAt→created_at/updated_at TEXT NOT NULL UTC ISO | id/created_at 不可变；root_path 为可访问的规范真实绝对目录，同独立项目表内 UNIQUE；与 Workspace 不比较。存在 Session 或其他 FK 引用时不可改 root_path 或删除；状态变化不改变 Pi 身份。只 active 接受新会话与执行；disabled/archived 仍可读历史和删除符合条件的会话 |
 | Session / sessions | id→id TEXT PK；projectId→project_id TEXT NOT NULL FK projects.id RESTRICT；purpose→purpose TEXT NOT NULL DEFAULT ''（≤500 字符）；agentId→agent_id TEXT NULL FK agents.id RESTRICT；agentSnapshot→agent_snapshot_json TEXT NULL（合法引用对象）；nativeRef→native_ref_json TEXT NULL（合法对象）；createdAt/updatedAt→created_at/updated_at TEXT NOT NULL；endedAt→ended_at TEXT NULL；createRequestKeyHash/createRequestSha256→create_request_key_hash/create_request_sha256 TEXT NULL | id/project_id/created_at 不可变；Agent 引用与快照同空或同有且身份一致，agent_id 创建后不可替换，快照仅显式采用同一Agent版本可更新；nativeRef 首次 NULL→值后不可修改；ended_at 仅 NULL→时间且不可清空。创建键两列同空或同有、64 位小写十六进制；新建必有，历史未知键保持 NULL，UNIQUE(project_id,create_request_key_hash) 仅约束非空键 |
-| Agent / agents | id TEXT PK；name TEXT NOT NULL（1..120）；description TEXT NULL（≤2000）；kind TEXT NULL（正式为 coordinator/project）；revision INTEGER NOT NULL ≥1；content_sha256 TEXT NULL（正式为64位小写十六进制）；status TEXT NOT NULL（active/disabled/archived）；created_at/updated_at TEXT NOT NULL | 新定义 id/created_at/kind 不可变，初始 revision=1；正文变化新建 revision+1 的不可变文件，更新目录索引；仅状态变化不产生正文版本。旧无 kind/hash 的记录只读待转换，不作为正式指导。无引用可物理删除目录记录，有引用只能归档；所有已有版本文件保留 |
+| Agent / agents | id TEXT PK；name TEXT NOT NULL（1..120）；description TEXT NULL（≤2000）；kind TEXT NULL（正式仅为project）；revision INTEGER NOT NULL ≥1；content_sha256 TEXT NULL（正式为64位小写十六进制）；status TEXT NOT NULL（active/disabled/archived）；created_at/updated_at TEXT NOT NULL | 新定义 id/created_at/kind 不可变，初始 revision=1；正文变化新建 revision+1 的不可变文件，更新目录索引；仅状态变化不产生正文版本。旧无 kind/hash 的记录只读待转换，不作为正式指导。无引用可物理删除目录记录，有引用只能归档；所有已有版本文件保留 |
 
 本轮持久化取舍：保留旧state/status并双写会继续制造进程退出后虚假running及两份生命周期，因此移除；ended_at只保留迁移时的历史结束事实，不参与当前执行许可。创建键采用原Session表的两个有约束列承载，与Session存在性同事务，不增建幂等SQL表；文件journal只承载跨Pi/SQL边界的操作证据，不能替代归属/FK或保存对话。关系总览仍为Project→Session→唯一Pi树、Session→可空Agent精确版本；单个未决操作的证据附属于该独立项目Session（create准备时附属于确定的新Session ID），SQL表净变化仍为§4的-1。
 
@@ -186,19 +192,21 @@ Session的存在性由记录存在决定。ended_at只记录历史结束时间�
 
 native_ref_json 只允许 kind='pi'、sessionId/sessionFile/cwd 非空字符串；cwd 必须等于绑定 Project 的规范 root_path。对非空引用分别创建 JSON 提取表达式 UNIQUE(sessionId)、UNIQUE(sessionFile) 索引，阻止两个独立项目 Session 共用原生身份/文件；同一身份与 Workspace 冲突时应用在创建/绑定前检查并拒绝，本轮不修改 Workspace Schema。JSON 中单个字段不允许后续补写改变恢复身份。首次打开使用条件 UPDATE native_ref_json IS NULL，影响行数必须为 1 或核验已存在的同一引用。
 
-Agent 的新正文只在 .data/agents/<id>/<revision>.md。frontmatter 精确包含 agent_id、revision、kind、name、description、capabilities；正文为 instructions（非空、≤16000 字符），UTF-8 文件≤64KiB，sha256 按完整文件原始字节计算。capabilities 精确包含 readFiles/writeFiles/readProjects/dispatchTasks/dispatchProjectWrites/exchangeMessages 六个布尔键，默认全 false；独立项目 Agent 的 readProjects/dispatchTasks/dispatchProjectWrites 必为 false，dispatchProjectWrites=true 必须 dispatchTasks=true。用户明确提交的能力是唯一选择来源，LLM 不输出授权。能力不覆盖独立项目执行策略或模型配置。
+Agent 的新正文只在 .data/agents/<id>/<revision>.md。frontmatter 精确包含 agent_id、revision、kind、name、description、capabilities；正文为 instructions（非空、≤16000 字符），UTF-8 文件≤64KiB，sha256 按完整文件原始字节计算。capabilities精确包含readFiles/writeFiles两个布尔键，默认全false；Bot协作能力字段整体退役，旧Markdown版本由用户后续决定归档/转换，不原地改写。用户明确提交的能力是唯一选择来源，LLM 不输出授权。能力不覆盖独立项目执行策略或模型配置。
 
-旧 agents.bot_id/project_id/source_template_id/definition_json/extension_json/policy_json 仅为既有历史资料与旧 FK 兼容列，新记录 owner/source/definition 为 NULL、extension/policy 为 {}；新写入不存正文、工具或权限快照，也不由旧 owner 产生授权，不删除历史列及引用。sessions 中旧 bot_*、协作、mcp_*、native_metadata_json、last_activity_at 列同样保持历史边界：已有值不更新，不作为当前执行配置；新独立会话使用既有可空/空集合默认值。其他历史表不因本轮设计清理而退役。所有未列出的旧触发器须逐一核对，目标只保留 Project/Agent FK、Agent 双空检查、原生身份/归属不可变、ended_at 单向及创建键不可变检查，不保留依赖退役列、强制 Agent 或旧运行状态的写入规则。
+Agent的project_id/source_template_id/definition_json/extension_json/policy_json为旧独立资源兼容列，新记录owner/source/definition为NULL、extension/policy为{}；不保存新正文或借旧owner授权。Bot专属表列按BOT-REMOVE-001从目标Schema移除，旧库实际数据仍保留至独立迁移决定。sessions的mcp_*、native_metadata_json、last_activity_at不作为当前执行配置。所有未列出的旧触发器须逐一核对，目标只保留 Project/Agent FK、Agent 双空检查、原生身份/归属不可变、ended_at 单向及创建键不可变检查，不保留依赖退役列、强制 Agent 或旧运行状态的写入规则。
 
 ### 11.1 显式离线升级与历史归档（DBUP-001）
 
-用户本次要求完成数据库改造，允许准备可审查的升级脚本和临时库验证；用户库执行仍在具体预检结果、旧数据影响和脚本可审查后确认。支持来源为 scripts/historical-schema 中完整冻结结构，目标为当前五份运行时 SQL 的整体摘要；未知表、索引、触发器或不同结构均拒绝，不猜测历史版本。
+DBUP-001记录的是此前记忆退役目标的已完成迁移，不涵盖BOT-REMOVE-001。旧升级脚本、执行指南及冻结Schema副本随Bot代码退役，追溯以git历史为准；当前目标只有core/role/workspace三份SQL。新目标不复用此前授权，既有库保持原样且拒绝写入，是否归档及迁移由用户另行决定；本轮源码退役阶段不生成或执行迁移脚本；后续明确授权见§11.2。
 
-原库内仅重建 agents（摘要约束）、sessions、workspace_sessions，退役 session_memories；保留其余表及其全部列值，不重建数据库文件。Session 创建键新增列为 NULL，不伪造历史幂等身份；各表所有同名保留列逐值保持。工作区只解除已设计的记忆绑定，不补 GAP-006 或修改 06。目标表数净减一，关系和其他历史资料仍按本节与 §4，归档不增加应用表。
+### 11.2 当前7表迁移（DBUP-002）
 
-升级前完整 SQLite 备份作为退役内容和旧字段的只读归档，包含全部记忆/模板、关联、旧 state/status 及其他记录；附 manifest 记录文件摘要、来源/目标摘要、表行数。备份须 fsync、重新只读核验，再设只读权限并 fsync 目录；归档不供应用读写，不复制到 purpose、Pi 或新摘要。执行需要显式 --apply 及与预检一致的来源和目标摘要，离线连接检查、迁移锁与 SQLite EXCLUSIVE 事务；事务内再次验证来源与归档一致。仅迁移连接在事务开始前关闭外键执行表重建（SQLite 不允许在事务中切换），提交前以 foreign_key_check、integrity_check、目标对象和所有保留列值验证，失败整体回滚，归档保留。
+用户在BOT-REMOVE-001完成后明确要求“迁移数据库”，授权本节目标的离线迁移。只接受只读预检固定的来源结构、完整数据摘要及目标SQL摘要；出现其他打开连接、未知表、原生身份冲突、文件摘要不符或新版本路径已占用时拒绝。支持当前14表来源；在原SQLite文件内单事务重建为7表，不自动启动/停止服务。
 
-旧结束状态冲突、未终结运行状态、无效原生引用/重复身份/cwd不符、Agent引用不一致、目标CHECK不通过或跨工作区身份冲突均列为阻塞，不伪造时间、换身份或自动修复。预检仅在只读连接和内存目标库操作，不产生归档、锁或数据库写入；已是目标结构时重复执行只读返回。升级不调用 Pi、不读取/改写 transcript、Markdown、journal 或用户服务；恢复旧版须离线选择归档，不能在已有新写入后盲目覆盖。
+先备份全部旧表及全部列为只读SQLite归档，并保存原始Agent版本文件副本、来源/目标摘要和映射manifest。七张退役表及coordinator Agent仅从活动库移除；未决调用保留在归档，不重放、不伪造完成。所有Project/MCP/Workspace/WorkspaceProject/WorkspaceSession列值和行保留，所有Session保留除退役列及明确版本映射外的列值，native_ref_json/归属/时间/创建幂等键逐字不变。项目Agent保留ID、名称、描述、状态、指导正文及旧文件，为每个使用中的旧版本新建不可变Markdown版本，能力仅保留原readFiles/writeFiles两个布尔值；目录revision/hash和对应Session引用映射到新版本，不修改原Pi历史。若会话绑定被退役Agent，或存在无法确定的版本引用，则预检拒绝，不能自行解绑。额外新版本文件先持久化后提交SQL，失败保留归档及候选，不自动覆盖或删除任何历史。
+
+预检在只读源库和内存目标库完成全行投影、约束、外键和完整性验证。执行须固定预检plan摘要，再次检查连接和摘要；完整备份经重新读取核验、fsync、只读保护后，BEGIN EXCLUSIVE重读来源，关闭外键仅用于事务内DDL，恢复目标触发器后执行完整性、外键及所有目标行逐值比较，成功才COMMIT。失败ROLLBACK，原库和归档保留。已为目标的重复执行只读返回current。迁移不调用Pi、不改transcript、journal、配置或用户服务。脚本独立于启动流程，不恢复旧模型运行能力。
 
 ## 12. 安全 DTO 与派生许可（GAP-002）
 
@@ -231,3 +239,9 @@ toolSearch:boolean为本轮用户意图，API省略等价false，不持久化至
 ## SEARCH-001｜请求级搜索意图
 
 webSearch为单次发送意图，默认false，不是Session字段，不写SQL、配置或持久偏好。搜索调用与来源引用的原始provider output item只作为该Session唯一Pi树的server_web_search custom entry保存，数据为{type:provider事件类型,item:完整原始output item}，不复制至业务表或摘要；无搜索调用不得伪造搜索成功。开关无历史迁移。
+
+FILE-003：Pi在所属session-files目录生成的文件仍是普通宿主文件，不因位于项目根外而变成Project文件。会话文件读取目录由数据库nativeRef.sessionId派生，目录与当前会话精确绑定；不新增记录/目录授权，不改Pi原生历史或上传快照的不可变策略。模型生成的其他文件不自动标记为不可变上传快照。
+
+## FILE-001 生成文件读取
+
+生成的Word、Excel、PPT、PDF及其他文件是项目目录中的普通文件，不新增附件表、下载记录或持久预览副本。FilePreview扩展由03定义的只读格式与内容块；下载每次读取当前文件原始字节，不转换、不修改源文件，不调用Pi或模型。上传快照仍按原契约独立存储。本项无SQL变更或历史迁移。

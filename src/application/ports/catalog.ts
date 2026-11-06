@@ -45,6 +45,5 @@ export type CatalogDependencies = {
   agents: AgentRepositoryPort;
   normalizeProjectRoot(value: unknown): string;
   assertProjectMutable?:(id:string)=>void;
-  normalizeBotOwner?:(id:string)=>void;
   getAgentVersion?:(id:string,revision:number,sha256:string)=>Agent|null;
 };

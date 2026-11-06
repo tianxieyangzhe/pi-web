@@ -1,6 +1,6 @@
 import type { AgentDefinition } from "./models";
 
-export function renderAgentMarkdown(value:{agentId?:string;revision?:number;kind:"coordinator"|"project";name:string;description:string|null;definition:AgentDefinition}) {
+export function renderAgentMarkdown(value:{agentId?:string;revision?:number;kind:"project";name:string;description:string|null;definition:AgentDefinition}) {
   return [
     "---",
     `agent_id: ${JSON.stringify(value.agentId??"<保存时生成>")}`,

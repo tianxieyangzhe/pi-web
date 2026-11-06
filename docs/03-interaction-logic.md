@@ -1,6 +1,19 @@
 # 03｜API：模型如何变化
 
-本文范围：独立项目与通用会话的 API 和状态变化。Bot 的全部专属设计、模型、API、交互与需求统一见 [06｜Bot](06-bot.md)，本文不定义或复写其规则。
+FILE-003：新增GET S/files/content?path=与GET S/files/download?path=，两者仅只读所属Pi会话文件目录。application从SQL核验Project/Session归属并读取nativeRef.sessionId，不接受客户端身份；基础设施以sessionFileDirectory(nativeRef.sessionId)定位会话目录，path可为回复内原生绝对路径或该目录内相对路径，仅作定位意图，拒绝目录外/其他会话/符号链接/敏感路径。没有nativeRef返回NO_NATIVE_REF/409；缺路径400，越界403，缺失404，身份变化409，其余容量/预览DTO/下载头复用FILE-001/002。不得仅凭文件名搜索或允许任意宿主路径。无SQL写入/幂等键/Pi调用或模型调用，不改文件权限或内容，响应不新增绝对路径。
+
+
+FILE-002：FilePreview.format扩展xlsx/pptx/pdf。XLSX按workbook与relationships顺序显示工作表名、单元格位置、共享/内联字符串、布尔值、数值及公式的已存缓存值，无缓存时显示公式而不重算；日期保留存储值并提示。PPTX按presentation关系顺序显示幻灯片、文本与表格，不承诺主题/动画/图像版式。沿用ZIP≤50MB/10000条目，表格最多100000个投影单元格、每行最多512列、最多10000行，超限返回binary并明确提示。内容块复用FILE-001，不新增持久事实。PDF校验%PDF-签名后返回format=pdf，不提取/改写正文，浏览器通过现有download API读取原始字节并以application/pdf Blob在文件浮窗内显示，不上传第三方；不支持内嵌PDF的浏览器提示下载查看。无新接口、SQL事务、Pi或模型调用；损坏/加密Office与旧.xls/.ppt只提示并下载原件。
+
+
+## FILE-001 文件下载与Word预览
+
+GET /api/projects/:projectId/files/download?path=项目相对路径，调用方为文件浮窗，按已有Project读取许可与路径/敏感文件/符号链接/文件身份检查，只读普通文件≤50,000,000字节；成功200原始字节，Content-Type按扩展名、Content-Length精确字节数、Content-Disposition: attachment（UTF-8原文件名）、Cache-Control: no-store, no-transform（避免中间转换影响长度核验）、X-Content-Type-Options: nosniff。不接受客户端绝对路径，无幂等键、SQL写入、Pi调用或转换。错误沿用文件API的400/403/404/409/413及读取失败500，不发送部分文件。
+
+GET同范围files/content保留原UTF-8≤512KiB的{path,content,size}返回；新增FilePreview可选format:"text"|"docx"|"xlsx"|"pptx"|"pdf"|"binary"（新增格式规则见FILE-002）、notice:string、blocks:FileBlock[]。FileBlock为{type:"paragraph"|"code",text:string}、{type:"heading",level:number,text:string}或{type:"table",rows:string[][]}。DOCX输入≤50MB、ZIP总展开≤50MB、≤10000条目，按正文顺序保留标题1～6、段落、代码样式和表格单元格文本，不执行HTML/脚本/外部资源，不承诺分页、字体、图像或公式渲染。解析失败/其他二进制/超出文本预览上限返回binary元数据及notice，仍允许下载原件；超过下载上限413。路径/权限/读取错误仍返回错误。预览不改源文件，不创建缓存记录。浏览器下载前检查HTTP状态和长度，失败显示原API错误，不将错误JSON保存成文件。
+
+
+本文范围：独立项目与通用会话的 API 和状态变化。Workspace 的专属设计、模型、API、交互与需求统一见 [06｜Workspace](06-workspace.md)，本文不定义或复写其规则。
 
 本文只定义 `02` 的模型如何变化，以及 API 如何安全触发这些变化。页面布局不是本文职责。
 
@@ -26,7 +39,7 @@ OPS-004：浏览器 API 客户端的请求键使用共享安全随机 UUID 生�
 
 选中会话按 PSES-007 建立或恢复句柄，先订阅再读取唯一 Pi 树。GET /api/projects/:projectId/sessions 及会话读取返回 purpose，页面 trim 后显示，空白为“新会话”；创建、恢复、每次回答或列表刷新都不调用模型生成名称。实时和主请求生命周期沿用后文。
 
-删除全部应用记忆、模板、内容校正及手动/自动总结 API，包括 /api/session-memory-templates 与会话路径下 /memory、/memory/context、/memory/summarize 及其子操作；退役路径返回 NOT_FOUND/404，不读写历史表、不调用 Pi、不创建后台任务。删除请求结束钩子、调度器、记忆轮询、相关 DTO 和端口。旧库中的退役记录不影响只读 Pi 历史；不可兼容的写操作明确阻止。
+删除全部应用记忆、模板、内容校正及手动/自动总结 API，包括 /api/session-memory-templates 与会话路径下 /memory、/memory/context、/memory/summarize 及其子操作；ROUTE-CLEAN-001：退役路由文件直接删除，不保留固定404处理器，由框架自然返回404；不承诺退役URL的JSON格式或缓存头，不读写历史表、不调用Pi、不创建后台任务。删除请求结束钩子、调度器、记忆轮询、相关 DTO 和端口。旧库中的退役记录不影响只读 Pi 历史；不可兼容的写操作明确阻止。
 
 ## 4. Session 活动与历史展示
 项目会话的会话栏是所属 Pi Session Tree 的对话流投影，不是第二份对话。`GET /api/projects/:projectId/sessions/:sessionId/messages` 由页面调用，服务端校验 Project/Session 归属与读取许可，依据精确 nativeRef 使用 Pi SessionManager `getTree()`、`getEntries()` 和 `getLeafId()` 读取整个树、原生追加顺序和当前叶子；不调用 LLM，不改变 Pi 历史或数据库。活动句柄必须复用其 manager；无句柄时的历史读取必须只读，不能借 Pi `SessionManager.open()` 的空文件初始化或旧版本自动重写来改变历史。只读恢复遇到需要原生迁移的旧版本时返回 `SESSION_TREE_READ_FAILED`，提示用户单独决定迁移，不自动迁移。已建立且确认为空的 Pi Session 返回空节点和空叶子；无权返回 403、目标不存在或归属不符返回 404，引用缺失或不可恢复返回 `NO_NATIVE_REF`（409），原生读取失败返回 `SESSION_TREE_READ_FAILED`（500），均不伪装为空树、不新建替代历史。读取无幂等键，重复读取不产生写入。
@@ -37,9 +50,9 @@ OPS-004：浏览器 API 客户端的请求键使用共享安全随机 UUID 生�
 
 读取许可不能只靠客户端提供的 ID 或会话租约：若部署有身份认证与权限机制，服务端必须先核验真实调用方的读取权限及数据库归属；若没有，则服务端核验数据库归属，并且部署只能处于用户控制的可信访问边界，不能把租约、随机 ID 或同源策略当作认证。当前项目 `npm run dev` 默认监听 `localhost`，可显式指定本机IP或 `0.0.0.0` 扩大监听范围；服务端的归属检查也不是调用方认证。对不可信网络开放前须另行建立并验收访问控制，本次不将其假定为已有功能，也不增加内容过滤。
 
-实时内容统一采用会话级 SSE：项目 `GET /api/projects/:projectId/sessions/:sessionId/events?leaseId=...`，前置检查归属、读取许可及本进程有效打开使用权。独立项目消息 POST 接受后返回 202 `{accepted:true,sessionId,operationId}`，不绑定长运行响应；兼容项目旧 NDJSON 客户端不作为新页面传输。应用启动执行后持续消费直至真实终态，页面断流不取消执行。只读及非发起页面同样订阅原生变化，不定时读取 transcript。所有流及历史响应 `Cache-Control: no-store, no-transform`。
+实时内容统一采用会话级 SSE：项目 `GET /api/projects/:projectId/sessions/:sessionId/events?leaseId=...`，前置检查归属、读取许可及本进程有效打开使用权。独立项目消息 POST 接受后返回 202 `{accepted:true,sessionId,operationId}`，不绑定长运行响应；旧项目NDJSON服务端适配和客户端解析整体删除，消息POST仅返回202 JSON；实时输出只通过已有SSE。应用启动执行后持续消费直至真实终态，页面断流不取消执行。只读及非发起页面同样订阅原生变化，不定时读取 transcript。所有流及历史响应 `Cache-Control: no-store, no-transform`。
 
-会话 SSE 与兼容项目 NDJSON 使用事件 DTO `{ sessionId, runId, sequence, type, entryId, temporaryId, payload }`：运行事件的 `runId` 为本进程生成、单次运行唯一的临时标识，`sequence` 为该运行内从 1 开始递增的整数；不属于单次运行的应用状态事件两者均为 null。`entryId` 和 `temporaryId` 在无对应身份时为 null；Pi 内容事件的 `type` 和 `payload` 表达对应 Pi 事件，不修改原始内容。完成、失败、调用进度等应用状态事件也使用此封装，但不冒充 Pi 原生 entry；其 payload 使用现有状态与错误契约。文本、thinking、工具调用参数、工具更新和结果按 Pi 实际事件完整传递，不按类型或敏感程度过滤。事件有 Pi 原生 entry ID 时带该 ID；尚无 ID 时使用仅限本次运行的临时关联标识，不能当作持久节点或自行推断父节点。Pi 的普通消息可能在 `message_end` 通知订阅者之后才追加对应 entry，不能假定通知时 ID 已存在；仅在服务端从同一 Pi 运行可靠取得该映射后，发送带两种标识的关联事件。custom 消息对应 `custom_message`，按同一运行中的 customType、content 对象身份和 details 对象身份可靠定位，不按普通 message 查找；Pi 在通知前已追加的节点立即发送关联，通知后才追加者延迟核对。无法确认映射时不按文本或时间猜测。模型或 Pi 没有提供的内容不补造。两类页面打开先订阅 SSE 再读快照，订阅期间缓冲事件并按运行标识和序号去重；项目页面同样先订阅再读快照；消息 POST 只提交意图；断流、重连、运行结束或失败时重读快照，以 Pi 树为准。最终快照成功后移除能确认已关联的临时展示；无法确认某临时内容已持久化时保留并明确标记未确认，不把它编造成节点。快照失败保留当前展示及错误并允许重试，不假报同步。各页面和多次运行的临时标识不能混用；不同 Session 的事件不能混入。
+会话SSE使用事件DTO `{ sessionId, runId, sequence, type, entryId, temporaryId, payload }`：运行事件的 `runId` 为本进程生成、单次运行唯一的临时标识，`sequence` 为该运行内从 1 开始递增的整数；不属于单次运行的应用状态事件两者均为 null。`entryId` 和 `temporaryId` 在无对应身份时为 null；Pi 内容事件的 `type` 和 `payload` 表达对应 Pi 事件，不修改原始内容。完成、失败、调用进度等应用状态事件也使用此封装，但不冒充 Pi 原生 entry；其 payload 使用现有状态与错误契约。文本、thinking、工具调用参数、工具更新和结果按 Pi 实际事件完整传递，不按类型或敏感程度过滤。事件有 Pi 原生 entry ID 时带该 ID；尚无 ID 时使用仅限本次运行的临时关联标识，不能当作持久节点或自行推断父节点。Pi 的普通消息可能在 `message_end` 通知订阅者之后才追加对应 entry，不能假定通知时 ID 已存在；仅在服务端从同一 Pi 运行可靠取得该映射后，发送带两种标识的关联事件。custom 消息对应 `custom_message`，按同一运行中的 customType、content 对象身份和 details 对象身份可靠定位，不按普通 message 查找；Pi 在通知前已追加的节点立即发送关联，通知后才追加者延迟核对。无法确认映射时不按文本或时间猜测。模型或 Pi 没有提供的内容不补造。两类页面打开先订阅 SSE 再读快照，订阅期间缓冲事件并按运行标识和序号去重；项目页面同样先订阅再读快照；消息 POST 只提交意图；断流、重连、运行结束或失败时重读快照，以 Pi 树为准。最终快照成功后移除能确认已关联的临时展示；无法确认某临时内容已持久化时保留并明确标记未确认，不把它编造成节点。快照失败保留当前展示及错误并允许重试，不假报同步。各页面和多次运行的临时标识不能混用；不同 Session 的事件不能混入。
 
 ## 5. API 边界
 ~~~text
@@ -71,12 +84,13 @@ POST      /api/projects/:projectId/sessions/:sessionId/compact/cancel
 
 - `open` 是 POST，无业务入参；返回安全 DTO `{ leaseId, status, outcome }`，`outcome` 为本进程确认的 `SESSION_BACKGROUND_TIMEOUT` 或 null，`leaseId` 是不可猜的临时使用权标识，`status` 为 ready/running，原型号失效时先按§13自动回退默认模型，默认也不可用才返回仅恢复用途的unavailable；不返回句柄、原生路径或内部内容。每次打开创建一个独立租约；请求重试以 `idempotency-key` 去重，同键不同目标或入参返回 409。已存在的活动 Pi 句柄必须复用，包括正在后台运行者；没有句柄且有 nativeRef 时精确恢复；没有 nativeRef 时创建空 Pi Session，确保原生身份可恢复后条件写入对应业务记录的 nativeRef。并发打开、后台调用和首次创建使用同一会话级串行门禁；重复请求不创建第二个 Pi Session。已有 nativeRef 缺失、损坏或身份不符返回 `NO_NATIVE_REF`（409），不能新建替代历史。初始化失败不返回租约、不触发 prompt；若 Pi 文件创建与数据库写入之间失败，需保留可核对的恢复信息，不能自动替换已确定身份或删除历史。数据库只写对应 Session 的 nativeRef，不修改历史内容；无需 schema 变更或历史库迁移。
 - 不再提供页面主动定时 `heartbeat`。`open` 创建临时 lease，允许 120 秒内建立订阅；每条订阅绑定一条 lease。SSE 初始发出 `event: ready`，payload `{connectionId}`；服务端立即及每 30 秒发出 `event: ping`，payload `{connectionId,challenge}`，同连接最多一个待应答挑战，期限 90 秒。页面收到后 POST 对应 `/runtime/pong`，入参仅 `{connectionId,challenge}`，无页面定时器；服务端校验目标归属、读取许可、连接身份、挑战和期限后续租，204 无正文。不匹配或过期返回 `SESSION_SUBSCRIPTION_EXPIRED`（409），不续租、不调用 Pi；已过期挑战不能重放到其他连接。SSE 取消、请求断开或超时释放该连接与 lease，其他页面及后台使用权不受影响。`close` 仍 POST `{leaseId}` 幂等释放，204；连接级服务端心跳与超时在 application，HTTP 层仅传输。重连必须重新 open 并订阅；连接失联不等于执行失败。
+- PSES-026：消息接受前校验有效租约及实际Runtime句柄；句柄缺失返回RUNTIME_NOT_OPEN/409，必须发生在准备message操作journal之前，不写Pi/附件、不调用prompt。客户端保留API错误code/status；RUNTIME_NOT_OPEN或RUNTIME_LEASE_EXPIRED时清除对应旧lease、禁用发送并重新open/订阅，同一nativeRef按既有open规则精确恢复。重连不自动重发消息，接受前失败由Composer保留原草稿与文件，用户待连接恢复后重新提交；普通校验/模型错误不触发重连。旧请求迟到错误不得清空已取得的新lease或切换后的会话。不会因上传耗时延长过期lease、绕过SSE挑战或创建替代Pi历史。
 - 新选中会话先 `open`；成功后先订阅再读取树；选中变化时立即切换，异步 close 旧租约。打开失败显示错误并允许重试，不自动发送。消息 POST 在 `x-session-lease-id` 请求头附带当前有效租约作为运行句柄使用权；校验失败返回 `RUNTIME_NOT_OPEN`（409），不写入 Pi。服务端仍执行现有归属、互斥、参考材料和幂等校验，再在该句柄调用 Pi `prompt`；发送不新建或替换 Pi Session。
 - 最后一个页面租约释放或过期时，若会话空闲且没有后台使用权，释放内存句柄；若自身运行未结束，则以该时刻为起点启动默认 300 秒单调计时。先收到 Pi `agent_settled` 或已确认的运行失败时结束计时，完成现有状态和边界处理后释放无其他使用权的句柄。到期仍在运行且没有页面重新打开时调用 Pi `abort`，等待其真实结束及状态落定后释放；不把超时当作成功。确认因本超时中止时，现有运行事件与重开后的安全状态返回 `SESSION_BACKGROUND_TIMEOUT`，页面据此显示中止而不是成功；不新增持久状态或伪造 Pi transcript。`abort` 失败或结束无法确认时保留互斥与待核对状态，报告错误，不强行伪造结束、重复发送或销毁仍运行的句柄。重新打开在中止开始前取消计时；若中止已开始，不撤销中止，复用句柄等待结束，不启动第二轮。
 - 多页面只在最后租约离开时计时；重复 close、续租与超时、结束与切换及并发 open 通过同一会话门禁处理，不得释放新句柄或中止已重新打开的运行。后台使用权与页面使用权独立；页面切离不释放仍被后台执行使用的句柄。后台执行结束后无其他使用权时释放句柄。
 - 页面断线不等于运行失败；服务进程退出会丢失句柄、租约和计时器，不保证退出期间执行五分钟中止。重启按现有原生引用和调用恢复规则重新核对，不把旧运行自动标记成功或重发。无可恢复引用或无法确认调用边界时返回错误或 `unknown`。历史、已发生的工具副作用及未完成的原生写入不因中止或释放回滚；释放不删除原生 Session 文件。
 
-订阅覆盖独立项目会话；后台执行与页面使用权独立。后台首次创建经项目初始化端口保存 nativeRef，后续每次调用按精确引用取得当前句柄，不缓存已释放对象。内部后台项目调用若携带 `operation=read` 则禁止项目写入；该标记不属于用户消息 POST 的入参。复用句柄时由服务端按本轮意图设置运行时写入门禁，结束时清除，不能因打开时创建了写工具而绕过只读限制。项目首次身份以 Session ID 的 SHA-256 确定 `.data/project-pi-sessions/<hash>.jsonl`，同路径独占锁目录覆盖文件初始化及数据库条件写入；仅对独占创建的空文件调用 Pi `SessionManager.open()` 初始化 header。已存在候选文件必须完整验证版本、cwd 和身份后才可采用；空文件、损坏文件、残留锁保留现场并报错，不自动重建或破锁。条件更新只在 native_ref_json 为 NULL 时生效；已有引用以数据库为准，候选文件保留。只读恢复严格解析原文件并以 Pi 内存 SessionManager 读取，不调用 `open()` 或迁移；运行恢复先验证版本、身份和完整末尾，再按精确引用打开。不得更改、删除或自动迁移历史。
+订阅覆盖独立项目会话；后台执行与页面使用权独立。首次打开经项目初始化端口保存nativeRef，后续每次调用按精确引用取得当前句柄，不缓存已释放对象。内部只读项目调用若携带 `operation=read`，独立项目按PSES-028在prompt前仅激活Pi原生read，禁用bash/edit/write，结束或失败后恢复；该标记不属于用户消息POST入参。Bot功能按02/06 BOT-REMOVE-001整体删除，不保留兼容路径。项目首次身份以 Session ID 的 SHA-256 确定 `.data/project-pi-sessions/<hash>.jsonl`，同路径独占锁目录覆盖文件初始化及数据库条件写入；仅对独占创建的空文件调用 Pi `SessionManager.open()` 初始化 header。已存在候选文件必须完整验证版本、cwd 和身份后才可采用；空文件、损坏文件、残留锁保留现场并报错，不自动重建或破锁。条件更新只在 native_ref_json 为 NULL 时生效；已有引用以数据库为准，候选文件保留。只读恢复严格解析原文件并以 Pi 内存 SessionManager 读取，不调用 `open()` 或迁移；运行恢复先验证版本、身份和完整末尾，再按精确引用打开。不得更改、删除或自动迁移历史。
 
 恢复初始化（PSES-009）调用 Pi SDK 前，适配层仅在本次初始化期间对 SessionManager 的 model/thinking 追加入口做当前活动分支去重：分别比较该分支最后一个同类配置节点；值相同返回已有节点 ID，不追加、不移动叶子；无同类节点或值实际变化时调用原生追加方法。不能比较其他分支，也不能删除旧重复节点或伪造对话消息让 SDK 误判。初始化成功和失败均恢复原方法；失败不回滚已发生的原生合法追加，业务记录和 nativeRef 保持原契约。项目 Runtime 使用该适配，不修改 SDK 安装文件。无新增 API、表、事务或配置来源，不调用 prompt 或模型。
 
@@ -84,13 +98,19 @@ POST      /api/projects/:projectId/sessions/:sessionId/compact/cancel
 
 ### 会话本轮参考文件（PSES-006）
 
-PSES-010 粘贴输入沿用本节 references，不新增 API 或持久模型：剪贴板 PNG/JPEG/GIF/WebP 作为上传图片；超过 10 行或 1000 字符的文本作为 UTF-8 文本附件，完整保留换行和内容。浏览器草稿以文字和附件原子块混排，光标插入/删除和位置仅属于临时编辑文档。发送前去掉内部定位标记，将其余文字作为 content、仍在文档内的材料作为 references，定位标记不进入 API 或 Pi；UI 仅显示行数和可移除标记，短文本按光标位置插入纯文本。仅附件发送时 content 使用“请查看本次附带的图片或文本。”；仍执行现有数量、字节、归属及文件签名校验，接受前失败保留选择和草稿。
+PSES-025：非图片上传文件和粘贴文本统一按工具读取，不按2MB分流；API输入仍为{name,data}，不接受客户端存储路径，成功仍为既有202接受DTO。域解析保留已校验的原名/base64为内部file材料，禁止把原始file块直接发送给供应商。图片按现有签名识别及image能力检查处理。非图片接受有效UTF-8、DOCX/XLSX/PPTX/ODT/ODS/ODP的ZIP包、DOC/XLS/PPT的OLE原件及PDF；格式与扩展不匹配、未知二进制返回BINARY_FILE/415，不运行宏或文档内代码。快照字节额度继续约束上传字节，项目位置不计；数量共同最多10。
 
-`POST /api/projects/{projectId}/sessions/{sessionId}/messages` 可选接收 `references` 数组，上传为 `{name,data}`（标准 base64 字节和不含路径的文件名），项目文件为 `{projectId,path}`，路径是所属根目录内相对路径。项目目录沿用 `GET /api/projects/{projectId}/files?path=...`；项目 Session 只能引用所属项目。服务端从数据库核验范围，不信任客户端提供的归属或目录；发送时重新安全读取文件，校验真实路径、敏感路径、忽略目录、普通文件和文件变化。总计最多 10 个、单个 2 MiB、合计 8 MiB，各来源共同计算；请求 JSON 最大 12 MiB，读取时限制字节数。校验 base64、文件名、UTF-8 文本及 PNG/JPEG/GIF/WebP 签名，错误返回 400/403/404/409/413/415/422，不调用 Pi；接受前失败保留输入和选择。不写项目或业务表、不创建授权。消息缓存版本不匹配时消息请求均返回 `REFERENCE_SERVICE_RESTART_REQUIRED`（503），避免旧句柄把历史参考带入普通请求；参考目录查询不依赖旧缓存服务对象。接受后的运行错误由事件报告，不保证自动保留或重发。
+Runtime调用prompt前按02 PSES-025的会话身份存储原始文件。UTF-8直接提供原件路径；常见OpenXML/OpenDocument通过受控ZIP/XML提取生成content.txt，保留段落/表格单元格/页或工作表来源；ZIP解压累计上限50MB、条目数上限10000，超限、损坏、加密或旧版二进制不生成假正文，参考文本保留原件位置并说明提取失败或需额外解析器。PDF和旧DOC/XLS/PPT只保存原件，提示通过已有bash/可用解析器处理，不承诺部署环境已安装解析器。参考文本引导Pi原生read按行读取，必要时bash/rg搜索；只发送位置、格式及提取结果，不发送原始base64或全文。图片能力不受普通文件影响。
 
-服务端以 Pi `sendCustomMessage` 的不可见 reference 内容附加文本和图片快照，再用 `prompt` 发送原样用户文本。每次运行在内存中绑定不可预测的本轮标识；Pi 的 `context` 扩展在每次模型请求前只保留与本轮标识匹配的参考关联消息，过滤旧快照和失败后遗留快照；工具循环及同次运行继续时保留本轮材料，结束或失败清除运行标识。手动与自动压缩的 `session_before_compact` 均过滤原始参考快照；自动压缩按PSES-021使用Pi默认策略。原生历史已有快照保留，不改写或删除；会话树投影显示原生关联节点内容。材料作为用户显式提供的参考而非指令或授权。图片通过 Pi 原生 image content 发送，模型配置声明图片输入；供应商拒绝或执行失败通过项目错误事件报告，不当作成功。Pi transcript 的不可见关联消息持有快照；会话恢复时模型请求上下文同样过滤旧快照，不清理历史；这不限制会话树展示。模型回答、工具结果或历史压缩摘要可能保留材料派生的信息，不承诺模型遗忘已产生的信息。无数据库写入或 schema 迁移，无新 Agent/项目权限。Pi 写入后失败可能已有原生历史，不自动重发或重新读取参考文件；页面仍按 Session Tree 契约重读原生历史，附加参考成功但 prompt 失败时也可能保留不可见材料，不能承诺跨 Pi 写入原子性。项目会话在会话归属校验后声明流幂等键，再校验参考内容与读取项目文件；声明后即使校验失败也不可复用，重新提交使用新键。新页面以 Accept: application/json 提交，接受后返回 202；运行时错误通过会话订阅报告。旧 NDJSON 客户端仍按兼容流接收，不作为新页面更新机制。
+存储不写数据库，不改变cwd/nativeRef/原生文件身份；PSES-028独立项目及Workspace均保留Pi原生read/bash/edit/write策略，不注册附件专用或project_*工具，旧包装及Bot功能按02/06 BOT-REMOVE-001整体删除；原件由应用按只读策略存储，工具访问服从宿主权限，不再宣称工具层只允许本会话目录。存储身份/完整性错误报告REFERENCE_STORE_FAILED（500、可恢复），不调用prompt；此前已存文件与历史保留，不自动重发。接受后的错误通过既有订阅报告。应用只验证文件可提供给工具，不保证真实模型一定调用工具；附件可跨轮/恢复读取，生命周期及无自动清理见02。
 
-独立项目 Session 的消息 POST 接收用户 `content` 和可选 `references`、`webSearch`、`toolSearch`（搜索参数按本文SEARCH-001/002，其余字段拒绝）；content 为保留原始空白的非空 string、UTF-8≤32KiB，只有附件时按前述固定文本提交，正文为空或超限分别 INVALID_INPUT/400、REQUEST_TOO_LARGE/413。要求 Idempotency-Key 与当前 lease；校验 Project、Session、执行互斥；新页面成功返回 202 接受 DTO，兼容旧请求才返回 NDJSON；服务端独立调用 Pi `prompt` 原样发送文本。项目文件读写工具由独立项目执行策略提供，不以角色或其能力开关决定；仅限项目根目录，遵守敏感路径与符号链接检查、项目写入互斥，实际修改遵循用户意图。可用且匹配的正式角色仅附加指导；无角色、旧式或停用角色不阻止执行，不注入不可用指导，不改历史绑定。会话繁忙或归属不符时返回对应错误，不调用 Pi；接受后的失败通过所属会话错误事件返回。消息归 Pi transcript，不调度回答后的应用总结任务。服务端对接受的发送输出同一诊断 ID 的阶段耗时：用例接收、句柄复用/创建/恢复、prompt 开始、首个 assistant 流更新、首段可见文字、首个工具活动和结束/失败。时间基于单调时钟；assistant 更新不等于供应商网络首包，缺失阶段不虚构。另在服务端记录首段文字和完成事件写入响应流队列的时间，在浏览器记录这两个事件被解析的时间，使用事件 `runId`（即该诊断的 turnId）和 Session ID 关联；各端记录 ISO 时间及从各自流开始的单调耗时，跨端时间比较须考虑时钟偏差。入队不代表浏览器已收到，浏览器解析不代表 React 已渲染。日志仅包含诊断 ID 或 turnId、Session ID、阶段和时间，不包含提示词、输出、思考、工具参数/结果、原生路径、凭据或异常正文；不写数据库、不改变 API 响应或 Pi 行为。
+PSES-010 粘贴输入沿用本节 references，不新增 API 或持久模型：剪贴板中的文件项全部作为上传材料，保留文件名、类型和原始字节，PNG/JPEG/GIF/WebP 作为上传图片；items 无文件时回退读取剪贴板 files，文件读取失败明确报错，不退化为粘贴文件名或忽略文件；存在文件时不重复粘贴剪贴板的文本表示。文件格式仍由服务端按下述 UTF-8/图片签名契约校验。不含文件时，超过 10 行或 1000 字符的文本作为 UTF-8 文本附件，完整保留换行和内容。浏览器草稿以文字和附件原子块混排，光标插入/删除和位置仅属于临时编辑文档。发送前去掉内部定位标记，将其余文字作为 content、仍在文档内的材料作为 references，定位标记不进入 API 或 Pi；UI 仅显示行数和可移除标记，短文本按光标位置插入纯文本。仅附件发送时 content 使用“请查看本次附带的图片或文本。”；仍执行现有数量、字节、归属及文件签名校验，接受前失败保留选择和草稿。
+
+`POST /api/projects/{projectId}/sessions/{sessionId}/messages` 可选接收 `references` 数组，上传为 `{name,data}`（标准 base64 字节和不含路径的文件名），项目文件为 `{projectId,path}`，路径是所属根目录内相对路径。项目目录沿用 `GET /api/projects/{projectId}/files?path=...`；项目 Session 只能引用所属项目。服务端从数据库核验范围，不信任客户端提供的归属或目录；发送时只安全解析项目文件位置，校验真实路径、敏感路径、忽略目录、普通文件与路径身份，不读取正文、不做base64或图片/UTF-8解析。服务端生成{name,absolutePath}内部定位描述并转为参考文本，明确projectId、项目内path和经校验的absolutePath，提示模型优先用read按需/按行读取、用bash配合rg定位；路径按JSON编码，不能拼接执行Shell。定位本身不授予额外目录或工具权限；实际读取仍由所属Runtime工具边界校验。Pi工具按执行时刻读取最新内容，发送时到读取前文件可能变化或消失，失败保留真实工具错误，不回退旧快照。总计最多 10 个；统一 references 入口按 OpenAI 原生文件输入的保守额度设为单个小于 50 MB、合计不超过 50 MB（MB=1,000,000字节），该字节额度仅计算上传与粘贴快照；项目文件只计入10个材料数量，不受快照字节额度限制，大文件及二进制文件均可定位，后续可否读取由Pi工具决定。该额度是当前内联文本/图片 API 的应用上限，不代表已接入 OpenAI Files/PDF 解析，亦不宣称图片原生 API 只有50MB。消息 JSON 上限为 ceil(50,000,000/3)×4+1,048,576 字节，为 base64 和正文/元数据留空间，按流读取限制字节数，不能仅检查Content-Length。上传/粘贴快照按49,999,999字节上限执行，项目参考不读取内容，预览上限不变。依据为 OpenAI [文件输入](https://developers.openai.com/api/docs/guides/pdf-files)（每文件<50MB、合计≤50MB）及[图片输入](https://developers.openai.com/api/docs/guides/images-vision)（图片请求payload≤512MB）；模型contextWindow及供应商网关的实际限制仍独立生效，不保证50MB文本能直接进入模型窗口。校验 base64、文件名、图片签名及PSES-025文件格式，错误返回 400/403/404/409/413/415/422，不调用 Pi；接受前失败保留输入和选择。不写项目或业务表、不创建授权。消息缓存版本不匹配时消息请求均返回 `REFERENCE_SERVICE_RESTART_REQUIRED`（503），避免旧句柄把历史参考带入普通请求；参考目录查询不依赖旧缓存服务对象。接受后的运行错误由事件报告，不保证自动保留或重发。
+
+服务端以 Pi `sendCustomMessage` 的不可见 reference 内容附加上传/粘贴的图片快照，以及非图片附件和项目文件的位置描述，再用 `prompt` 发送原样用户文本。每次追加在 details 保留不可预测的 referenceTurnId 作为来源标识，不作为模型上下文有效期。参考材料属于所属 Pi 当前活动分支的原生历史：后续追问、工具循环和精确恢复均保留 Pi 有效窗口内已有的图片及文本快照，不因新一轮未带 references 而排除旧材料。上传/粘贴图片快照不重新读取源文件；非图片附件读取按PSES-025，项目位置描述随分支保留，模型需要内容时通过工具重新读取当前文件，既有工具结果仅是当时读取证据。分支选择、上下文窗口与手动/自动压缩完全交给 Pi；应用不在 context 或 session_before_compact 中过滤参考节点。压缩允许 Pi 生成原生摘要，压缩后不承诺原图细节仍在有效窗口，需要精确复核时用户可重新附图；不创建应用摘要或额外附件存储。原生历史已有快照保留，不改写或删除；会话树投影显示原生关联节点内容。材料作为用户显式提供的参考而非指令或授权。图片通过 Pi 原生 image content 发送，模型配置声明图片输入；参考材料写入 Pi 前检查实际 Session.model.input 包含 image，不满足时抛出 MODEL_IMAGE_UNSUPPORTED（422、可恢复），提示切换支持图片的模型或修正对应 models.json 声明，不写入本轮参考节点、不调用 prompt，接受后的请求通过所属运行错误事件报告。禁止依赖 Pi 将图片降级为占位文字后继续回答。上传和粘贴图片快照共用该检查；项目文件位置描述本身不含image，工具读取图片时沿用Pi原生能力检查；不按型号名称推测能力、不在应用覆盖配置。供应商拒绝或执行失败通过项目错误事件报告，不当作成功。Pi transcript 的不可见关联消息持有快照；会话恢复使用所属活动分支的原生上下文，旧参考快照与普通消息按相同 Pi 规则恢复，不清理历史、不混入其他分支；这不限制会话树展示。模型回答、工具结果或历史压缩摘要可能保留材料派生的信息，不承诺模型遗忘已产生的信息。无数据库写入或 schema 迁移，无新 Agent/项目权限。Pi 写入后失败可能已有原生历史，不自动重发或重新读取参考文件；页面仍按 Session Tree 契约重读原生历史，附加参考成功但 prompt 失败时也可能保留不可见材料，不能承诺跨 Pi 写入原子性。项目会话在会话归属校验后声明流幂等键，再校验参考内容与解析项目位置；声明后即使校验失败也不可复用，重新提交使用新键。新页面以 Accept: application/json 提交，接受后返回 202；运行时错误通过会话订阅报告。旧NDJSON客户端路径已删除，输出统一读取SSE。
+
+独立项目 Session 的消息 POST 接收用户 `content` 和可选 `references`、`webSearch`、`toolSearch`（搜索参数按本文SEARCH-001/002，其余字段拒绝）；content 为保留原始空白的非空 string、UTF-8≤32KiB，只有附件时按前述固定文本提交，正文为空或超限分别 INVALID_INPUT/400、REQUEST_TOO_LARGE/413。要求 Idempotency-Key 与当前 lease；校验 Project、Session、执行互斥；消息成功仅返回202接受DTO；服务端独立调用 Pi `prompt` 原样发送文本。PSES-028：独立项目使用Pi原生read/bash/edit/write，不以角色或其能力开关决定；cwd为项目根目录，原生工具按宿主权限访问文件或执行命令，不套用原project_*敏感路径/符号链接包装。页面参考选择与预览API仍遵守§14路径校验，项目写入互斥与用户意图规则保留。内部read请求按§5临时禁用bash/edit/write；失败、中止、完成均恢复工具集，搜索开关仍按SEARCH-002组合，不能将bash留在只读轮次。打开/恢复精确nativeRef，模型可通过bash调用部署已有Python，不安装依赖、不新增Office服务或工具。可用且匹配的正式角色仅附加指导；无角色、旧式或停用角色不阻止执行，不注入不可用指导，不改历史绑定。会话繁忙或归属不符时返回对应错误，不调用 Pi；接受后的失败通过所属会话错误事件返回。消息归 Pi transcript，不调度回答后的应用总结任务。服务端对接受的发送输出同一诊断 ID 的阶段耗时：用例接收、句柄复用/创建/恢复、prompt 开始、首个 assistant 流更新、首段可见文字、首个工具活动和结束/失败。时间基于单调时钟；assistant 更新不等于供应商网络首包，缺失阶段不虚构。旧NDJSON专用的流入队/浏览器解析计时随适配器退役；保留执行服务的阶段计时，不把服务端事件发生时间解释为浏览器收到或React渲染时间。日志仅包含诊断 ID 或 turnId、Session ID、阶段和时间，不包含提示词、输出、思考、工具参数/结果、原生路径、凭据或异常正文；不写数据库、不改变 API 响应或 Pi 行为。
 
 
 
@@ -156,7 +176,7 @@ Session 不可恢复时展示错误与“恢复会话”入口，沿用已有 PO
 
 ## 9. 用户删除独立项目会话（PSES-012）
 
-DELETE /api/projects/:projectId/sessions/:sessionId，由导航确认按钮调用，可信单用户许可，入参仅路径且无正文。服务端验证同 Project；项目无需处于 active 状态。会话级互斥覆盖检查、释放句柄及数据库删除，正在打开、回答、压缩时 SESSION_BUSY/409；unavailable（结果未核对）时 REQUEST_UNKNOWN/409；Bot 关联及历史引用 SESSION_REFERENCED/409。不存在或跨 Project 为 NOT_FOUND/404。成功返回 {data:{deleted:true,sessionId}}；重复删除 404，不需要幂等键，不自动重放。事务按 02 只删除 sessions 指定行；Pi 仅 dispose 空闲句柄，不 prompt、abort、compact 或改写 transcript。释放失败不删记录；SQL 失败回滚删除，句柄可重新打开。成功清理租约、定时器和观察者；其他页面后续读取 404。
+DELETE /api/projects/:projectId/sessions/:sessionId，由导航确认按钮调用，可信单用户许可，入参仅路径且无正文。服务端验证同 Project；项目无需处于 active 状态。会话级互斥覆盖检查、释放句柄及数据库删除，正在打开、回答、压缩时 SESSION_BUSY/409；unavailable（结果未核对）时 REQUEST_UNKNOWN/409；实际外键引用SESSION_REFERENCED/409。不存在或跨 Project 为 NOT_FOUND/404。成功返回 {data:{deleted:true,sessionId}}；重复删除 404，不需要幂等键，不自动重放。事务按 02 只删除 sessions 指定行；Pi 仅 dispose 空闲句柄，不 prompt、abort、compact 或改写 transcript。释放失败不删记录；SQL 失败回滚删除，句柄可重新打开。成功清理租约、定时器和观察者；其他页面后续读取 404。
 
 ## 10. 会话检查：树定位、模型、派生与导出
 
@@ -212,7 +232,7 @@ PSES-019：PUT model可携带thinkingLevel（off/minimal/low/medium/high/xhigh/m
 
 本节及 §12～15 补齐 GAP-001～005，仅定义独立项目与通用能力，不调整 06 或 GAP-006。所有路径以 /api 为根，P=/api/projects/:projectId，S=P/sessions/:sessionId。调用方为当前应用页面/API Client；真实访问许可按 §4，服务端先核验数据库归属，跨 Project 一律 NOT_FOUND/404。读操作 no-store、无副作用/幂等键；除明确调用 Pi 的动作外均不调用 Pi。成功 JSON {data:T}；错误 {error:{code:string,message:string,recoverable:boolean,operationId?:string}}，不包含堆栈、原生路径、配置或凭据。下载成功不套 JSON。
 
-写正文为 JSON 对象，未知字段拒绝 INVALID_INPUT/400；损坏 JSON、数组、null、仅空白为 INVALID_JSON/400。标明无正文的动作接受零字节或 {}；不得仅依据 request.body 是否存在判断。默认 JSON≤64KiB，Agent prepare≤512KiB，消息沿用 §5 的12MiB；超限 REQUEST_TOO_LARGE/413。ID 为非空定位字符串（≤128字符），不能用其拼接用户文件路径。可选字符串省略采用文档默认值，null 只在明确可空字段接受。name trim 后非空，description trim 后空串归一 NULL；purpose 只 trim 首尾，省略为 ''，null/非字符串或超过500字符 INVALID_INPUT/400。错误消息可本地化，code 不变。
+写正文为 JSON 对象，未知字段拒绝 INVALID_INPUT/400；损坏 JSON、数组、null、仅空白为 INVALID_JSON/400。标明无正文的动作接受零字节或 {}；不得仅依据 request.body 是否存在判断。默认 JSON≤64KiB，Agent prepare≤512KiB，消息沿用 §5 的base64请求额度；超限 REQUEST_TOO_LARGE/413。ID 为非空定位字符串（≤128字符），不能用其拼接用户文件路径。可选字符串省略采用文档默认值，null 只在明确可空字段接受。name trim 后非空，description trim 后空串归一 NULL；purpose 只 trim 首尾，省略为 ''，null/非字符串或超过500字符 INVALID_INPUT/400。错误消息可本地化，code 不变。
 
 条件写用 If-Match：缺失 PRECONDITION_REQUIRED/428，不符 WRITE_CONFLICT/409；ETag 规则见 02 §12。Project 和 Agent 写入没有自动重放语义，不要求 Idempotency-Key，客户端不得在网络失败后自动重复创建；通过列表及返回 ID 核对，不把同名视为同一资源。Session 有外部副作用的操作要求 §13 的键；DELETE 无键、重复404。目录/Markdown/原生文件验证在事务外，最终身份、状态、ETag、键及 FK 在短事务内再次验证；SQL 失败回滚本事务，不宣称磁盘副作用已撤销。
 
@@ -233,12 +253,12 @@ interrupt/end/restore/role 的 journal 结果通过 §13 核对；写操作均�
 
 ## 12. Agent 编辑、版本与保存 API（GAP-002）
 
-编辑对话是浏览器持有的候选与自然语言轮次，不是持久Session，不拥有Pi transcript。prepare每次使用独立无工具LLM的默认模型；请求结束即释放，不注册工具/扩展/项目权限，不写数据库。现有Agent用途包括coordinator/project，但工作区首期接入与GAP-006不在本节范围。
+编辑对话是浏览器持有的候选与自然语言轮次，不是持久Session，不拥有Pi transcript。prepare每次使用独立无工具LLM的默认模型；请求结束即释放，不注册工具/扩展/项目权限，不写数据库。Agent用途仅project、能力仅readFiles/writeFiles；工作区Agent接入与GAP-006不在本节范围。
 
 | 方法/路径 | 入参与返回 | 许可、事务、副作用与失败 |
 | --- | --- | --- |
 | GET /agents；GET /agents/:agentId | 无正文→AgentDTO[] / AgentDTO | 只读agents目录与对应版本文件，不调用LLM；按id排序；缺失404、版本损坏ROLE_VERSION_MISSING/409；旧legacy只读 |
-| POST /agents/prepare | {kind,mode,requirements?,feedback?,markdown?,fileName?,projectId?,referenceFiles?,currentDraft?}→200 AgentCandidate | mode=generate/import/revise，kind=project/coordinator；generate要求requirements或材料，import要求markdown，revise要求feedback与currentDraft；只收本轮材料，不保存项目owner，错误不修改已存Agent |
+| POST /agents/prepare | {kind,mode,requirements?,feedback?,markdown?,fileName?,projectId?,referenceFiles?,currentDraft?}→200 AgentCandidate | mode=generate/import/revise，kind=project；generate要求requirements或材料，import要求markdown，revise要求feedback与currentDraft；只收本轮材料，不保存项目owner，错误不修改已存Agent |
 | POST /agents | {name,description?,kind,definition,status?}→201 AgentDTO | definition={instructions,capabilities}，status默认active，其他限额按02；先生成新ID/revision=1并独占写版本文件，再事务INSERT agents索引；失败保留待核对文件，不重用ID/覆盖文件，不把失败候选当正式版本 |
 | PATCH /agents/:agentId | {name?,description?,definition?,status?,kind?}、If-Match→200 AgentDTO | 不接受id/owner/revision/hash覆盖；正式Agent不接受kind变化，旧legacy转换时kind必填且定义完整、用户明确确认转换；至少一项。正文或frontmatter变化创建revision+1候选并fsync，事务按旧ETag条件更新name/description/revision/content_sha256/status/updated_at（独立legacy首次正式转换还写kind）；仅status变化不写新文件；冲突保留旧索引及候选，WRITE_CONFLICT/409 |
 | DELETE /agents/:agentId | 无正文、If-Match→200 {deleted:boolean,archived:boolean} | 有Session/历史FK引用时只条件UPDATE status=archived与updated_at，返回false/true；无引用时DELETE目录行，true/false；同事务重查引用，不删除Markdown历史；旧引用不能因归档丢失 |
@@ -247,7 +267,7 @@ AgentCandidate={name,description,definition,warnings:string[],sources:{path:stri
 
 requirements≤2000字符、feedback≤4000；markdown UTF-8≤64KiB，fileName≤256字符；referenceFiles最多8项，每项{name,content}、name≤256字符、UTF-8内容≤64KiB、合计≤256KiB。currentDraft={name,description,instructions}按02限额；name/description/instructions不接受额外身份或能力字段。projectId仅作本轮收集定位，须读取真实Project及允许材料；目录边界/敏感路径与§14相同。发给LLM的总材料按当前默认模型容量与实际输入估算校验，超过预算ROLE_INPUT_TOO_LARGE/413，不用应用固定Token常数覆盖contextWindow/maxTokens。材料不执行、不作为系统授权。
 
-错误：INVALID_ROLE/422（字段/frontmatter/能力约束）、ROLE_MATERIALS_UNAVAILABLE/422、ROLE_INPUT_TOO_LARGE/413、ROLE_GENERATION_INVALID/422（模型候选不符）、REQUEST_ABORTED/409、MODEL_CONFIGURATION_ERROR/503、MODEL_UNAVAILABLE/409、ROLE_VERSION_MISSING/409；模型/SQL/磁盘失败保留已存版本与客户端草稿，不自动重试LLM。prepare取消中止本次独立LLM；保存提交前取消不写索引，提交后按GET核对，不承诺回滚。保存文件成功而SQL失败时，只有旧索引可被执行加载；管理员可通过GET精确版本引用核对，被引用版本永不覆盖。旧legacy转换须由用户通过prepare再保存；owner/source均为空的独立legacy可PATCH以当前ETag明确产生正式新版本；历史仍有Bot/Project owner或source引用的legacy保持原记录，使用POST创建新独立Agent，不清空或重解释旧归属。旧会话绑定不自动转到新ID，不自动转换。
+错误：INVALID_ROLE/422（字段/frontmatter/能力约束）、ROLE_MATERIALS_UNAVAILABLE/422、ROLE_INPUT_TOO_LARGE/413、ROLE_GENERATION_INVALID/422（模型候选不符）、REQUEST_ABORTED/409、MODEL_CONFIGURATION_ERROR/503、MODEL_UNAVAILABLE/409、ROLE_VERSION_MISSING/409；模型/SQL/磁盘失败保留已存版本与客户端草稿，不自动重试LLM。prepare取消中止本次独立LLM；保存提交前取消不写索引，提交后按GET核对，不承诺回滚。保存文件成功而SQL失败时，只有旧索引可被执行加载；管理员可通过GET精确版本引用核对，被引用版本永不覆盖。旧legacy转换须由用户通过prepare再保存；owner/source均为空的独立legacy可PATCH以当前ETag明确产生正式新版本；历史仍有Project owner或source引用的legacy保持原记录，使用POST创建新独立Agent，不清空或重解释旧归属。旧会话绑定不自动转到新ID；没有当前版本摘要的历史引用仅投影agentId/revision/name/legacy，不解析或执行已退役的policy/extension/调度能力，不自动改写SQL。MCP的isInUse仅检查sessions.mcp_ids_json；没有Task或其他旧执行对象引用查询。
 
 ## 13. 耐久幂等、恢复与不可用型号（GAP-004）
 
@@ -288,10 +308,11 @@ finalize-fork要求目标是有效未提交候选，源归属/节点快照、候
 | 方法/路径 | 输入 / DTO | 边界与错误 |
 | --- | --- | --- |
 | GET P/files?path= | ProjectFileListing={path:string,entries:FileEntry[],isGitRepository:boolean,gitState:'available'\|'not_repository'\|'unavailable',truncated:boolean}；FileEntry={name,path,parentPath,type:'file'\|'directory',gitStatus?:'added'\|'modified'\|'deleted'\|'renamed'\|'untracked'\|'conflicted'} | 仅列指定目录直接子项，path为项目内相对路径；目录优先、名称按Unicode排序，最多2000条，截断为排序前2000条并truncated=true，不假装完整；不存在NOT_FOUND/404，非目录INVALID_DIRECTORY/400；Git失败仍返回目录，gitState=unavailable且不伪造clean |
-| GET P/files/content?path= | FilePreview={path:string,content:string,size:number} | path必填，仅普通文件、有效UTF-8、≤512KiB，原始换行不变；NOT_FOUND/404、PATH_OUTSIDE_PROJECT/403、FILE_FORBIDDEN/403、INVALID_FILE/400、FILE_TOO_LARGE/413、BINARY_FILE/415、FILE_CHANGED/409 |
+| GET P/files/content?path= | FilePreview，见FILE-001 | path必填，普通文件≤50MB；文本≤512KiB、Office结构/PDF原件预览按FILE-001/002，其余返回下载提示；路径、文件身份与读取错误沿用FILE-001 |
+| GET P/files/download?path= | 原始文件字节与下载响应头 | 许可、大小、路径与错误统一见FILE-001，不套JSON |
 | GET P/changes | ProjectChanges={isGitRepository:boolean,status:string,workingPatch:string,stagedPatch:string,truncated:boolean} | status为porcelain原文，patch来自工作区/暂存区，只读git；非Git返回false及空串、truncated=false；合计UTF-8≤1MiB，超过按字段顺序status/workingPatch/stagedPatch在完整字符边界截断并标true，不当完整diff；Git失败GIT_READ_FAILED/500，超时GIT_TIMEOUT/504（10秒），不执行hook/写索引 |
 
-isGitRepository只表示仓库事实，不表示Git状态读取成功。文件列表不等待changes；git补充失败不阻断预览。读取中目录/文件身份变化返回FILE_CHANGED/409；IO错误FILE_READ_FAILED/500，保留页面现有数据，用户可重试。源码绝对路径先在客户端/服务端适配为本Project相对path，仍重做上述校验；API不接受绝对path。附件内容的2MiB额度不改变本预览512KiB上限。Git输出不进入SessionMemory、SQL或第二份对话。
+isGitRepository只表示仓库事实，不表示Git状态读取成功。文件列表不等待changes；git补充失败不阻断预览。读取中目录/文件身份变化返回FILE_CHANGED/409；IO错误FILE_READ_FAILED/500，保留页面现有数据，用户可重试。源码绝对路径先在客户端/服务端适配为本Project相对path，仍重做上述校验；API不接受绝对path。附件内容额度按§5，不改变本预览512KiB上限。Git输出不进入SessionMemory、SQL或第二份对话。
 
 ## 15. 派生与导出的确定适配及验收边界（GAP-005）
 

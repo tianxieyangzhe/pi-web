@@ -1,4 +1,5 @@
 import { services } from '@/bootstrap/composition-root.server';
+import { MAX_MESSAGE_BODY_BYTES } from '@/domain/message-reference-limits';
 import { DomainError } from '@/domain/errors';
 import { exactFields } from '@/application/project-session-service';
 import { dataResponse,errorResponse,jsonBody } from './api';
@@ -23,7 +24,7 @@ export async function projectSessionAction(request:Request,context:ProjectSessio
     }
     if(action==='model'&&request.method==='PUT')return dataResponse(await services.sessionTools.switchModel(projectId,sessionId,await jsonBody(request),key,lease));
     if(request.method==='POST'){
-      if(action==='messages')return dataResponse(services.sessionTools.accept(projectId,sessionId,await jsonBody(request,12*1024*1024),key,lease),{status:202});
+      if(action==='messages')return dataResponse(services.sessionTools.accept(projectId,sessionId,await jsonBody(request,MAX_MESSAGE_BODY_BYTES),key,lease),{status:202});
       if(action==='fork')return dataResponse(await services.sessionTools.fork(projectId,sessionId,await jsonBody(request),key),{status:201});
       if(action==='role')return dataResponse(await services.sessionTools.adoptAgent(projectId,sessionId,await jsonBody(request),key,request.headers.get('if-match')));
       if(action==='recover')return dataResponse(await services.sessionTools.recover(projectId,sessionId,await jsonBody(request),key));

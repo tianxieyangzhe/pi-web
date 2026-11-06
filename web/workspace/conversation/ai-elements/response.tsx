@@ -7,9 +7,9 @@ function isSafeHref(href: string) {
   if (!value || /[\u0000-\u001f]/.test(value)) return false;
   if (value.startsWith("#") || value.startsWith("/") && !value.startsWith("//") || value.startsWith("./") || value.startsWith("../")) return true;
   try {
-    return ["http:", "https:", "mailto:"].includes(new URL(value).protocol);
+    return ["http:", "https:", "mailto:", "file:", "sandbox:"].includes(new URL(value).protocol);
   } catch {
-    return false;
+    return !/^[a-z][a-z\d+.-]*:/i.test(value) && !value.startsWith("//");
   }
 }
 

@@ -9,7 +9,7 @@ import type { AgentDefinition } from "@/domain/models";
 export type AgentMarkdown = {
   agentId: string;
   revision: number;
-  kind: "coordinator" | "project";
+  kind: "project";
   name: string;
   description: string | null;
   definition: AgentDefinition;
@@ -48,7 +48,7 @@ export function parseAgentMarkdown(markdown: string): AgentMarkdown {
     fields[item[1]] = item[1] === "kind" ? item[2] : parseScalar(item[2]);
   }
   const allowed = ["agent_id", "revision", "kind", "name", "description", "capabilities"];
-  if (Object.keys(fields).some(key => !allowed.includes(key)) || typeof fields.agent_id !== "string" || !Number.isInteger(fields.revision) || !["coordinator", "project"].includes(String(fields.kind)) || typeof fields.name !== "string" || fields.description !== null && typeof fields.description !== "string" || !fields.capabilities || typeof fields.capabilities !== "object" || Array.isArray(fields.capabilities)) {
+  if (Object.keys(fields).some(key => !allowed.includes(key)) || typeof fields.agent_id !== "string" || !Number.isInteger(fields.revision) || !["project"].includes(String(fields.kind)) || typeof fields.name !== "string" || fields.description !== null && typeof fields.description !== "string" || !fields.capabilities || typeof fields.capabilities !== "object" || Array.isArray(fields.capabilities)) {
     throw new DomainError("ROLE_FILE_INVALID", "Agent.md frontmatter 字段不符合规范", 409, true);
   }
   const agentId = fields.agent_id as string;

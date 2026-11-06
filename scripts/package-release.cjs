@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 const fs=require('node:fs'),path=require('node:path');
-const schemas=['core-schema.sql','bot-schema.sql','agent-binding-schema.sql','role-schema.sql','workspace-schema.sql'];
+const schemas=['core-schema.sql','role-schema.sql','workspace-schema.sql'];
 function packageRelease(root,destination=path.join(root,'release'),{withoutNodeModules=false}={}){
  root=path.resolve(root);destination=path.resolve(destination);
  const build=path.resolve(root,process.env.AI_WORKSPACE_BUILD_DIR||'.next');

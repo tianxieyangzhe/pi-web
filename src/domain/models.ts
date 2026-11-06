@@ -30,38 +30,21 @@ export type Mcp = {
   updatedAt: ISODateTime;
 };
 
-export type AgentPolicy = {
-  allowProjectWrite: boolean;
-  allowExternalWrite: boolean;
-  maxParallelTasks: number;
-};
-
-export type PiAgentExtension = {
-  instruction: string | null;
-  thinkingLevel: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | null;
-  tools: string[] | null;
-  excludeTools: string[];
-  extensionSources: string[];
-  skillPaths: string[];
-  settings: JsonObject;
-};
-
 export type AgentDefinition = {
   instructions: string;
-  capabilities: {readFiles:boolean;writeFiles:boolean;readProjects:boolean;dispatchTasks:boolean;dispatchProjectWrites:boolean;exchangeMessages:boolean};
+  capabilities: {readFiles:boolean;writeFiles:boolean};
 };
 export type Agent = {
-  id: EntityId; kind: "coordinator"|"project"|null; botId:string|null; projectId:string|null; sourceTemplateId:string|null;
+  id: EntityId; kind: "project"|null;  projectId:string|null; sourceTemplateId:string|null;
   name:string; description:string|null; definition:AgentDefinition|null;legacySource?:string|null;
   contentSha256:string|null; markdown?:string|null;
   revision:number;status:ResourceStatus;createdAt:string;updatedAt:string;
 };
-export type AgentSnapshotRef = {agentId:string;revision:number;kind:"coordinator"|"project";botId:null;projectId:null;contentSha256:string;name:string;description:string|null};
+export type AgentSnapshotRef = {agentId:string;revision:number;kind:"project";projectId:null;contentSha256:string;name:string;description:string|null};
 /** Runtime-hydrated snapshot. The definition is loaded from the immutable Markdown version file. */
 export type AgentSnapshot = AgentSnapshotRef & {definition:AgentDefinition};
-export type LegacyRoleSnapshot = {agentId:string;revision:number;kind?:"coordinator"|"project";botId?:string|null;projectId?:string|null;name:string;description?:string|null;definition:AgentDefinition};
-export type LegacyPiAgentSnapshot = {id:string;name:string;description?:string|null;extension:PiAgentExtension;policy:AgentPolicy;revision:number;status?:ResourceStatus;createdAt?:string;updatedAt?:string};
-export type LegacyAgentSnapshot = LegacyPiAgentSnapshot | LegacyRoleSnapshot;
+/** Display-only identity from a historical binding; never supplies runtime configuration. */
+export type LegacyAgentSnapshot = {agentId:string;revision:number;name:string;legacy:true};
 
 export type SessionState =
   | "not_started"
@@ -79,7 +62,7 @@ export type Session = {
   projectId: EntityId;
   status: "open" | "closed";
   purpose: string;
-  botConversationId:string|null;participantName:string|null;assignment:string|null;collaborationState:"active"|"disabled"|null;botJoinedAt:string|null;updatedAt:string;
+  updatedAt:string;
   agentId: EntityId | null;
   agentSnapshot: AgentSnapshot | LegacyAgentSnapshot | null;
   mcpIds: EntityId[];
@@ -90,23 +73,6 @@ export type Session = {
   createdAt: ISODateTime;
   lastActivityAt: ISODateTime | null;
   endedAt: ISODateTime | null;
-};
-
-export type ConversationEntry = {
-  id: string;
-  kind: "text" | "tool";
-  text?: string;
-  activity?: ActivityEvent;
-};
-
-export type ConversationMessage = {
-  id: string;
-  sessionId: EntityId;
-  role: "user" | "assistant";
-  origin?: "user" | "coordinator";
-  content: string;
-  createdAt: ISODateTime;
-  entries?: ConversationEntry[];
 };
 
 export type ActivityEvent = {
@@ -130,12 +96,3 @@ export type AgentEvent =
   | { type: "project_changes"; projectId: EntityId; summary: string; patch: string }
   | { type: "complete" }
   | { type: "error"; code: string; message: string; recoverable: boolean };
-
-export type AgentEventEnvelope = {
-  eventId: string;
-  turnId: string;
-  sessionId: string;
-  sequence: number;
-  emittedAt: string;
-  event: AgentEvent;
-};

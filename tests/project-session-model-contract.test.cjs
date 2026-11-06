@@ -6,7 +6,7 @@ const {createProjectSessionService}=require('../src/application/project-session-
 const {createProjectOperationStore}=require('../src/infrastructure/projects/operation-journal.server.ts');
 const {createdSessionId}=require('../src/domain/project-operations.ts');
 const os=require('node:os');
-function database(){const db=new Database(':memory:');db.pragma('foreign_keys=ON');for(const name of ['core-schema.sql','bot-schema.sql','agent-binding-schema.sql','role-schema.sql','workspace-schema.sql'])db.exec(fs.readFileSync(path.join(__dirname,'../src/infrastructure/database',name),'utf8'));db.prepare("INSERT INTO projects(id,name,kind,root_path,status,created_at,updated_at) VALUES('p','project','code','/tmp','active','now','now')").run();return db;}
+function database(){const db=new Database(':memory:');db.pragma('foreign_keys=ON');for(const name of ['core-schema.sql','role-schema.sql','workspace-schema.sql'])db.exec(fs.readFileSync(path.join(__dirname,'../src/infrastructure/database',name),'utf8'));db.prepare("INSERT INTO projects(id,name,kind,root_path,status,created_at,updated_at) VALUES('p','project','code','/tmp','active','now','now')").run();return db;}
 test('target Schema has no memory/state copies; native identity and creation keys cannot mutate; ended_at remains immutable historical data',()=>{
  const db=database(),repository=createSessionRepository(db);try{
   assert(!db.prepare("SELECT 1 FROM sqlite_master WHERE name='session_memories'").get());const columns=db.prepare('PRAGMA table_info(sessions)').all().map(c=>c.name);assert(!columns.some(name=>['session_memory_id','state','status'].includes(name)));

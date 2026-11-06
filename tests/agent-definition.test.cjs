@@ -12,24 +12,25 @@ test('every uploaded Markdown format is sent to LLM and capabilities remain off'
 
 test('project generation creates a candidate from bounded sources without granting capabilities',async()=>{
  let calls=0;const service=createAgentPreparationService({collect:async()=>({sources:[{path:'README.md',hash:'hash',content:'项目说明'}],warnings:['局部材料']}),generate:async(input,_signal,mode)=>{calls++;assert.equal(mode,'generate');assert(input.includes('README.md'));return JSON.stringify({name:'项目角色',description:'项目协作',instructions:'# 指导\n只依据项目说明',warnings:['架构待确认']});}});
- const candidate=await service.prepare({kind:'project',projectId:'p',requirements:'维护配置下发'},new AbortController().signal);assert.equal(calls,1);assert.deepEqual(candidate.definition.capabilities,emptyCapabilities());assert.equal(candidate.sources[0].path,'README.md');assert(candidate.warnings.includes('架构待确认'));
- const cancelled=new AbortController();cancelled.abort();await assert.rejects(service.prepare({kind:'project',projectId:'p'},cancelled.signal));assert.equal(calls,1);
+ const candidate=await service.prepare({kind:'project',mode:'generate',projectId:'p',requirements:'维护配置下发'},new AbortController().signal);assert.equal(calls,1);assert.deepEqual(candidate.definition.capabilities,emptyCapabilities());assert.equal(candidate.sources[0].path,'README.md');assert(candidate.warnings.includes('架构待确认'));
+ const cancelled=new AbortController();cancelled.abort();await assert.rejects(service.prepare({kind:'project',mode:'generate',projectId:'p'},cancelled.signal));assert.equal(calls,1);
 });
 
 test('dialogue revision uses prior draft and user feedback while retaining source files',async()=>{
  let calls=0;const service=createAgentPreparationService({collect:async()=>({sources:[],warnings:[]}),generate:async(input,_signal,mode)=>{calls++;assert.equal(mode,'revise');assert(input.includes('保留原权限边界'));assert(input.includes('补充跨项目对比'));assert(input.includes('architecture.md'));return JSON.stringify({name:'协调员',description:null,instructions:'# 协调员\n先检索，再跨项目比较。保留原权限边界。',warnings:[]});}});
- const result=await service.prepare({kind:'coordinator',mode:'revise',currentDraft:{name:'协调员',description:null,instructions:'# 协调员\n保留原权限边界'},feedback:'补充跨项目对比',referenceFiles:[{name:'architecture.md',content:'# Architecture'}]},new AbortController().signal);
+ const result=await service.prepare({kind:'project',mode:'revise',currentDraft:{name:'协调员',description:null,instructions:'# 协调员\n保留原权限边界'},feedback:'补充跨项目对比',referenceFiles:[{name:'architecture.md',content:'# Architecture'}]},new AbortController().signal);
  assert.equal(calls,1);assert.match(result.definition.instructions,/跨项目比较/);assert.match(result.definition.instructions,/保留原权限边界/);assert.deepEqual(result.definition.capabilities,emptyCapabilities());
 });
 
 test('oversized sources fail before model invocation and malformed output is rejected',async()=>{
  let called=false;const service=createAgentPreparationService({collect:async()=>({sources:[{path:'large',hash:'hash',content:'中'.repeat(5000)}],warnings:[]}),generate:async()=>{called=true;return '{}';}});
- await assert.rejects(service.prepare({kind:'coordinator',projectId:'p',requirements:'review'},new AbortController().signal),e=>e.code==='ROLE_INPUT_TOO_LARGE');assert.equal(called,false);
- const malformed=createAgentPreparationService({collect:async()=>({sources:[],warnings:[]}),generate:async()=>'{"unexpected":true}'});await assert.rejects(malformed.prepare({kind:'project',requirements:'make a helper'},new AbortController().signal),e=>e.code==='ROLE_GENERATION_INVALID');
+ await assert.rejects(service.prepare({kind:'project',mode:'generate',requirements:'review',referenceFiles:[{name:'large.md',content:'中'.repeat(23000)}]},new AbortController().signal),e=>e.code==='ROLE_INPUT_TOO_LARGE');assert.equal(called,false);
+ const malformed=createAgentPreparationService({collect:async()=>({sources:[],warnings:[]}),generate:async()=>'{"unexpected":true}'});await assert.rejects(malformed.prepare({kind:'project',mode:'generate',requirements:'make a helper'},new AbortController().signal),e=>e.code==='ROLE_GENERATION_INVALID');
 });
 
-test('role capability shape is strict and project roles cannot gain coordination capabilities',()=>{
+test('Agent capability shape accepts only file permissions and project purpose',()=>{
  assert.throws(()=>validateDefinition({instructions:'role',capabilities:{...emptyCapabilities(),extra:true}},'project'));
  assert.throws(()=>validateDefinition({instructions:'role',capabilities:{...emptyCapabilities(),readProjects:true}},'project'));
- assert.throws(()=>validateDefinition({instructions:'role',capabilities:{...emptyCapabilities(),dispatchProjectWrites:true}},'coordinator'));
+ assert.throws(()=>validateDefinition({instructions:'role',capabilities:emptyCapabilities()},'coordinator'));
+ assert.deepEqual(validateDefinition({instructions:'role',capabilities:{readFiles:true,writeFiles:false}},'project').capabilities,{readFiles:true,writeFiles:false});
 });

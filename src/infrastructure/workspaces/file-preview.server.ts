@@ -1,34 +1,27 @@
 import fs from 'node:fs/promises';
-import { constants } from 'node:fs';
+import path from 'node:path';
 import { DomainError } from '@/domain/errors';
+import { MAX_DOWNLOAD_BYTES } from '@/domain/file-preview';
 import type { WorkspaceProject } from '@/domain/workspace';
 import { workspaceReferenceTarget } from './reference-path.server';
+import { readProjectBytes } from '@/infrastructure/projects/project-files.server';
+import { previewFile } from '@/infrastructure/references/file-preview.server';
 
-export async function readWorkspaceFile(projects: WorkspaceProject[], projectId: string, relative: string) {
+export async function downloadWorkspaceFile(projects: WorkspaceProject[], projectId: string, relative: string) {
   try {
-    const { target } = await workspaceReferenceTarget(projects, projectId, relative);
-    const actual = await fs.realpath(target);
-    const file = await fs.open(actual, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-    try {
-      const stat = await file.stat();
-      await workspaceReferenceTarget(projects, projectId, relative);
-      const current = await fs.stat(target);
-      if (stat.dev !== current.dev || stat.ino !== current.ino) throw new DomainError('NOT_FOUND', '文件路径已变化，请重试', 404, true);
-      if (!stat.isFile()) throw new DomainError('INVALID_FILE', '只能预览普通文件', 400, true);
-      const limit = 512 * 1024;
-      if (stat.size > limit) throw new DomainError('FILE_TOO_LARGE', '文件超过 512KiB 预览上限', 413, true);
-      const buffer = Buffer.alloc(limit + 1);
-      let size = 0;
-      while (size < buffer.length) { const result = await file.read(buffer, size, buffer.length - size, null); if (!result.bytesRead) break; size += result.bytesRead; }
-      if (size > limit) throw new DomainError('FILE_TOO_LARGE', '文件超过预览上限', 413, true);
-      const bytes = buffer.subarray(0, size);
-      let content: string;
-      try { if (bytes.includes(0)) throw new Error(); content = new TextDecoder('utf-8', {fatal:true}).decode(bytes); }
-      catch { throw new DomainError('BINARY_FILE', '此文件不是可预览的 UTF-8 文本', 415, true); }
-      return {path:relative,content,size};
-    } finally { await file.close(); }
+    const { project } = await workspaceReferenceTarget(projects, projectId, relative);
+    const bytes = readProjectBytes(project.rootPath, relative, MAX_DOWNLOAD_BYTES);
+    if (await fs.realpath(project.rootPath) !== path.resolve(project.rootPath)) throw new DomainError('PATH_OUTSIDE_WORKSPACE', '项目根目录身份已变化', 403, true);
+    return { name: path.basename(relative), bytes };
   } catch (error) {
-    if (error instanceof DomainError) throw error;
+    if (error instanceof DomainError) {
+      if (error.code === 'PATH_OUTSIDE_PROJECT') throw new DomainError('PATH_OUTSIDE_WORKSPACE', '路径越出工作区项目范围', 403, true);
+      throw error;
+    }
     throw new DomainError('NOT_FOUND', '文件不存在或无法读取', 404, true);
   }
+}
+export async function readWorkspaceFile(projects: WorkspaceProject[], projectId: string, relative: string) {
+  const { bytes } = await downloadWorkspaceFile(projects, projectId, relative);
+  return previewFile(relative, bytes);
 }

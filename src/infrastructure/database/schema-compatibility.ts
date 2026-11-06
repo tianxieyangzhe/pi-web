@@ -9,7 +9,7 @@ export function matchesTargetSchema(db:Database.Database,targetSchema:string):bo
     const query="SELECT name,type,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'";
     const target=expected.prepare(query).all() as SchemaObject[],actual=db.prepare(query).all() as SchemaObject[];
     const byName=new Map(actual.map(row=>[row.name,row]));
-    if(actual.some(row=>row.name==='session_memories'||row.name.startsWith('legacy_v5_')||['bot_works','bot_tasks','bot_task_dependencies','bot_executions','bot_messages'].includes(row.name)))return false;
+    if(actual.length !== target.length)return false;
     return target.every(row=>{const found=byName.get(row.name);return found?.type===row.type&&normalize(found.sql)===normalize(row.sql);});
   }catch{return false;}finally{expected.close();}
 }

@@ -7,14 +7,22 @@ const react={useState(initial){const i=index++;if(!(i in hooks))hooks[i]=typeof 
 const load=Module._load;Module._load=function(name,...args){if(name==='react')return react;if(name==='react/jsx-runtime')return {jsx:(type,props)=>({type,props}),jsxs:(type,props)=>({type,props})};if(name==='lucide-react')return new Proxy({},{get:()=>()=>null});return load.call(this,name,...args);};
 const {PromptInput}=require('../web/workspace/conversation/prompt-input.tsx');
 const {ReferencePicker,ProjectReferencePicker}=require('../web/workspace/conversation/reference-picker.tsx');Module._load=load;
-const {api}=require('../web/api/client.ts'),{botApi}=require('../web/api/bot-client.ts');
+const {api}=require('../web/api/client.ts');
+const {submitSessionMessage}=require('../web/api/session-events.ts');
 global.FileReader=class {readAsDataURL(file){this.result='data:application/octet-stream;base64,'+Buffer.from(file.bytes).toString('base64');this.onload();}};
-function harness(onSubmit){hooks=[];function render(){index=0;effects=[];const tree=PromptInput({placeholder:'x',running:false,draftKey:'test',onSubmit});for(const effect of effects)effect();return tree;}return {render,change:value=>render().props.children[0].props.onChange({target:{value}}),select:value=>render().props.children[1].props.children[0].props.onChange(value),submit:()=>render().props.onSubmit({preventDefault(){}})};}
+function harness(onSubmit,options={}){hooks=[];function render(){index=0;effects=[];const tree=PromptInput({placeholder:'x',running:false,draftKey:'test',onSubmit,...options});for(const effect of effects)effect();return tree;}return {render,change:value=>render().props.children[0].props.onChange({target:{value}}),select:value=>render().props.children[1].props.children[0].props.onChange(value),submit:()=>render().props.onSubmit({preventDefault(){}})};}
 test('composer sends uploaded snapshots, retains files and draft on rejection, clears on acceptance',async()=>{
  const files=[{name:'a.txt',bytes:'hello'},{name:'b.png',bytes:'img'}];let reject=true,received;
  const h=harness(async(text,items)=>{received={text,items};if(reject)throw Error('invalid');});h.render();h.change('hello');h.select(files);await h.submit();
  assert.deepEqual(received,{text:'hello',items:[{name:'a.txt',data:'aGVsbG8='},{name:'b.png',data:'aW1n'}]});assert.deepEqual(h.render().props.children[1].props.children[0].props.selected,files);assert.equal(require('../web/workspace/conversation/inline-composer-document.ts').composerText(h.render().props.children[0].props.value),'hello');
  reject=false;await h.submit();assert.deepEqual(h.render().props.children[1].props.children[0].props.selected,[]);
+});
+test('composer submits pasted image and ordinary file bytes together without clipboard filename text',async()=>{
+ let received;const h=harness(async(text,refs)=>{received={text,refs};});h.render();
+ const text=new File(['hello'],'粘贴.md',{type:'text/markdown'}),image=new File(['png'],'截图.png',{type:'image/png'});text.bytes='hello';image.bytes='png';
+ let prevented=false;h.render().props.children[0].props.onPaste({preventDefault(){prevented=true;},clipboardData:{items:[text,image].map(file=>({kind:'file',type:file.type,getAsFile:()=>file})),getData:()=> 'filename text'}});
+ assert.equal(prevented,true);assert.equal(h.render().props.children[0].props.attachments.length,2);await h.submit();
+ assert.deepEqual(received,{text:'请查看本次附带的图片或文本。',refs:[{name:'粘贴.md',data:'aGVsbG8='},{name:'截图.png',data:'cG5n'}]});
 });
 test('composer keeps attachment blocks inside the editable document and only selectors in toolbar',()=>{
  const h=harness(()=>{});h.render();h.select([{name:'a',bytes:'A'}]);const tree=h.render(),group=tree.props.children[1];
@@ -25,21 +33,44 @@ test('composer keeps attachment blocks inside the editable document and only sel
 test('upload picker supports multiple files and limits without a separate selected list',()=>{
  hooks=[];let selected=[];function render(){index=0;effects=[];const tree=ReferencePicker({selected,onChange:files=>{selected=files;}});for(const effect of effects)effect();return tree;}
  let tree=render();const input=tree.props.children[0];assert.equal(input.props.type,'file');assert.equal(input.props.multiple,true);input.props.onChange({target:{files:[{name:'a',size:1},{name:'b',size:2}],value:'x'}});assert.equal(selected.length,2);
- tree=render();tree.props.children[0].props.onChange({target:{files:[{name:'big',size:2*1024*1024+1}],value:'x'}});assert.equal(selected.length,2);assert.match(render().props.children[2].props.message,/容量|超过|MiB/);
+ tree=render();tree.props.children[0].props.onChange({target:{files:[{name:'big',size:50_000_000}],value:'x'}});assert.equal(selected.length,2);assert.match(render().props.children[2].props.message,/容量|超过|MiB/);
 });
 test('project reference selector opens project directory browser without path input',async()=>{
  hooks=[];const old=api.listFiles;let calls=[],selected=[];api.listFiles=async(id,path)=>{calls.push([id,path]);return {entries:[{name:'src',path:'src',type:'directory'},{name:'a.txt',path:'a.txt',type:'file'}],truncated:false};};
  function render(){index=0;effects=[];const tree=ProjectReferencePicker({projects:[{id:'p',name:'P'}],selected,onChange:next=>{selected=next;},uploadCount:0});for(const effect of effects)effect();return tree;}
  try{let tree=render();assert.equal(tree.props.children[0].props.disabled,false);tree.props.children[0].props.onClick();render();await Promise.resolve();tree=render();const dialog=tree.props.children[1];assert.equal(dialog.type,'dialog');assert.equal(dialog.props['aria-label'],'参考项目文件');assert.deepEqual(calls,[['p','']]);const entries=dialog.props.children[3].props.children[0];entries[1].props.children[0].props.onChange();assert.deepEqual(selected,[{projectId:'p',path:'a.txt'}]);entries[0].props.onClick();render();await Promise.resolve();assert.deepEqual(calls,[['p',''],['p','src']]);}finally{api.listFiles=old;}
 });
-test('Bot workspace is the default reference source without project bindings',async()=>{
- hooks=[];const old=botApi.referenceFiles;let calls=[],selected=[];botApi.referenceFiles=async(b,c,p)=>{calls.push([b,c,p]);return {entries:[{name:'a',path:'a',type:'file'}],truncated:false};};function render(){index=0;effects=[];const tree=ProjectReferencePicker({projects:[],workspace:{botId:'b',conversationId:'c'},selected,onChange:next=>{selected=next;},uploadCount:0});for(const effect of effects)effect();return tree;}try{let tree=render();assert.equal(tree.props.children[0].props.disabled,false);tree.props.children[0].props.onClick();render();await Promise.resolve();tree=render();assert.deepEqual(calls,[['b','c','']]);tree.props.children[1].props.children[3].props.children[0][0].props.children[0].props.onChange();assert.deepEqual(selected,[{source:'bot',path:'a'}]);}finally{botApi.referenceFiles=old;}
-});
+
 test('composer combines upload and project selections and retains both on rejection',async()=>{
  let received;const h=harness(async(_text,refs)=>{received=refs;throw Error('invalid');});h.render();h.change('hello');h.select([{name:'a',bytes:'A'}]);h.render().props.children[1].props.children[1].props.onChange([{projectId:'p',path:'x'}]);await h.submit();assert.deepEqual(received,[{name:'a',data:'QQ=='},{projectId:'p',path:'x'}]);assert.equal(h.render().props.children[1].props.children[0].props.selected.length,1);assert.equal(h.render().props.children[1].props.children[1].props.selected.length,1);
 });
-test('project and Bot clients send uploaded bytes without paths',async()=>{
- const previous=global.fetch,requests=[];global.fetch=async(url,init)=>{requests.push(JSON.parse(init.body));return url.startsWith('/api/bots')?new Response(JSON.stringify({data:{accepted:true}}),{status:202}):new Response('',{status:200});};
- const refs=[{name:'note.txt',data:'eA=='}];try{await botApi.send('b','c','hello',undefined,false,refs);await api.sendMessage('p','s','lease','hello',false,undefined,refs).next();}finally{global.fetch=previous;}
- assert.deepEqual(requests[0].references,refs);assert.deepEqual(requests[1].references,refs);
+function fileDrag(files,items=files.map(file=>({kind:'file',getAsFile:()=>file}))){return {prevented:false,preventDefault(){this.prevented=true;},dataTransfer:{types:['Files'],files,items,dropEffect:'none'}};}
+test('dragged mixed files preserve names and bytes, stay inline and survive rejection until accepted',async()=>{
+ let received,reject=true,calls=0;const h=harness(async(text,refs)=>{calls++;received={text,refs};if(reject)throw Error('rejected');});h.render();h.change('read these');h.select([{name:'existing.md',bytes:'old',size:3}]);
+ const files=[{name:'拖入.txt',bytes:'hello',size:5},{name:'image.png',bytes:'png',size:3}];const drag=fileDrag(files);h.render().props.onDragOver(drag);assert.equal(drag.prevented,true);assert.equal(drag.dataTransfer.dropEffect,'copy');h.render().props.onDrop(drag);assert.equal(calls,0,'drop must not send');assert.equal(h.render().props.children[0].props.attachments.length,3);
+ await h.submit();assert.deepEqual(received,{text:'read these',refs:[{name:'existing.md',data:'b2xk'},{name:'拖入.txt',data:'aGVsbG8='},{name:'image.png',data:'cG5n'}]});assert.equal(h.render().props.children[1].props.children[0].props.selected.length,3);reject=false;await h.submit();assert.equal(h.render().props.children[1].props.children[0].props.selected.length,0);
+});
+test('file drops fall back to files and allow attachment-only submission without intercepting text drags',async()=>{
+ let received;const h=harness(async(text,refs)=>{received={text,refs};});h.render();h.change('');
+ const text={prevented:false,preventDefault(){this.prevented=true;},dataTransfer:{types:['text/plain'],files:[],items:[{kind:'string'}]}};h.render().props.onDragOver(text);h.render().props.onDrop(text);assert.equal(text.prevented,false);
+ const file={name:'only.txt',bytes:'body',size:4},drag=fileDrag([file],[]);h.render().props.onDrop(drag);assert.equal(drag.prevented,true);await h.submit();assert.deepEqual(received,{text:'请查看本次附带的图片或文本。',refs:[{name:'only.txt',data:'Ym9keQ=='}]});
+});
+test('directories, unreadable files, size and count overflow reject the whole drop and retain existing input',()=>{
+ const h=harness(()=>{});h.render();h.change('keep');h.select([{name:'keep.txt',bytes:'keep',size:4}]);h.render().props.children[1].props.children[1].props.onChange([{projectId:'p',path:'ref'}]);const before=h.render().props.children[0].props.value;
+ const valid={name:'valid',bytes:'ok',size:2};for(const [drag,message] of [
+  [fileDrag([valid],[{kind:'file',webkitGetAsEntry:()=>({isDirectory:true}),getAsFile:()=>valid}]),/文件夹/],
+  [fileDrag([valid],[{kind:'file',getAsFile:()=>valid},{kind:'file',getAsFile:()=>null}]),/无法读取/],
+  [fileDrag([valid,{name:'large',size:50_000_000}]),/50 MB/],
+  [fileDrag([{name:'a',size:30_000_000},{name:'b',size:25_000_000}]),/50 MB/],
+  [fileDrag(Array.from({length:9},(_,i)=>({name:String(i),size:1}))),/10/]
+ ]){h.render().props.onDrop(drag);assert.equal(drag.prevented,true);assert.match(h.render().props.children[2].props.message,message);assert.equal(h.render().props.children[0].props.value,before);assert.equal(h.render().props.children[0].props.attachments.length,2);}
+});
+test('running, blocked and pending submission reject file drops but prevent browser file navigation',async()=>{
+ for(const options of [{running:true},{blocked:true}]){const h=harness(()=>{},options);h.render();h.change('keep');const drag=fileDrag([{name:'new',size:1}]);h.render().props.onDragOver(drag);assert.equal(drag.dataTransfer.dropEffect,'none');h.render().props.onDrop(drag);assert.equal(drag.prevented,true);assert.equal(h.render().props.children[0].props.attachments.length,0);}
+ let finish;const h=harness(()=>new Promise(resolve=>{finish=resolve;}));h.render();h.change('send');const sending=h.submit();const drag=fileDrag([{name:'new',size:1}]);h.render().props.onDrop(drag);assert.equal(drag.prevented,true);assert.equal(h.render().props.children[0].props.attachments.length,0);finish();await sending;
+});
+test('project client send uploaded bytes without paths',async()=>{
+ const previous=global.fetch,requests=[];global.fetch=async(url,init)=>{requests.push(JSON.parse(init.body));return Response.json({data:{accepted:true,sessionId:'s',operationId:'op'}},{status:202});};
+ const refs=[{name:'note.txt',data:'eA=='}];try{await submitSessionMessage('/api/projects/p/sessions/s','lease','hello',refs);}finally{global.fetch=previous;}
+ assert.deepEqual(requests[0].references,refs);
 });

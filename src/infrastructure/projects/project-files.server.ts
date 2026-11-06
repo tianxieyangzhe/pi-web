@@ -2,6 +2,8 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { DomainError } from '@/domain/errors';
+import { MAX_DOWNLOAD_BYTES } from '@/domain/file-preview';
+import { previewFile } from '@/infrastructure/references/file-preview.server';
 import { projectRepository } from '@/infrastructure/database/project-repository.server';
 import type { ProjectMessageReference } from '@/domain/message-references';
 export type GitFileStatus='added'|'modified'|'deleted'|'renamed'|'untracked'|'conflicted';
@@ -48,7 +50,19 @@ function gitRepository(root:string){return git(root,['rev-parse','--is-inside-wo
 function gitMetadata(root:string){for(let current=root;;current=path.dirname(current)){if(fs.existsSync(path.join(current,'.git')))return true;if(path.dirname(current)===current)return false;}}
 function statusMap(bytes:Buffer){const result=new Map<string,GitFileStatus>(),records=bytes.toString('utf8').split('\0');for(let i=0;i<records.length;i++){const record=records[i];if(record.length<4)continue;const code=record.slice(0,2),name=record.slice(3);const status:GitFileStatus=code==='??'?'untracked':code.includes('U')||['AA','DD'].includes(code)?'conflicted':/[RC]/.test(code)?'renamed':code.includes('A')?'added':code.includes('D')?'deleted':'modified';result.set(name,status);if(/[RC]/.test(code))i++;}return result;}
 function utf8Prefix(bytes:Buffer,limit:number){const valid=Buffer.from(bytes.toString('utf8'));let end=Math.min(valid.length,Math.max(0,limit));while(end>0){try{return new TextDecoder('utf-8',{fatal:true}).decode(valid.subarray(0,end));}catch{end--;}}return '';}
-export function readProjectReference(reference:ProjectMessageReference){const root=projectRoot(reference.projectId);return {name:path.basename(reference.path),data:readProjectBytes(root,reference.path,2*1024*1024).toString('base64')};}
+export function resolveProjectReferenceAt(rootPath:string,relative:string){
+  let fd:number|undefined;
+  try{
+    const root=fs.realpathSync(rootPath),target=resolveProjectFile(root,relative);
+    fd=fs.openSync(target,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW|fs.constants.O_NONBLOCK);
+    const before=fs.fstatSync(fd),verified=fs.statSync(resolveProjectFile(root,relative));
+    if(before.dev!==verified.dev||before.ino!==verified.ino)throw new DomainError('FILE_CHANGED','文件发生变化，请重试',409,true);
+    if(!before.isFile())throw new DomainError('INVALID_FILE','只能参考普通文件',400,true);
+    return {name:path.basename(relative),absolutePath:target};
+  }catch(error){if(error instanceof DomainError)throw error;throw new DomainError('FILE_READ_FAILED','无法核验参考文件位置',500,true);}
+  finally{if(fd!==undefined)fs.closeSync(fd);}
+}
+export function resolveProjectReference(reference:ProjectMessageReference){return resolveProjectReferenceAt(projectRoot(reference.projectId),reference.path);}
 export const projectFiles={
   list(projectId:string,relative=''){
     const root=projectRoot(projectId),directory=resolveProjectFile(root,relative,true),before=fs.statSync(directory);
@@ -61,7 +75,8 @@ export const projectFiles={
     const entries=children.slice(0,2000).map(child=>{const file=path.relative(root,path.join(directory,child.name));return {path:file,parentPath:relative,name:child.name,type:child.isDirectory()?'directory' as const:'file' as const,...(statuses.has(file)?{gitStatus:statuses.get(file)}:{})};});
     return {path:relative,entries,isGitRepository:repository,gitState,truncated:children.length>2000};
   },
-  read(projectId:string,relative:string){const buffer=readProjectBytes(projectRoot(projectId),relative,512*1024);let content:string;try{if(buffer.includes(0))throw Error();content=new TextDecoder('utf-8',{fatal:true}).decode(buffer);}catch{throw new DomainError('BINARY_FILE','只支持UTF-8文本预览',415,true);}return {path:relative,content,size:buffer.length};},
+  read(projectId:string,relative:string){return previewFile(relative,readProjectBytes(projectRoot(projectId),relative,MAX_DOWNLOAD_BYTES));},
+  download(projectId:string,relative:string){return {name:path.basename(relative),bytes:readProjectBytes(projectRoot(projectId),relative,MAX_DOWNLOAD_BYTES)};},
   changes(projectId:string):ProjectChanges{
     const root=projectRoot(projectId);if(!gitRepository(root))return {isGitRepository:false,status:'',workingPatch:'',stagedPatch:'',truncated:false};
     const results=[git(root,['status','--porcelain=v1','--untracked-files=all']),git(root,['diff','--no-ext-diff','--no-textconv','--no-color']),git(root,['diff','--cached','--no-ext-diff','--no-textconv','--no-color'])];

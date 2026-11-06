@@ -72,7 +72,7 @@ test('configuration needs no API key, snapshots environment proxies and passes a
 test('real Pi runtime executes search and fetch for Project and Workspace using Chat Completions models, retains results and restores tools',async()=>{
  const pi=await import('@earendil-works/pi-coding-agent'),ai=await import('@earendil-works/pi-ai'),Module=require('node:module'),load=Module._load;
  Module._load=function(spec,...args){return spec==='@earendil-works/pi-coding-agent'?pi:spec==='@earendil-works/pi-ai'?ai:load.call(this,spec,...args);};
- let PiSessionRuntime,initializeSession;try{({PiSessionRuntime}=require('../src/infrastructure/pi/pi-session-runtime.server.ts'));({initializeSession}=require('../src/infrastructure/pi/initialize-session.server.ts'));}finally{Module._load=load;}
+ let PiSessionRuntime,initializeSession;try{({PiSessionRuntime}=require('../src/infrastructure/pi/pi-session-runtime.server.ts'));({initializeSession}=require('./support/initialize-pi-session.ts'));}finally{Module._load=load;}
  const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),root=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'tool-search-')));
  const credentials={async read(){},async list(){return []},async modify(){},async delete(){}};
  const modelRuntime=await pi.ModelRuntime.create({credentials,modelsPath:null,allowModelNetwork:false,refreshOnCreate:false});
@@ -80,7 +80,7 @@ test('real Pi runtime executes search and fetch for Project and Workspace using 
  const requests=[],runtime=new PiSessionRuntime(async()=>({runtime:modelRuntime,model:modelRuntime.getModel('fixture','fixture')}),{readEnvironment:()=>({}),lookup:async()=>[{address:'93.184.216.34',family:4}],fetch:async(url,options)=>{requests.push({url,options});return url.startsWith('https://www.bing.com/search')?html(bing()):new Response('Full body',{headers:{'content-type':'text/plain'}});}});
  try{for(const workspace of [true,false]){
   const manager=initializeSession('search-'+workspace,root,root),nativeRef={kind:'pi',sessionId:manager.getSessionId(),sessionFile:manager.getSessionFile(),cwd:root};
-  const input={session:{id:'tool-search-'+workspace,nativeRef,agentSnapshot:null,state:'idle'},workingDirectory:root,independentProjectTools:true,allowProjectRead:true,allowProjectWrite:true,...(workspace?{workspace:{id:'w',defaultProjectId:'p',projects:[],prompt:'test'}}:{})};
+  const input={session:{id:'tool-search-'+workspace,nativeRef,agentSnapshot:null,state:'idle'},workingDirectory:root,nativeCodingTools:true,allowProjectRead:true,allowProjectWrite:true,...(workspace?{workspace:{id:'w',defaultProjectId:'p',projects:[],prompt:'test'}}:{})};
   let handle;try{handle=await runtime.restore(input);assert(!handle.session.getActiveToolNames().includes('web_fetch'));assert(!handle.session.getAllTools().some(t=>t.name==='web_search'));
    const baseline=handle.session.getActiveToolNames(),loadouts=[];let index=0,fail=false;
    handle.session.agent.streamFunction=()=>{
@@ -91,7 +91,8 @@ test('real Pi runtime executes search and fetch for Project and Workspace using 
    assert.equal(loadouts.length,3);assert(loadouts.every(names=>names.includes('web_fetch')&&!names.includes('web_search')));assert.deepEqual(handle.session.getActiveToolNames(),baseline);
    const results=handle.manager.getEntries().filter(e=>e.type==='message'&&e.message.role==='toolResult'&&['web_search','web_fetch'].includes(e.message.toolName));assert.equal(results.length,2);assert(results.every(e=>!e.message.isError));assert.match(results[1].message.content[0].text,/Full body/);
    assert(pi.SessionManager.open(nativeRef.sessionFile).getEntries().some(e=>e.type==='message'&&e.message.toolName==='web_fetch'));
-   fail=true;await assert.rejects(runtime.send(handle,'failed request',()=>{},undefined,undefined,true,false,true));assert.deepEqual(handle.session.getActiveToolNames(),baseline);
+   if(!workspace){await runtime.send(handle,'read-only search',()=>{},undefined,undefined,false,false,true);assert.deepEqual(loadouts.at(-1).sort(),['read','web_fetch']);assert.deepEqual(handle.session.getActiveToolNames(),baseline);}
+   fail=true;await assert.rejects(runtime.send(handle,'failed request',()=>{},undefined,undefined,workspace,false,true));assert.deepEqual(handle.session.getActiveToolNames(),baseline);
    fail=false;await runtime.send(handle,'plain request',()=>{});assert(!loadouts.at(-1).includes('web_fetch'));
   }finally{if(handle)await runtime.close(handle);}
  }}finally{fs.rmSync(root,{recursive:true,force:true});}

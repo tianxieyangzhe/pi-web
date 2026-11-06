@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { subscribeSession, submitSessionMessage, type SessionLease } from "../../api/session-events";
+import { subscribeSession, submitSessionMessage, SessionMessageError, type SessionLease } from "../../api/session-events";
 import type { PiStreamEvent, SessionTree } from "../../domain/models";
 
 export type TemporaryNode = { key: string; entryId: string | null; events: PiStreamEvent[] };
@@ -80,7 +80,15 @@ export function useSessionTree(base: string | null, read: () => Promise<SessionT
     if (!base || base !== selected || !opened) throw new Error("请先连接会话");
     setPendingText(content);setError("");
     try { await submitSessionMessage(base, opened.leaseId, content, references, webSearch, toolSearch); }
-    catch (cause) { if (currentBase.current === selected) { setPendingText(""); } throw cause; }
+    catch (cause) {
+      if (currentBase.current === selected) {
+        setPendingText("");
+        if(cause instanceof SessionMessageError && ['RUNTIME_NOT_OPEN','RUNTIME_LEASE_EXPIRED'].includes(cause.code??'') && lease.current?.leaseId===opened.leaseId){
+          lease.current=null;setReady(false);setConnection('closed');setError('会话连接已失效，正在重新连接；输入和文件已保留，请连接恢复后重新发送。');setRetry(n=>n+1);
+        }
+      }
+      throw cause;
+    }
   }, [base]);
   return { tree, temporary, ready,connection,compacting,eventRevision,close:()=>setClosed(true), leaseId: lease.current?.leaseId ?? null, running, setRunning, pendingText, error, setError, send, refresh: useCallback(() => refreshRef.current(), []), retryOpen: () => {setClosed(false);setRetry(n => n + 1);} };
 }

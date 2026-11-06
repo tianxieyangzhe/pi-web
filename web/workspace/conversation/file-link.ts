@@ -1,5 +1,6 @@
 type ProjectPath = {id:string;rootPath:string};
 export function isLocalFileLink(href: string) {
+  if (/^(?:file|sandbox):/i.test(href)) return true;
   return !!href && !href.startsWith('#') && !href.startsWith('//') && !/^[a-z][a-z\d+.-]*:(?!\d+(?:#|$))/i.test(href);
 }
 function normalize(path: string) {
@@ -8,6 +9,8 @@ function normalize(path: string) {
   return '/' + parts.join('/');
 }
 export function resolveFileLink(href:string,projects:ProjectPath[],defaultProjectId:string) {
+  if (/^file:/i.test(href)) { const url=new URL(href);if(url.hostname&&url.hostname!=='localhost')throw new Error('不支持远程文件链接');href=url.pathname+url.hash; }
+  else if (/^sandbox:/i.test(href)) href=href.slice('sandbox:'.length);
   const [raw,fragment] = href.split('#',2);
   let decoded: string;try { decoded=decodeURIComponent(raw); } catch { throw new Error('文件链接编码无效'); }
   if (!decoded || /[\u0000-\u001f]/.test(decoded)) throw new Error('文件链接无效');
@@ -19,7 +22,7 @@ export function resolveFileLink(href:string,projects:ProjectPath[],defaultProjec
   if(!defaultProject)throw new Error('会话默认项目不可用');
   const absolute=normalize(decoded.startsWith('/')?decoded:defaultProject.rootPath+'/'+decoded);
   const project=[...projects].sort((a,b)=>b.rootPath.length-a.rootPath.length).find(project=>{const root=normalize(project.rootPath);return absolute.startsWith(root==='/'?'/':root+'/');});
-  if(!project)throw new Error('文件不属于当前会话的项目范围');
+  if(!project)return {source:'session' as const,projectId:defaultProjectId,path:absolute,line:line !== undefined && Number.isSafeInteger(line) && line > 0 ? line : undefined};
   const root=normalize(project.rootPath);
-  return {projectId:project.id,path:absolute.slice(root==='/'?1:root.length+1),line:line !== undefined && Number.isSafeInteger(line) && line > 0 ? line : undefined};
+  return {source:'project' as const,projectId:project.id,path:absolute.slice(root==='/'?1:root.length+1),line:line !== undefined && Number.isSafeInteger(line) && line > 0 ? line : undefined};
 }

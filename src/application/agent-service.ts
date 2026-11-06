@@ -23,7 +23,7 @@ function boundedText(value: unknown, field: string, limit: number, required = fa
   return value;
 }
 
-function candidate(value: unknown, kind: "coordinator" | "project", sources: Material[], priorWarnings: string[]): AgentCandidate {
+function candidate(value: unknown, kind: "project", sources: Material[], priorWarnings: string[]): AgentCandidate {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new DomainError("ROLE_GENERATION_INVALID", "模型未返回角色草稿", 422, true);
   const v = value as Record<string, unknown>;
   if (Object.keys(v).some(k => !["name", "description", "instructions", "warnings"].includes(k))) throw new DomainError("ROLE_GENERATION_INVALID", "模型返回未知字段", 422, true);
@@ -51,7 +51,7 @@ export function createAgentPreparationService(d: {
       if (signal.aborted) throw new DomainError("REQUEST_ABORTED", "角色整理已取消", 409, true);
       if (Object.keys(body).some(k => !["kind","mode","markdown","fileName","projectId","referenceFiles","requirements","feedback","currentDraft"].includes(k))) throw new DomainError("INVALID_INPUT", "角色准备请求包含未支持字段", 400, true);
       const kind = body.kind;
-      if (kind !== "coordinator" && kind !== "project") throw new DomainError("INVALID_ROLE", "请选择角色用途", 422, true);
+      if (kind !== "project") throw new DomainError("INVALID_ROLE", "请选择角色用途", 422, true);
       if(!["import","generate","revise"].includes(String(body.mode)))throw new DomainError("INVALID_INPUT","请选择有效整理模式",400,true);
       if(body.projectId!==undefined&&(typeof body.projectId!=="string"||!body.projectId)||body.markdown!==undefined&&typeof body.markdown!=="string")throw new DomainError("INVALID_INPUT","参考材料参数无效",400,true);
       const mode=body.mode as PreparationMode;

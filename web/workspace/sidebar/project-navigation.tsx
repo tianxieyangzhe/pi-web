@@ -66,15 +66,15 @@ export function ProjectNavigation({ deletingSessionId, onDeleteSession, projects
                 <div className="project-sessions" aria-label={`${project.name}的会话记录`}>
                   {navigation.loadingProjectIds.has(project.id) && <div className="project-sessions__message" role="status">正在加载会话记录…</div>}
                   {navigation.errorsByProject[project.id] && <button className="project-sessions__message project-sessions__message--error" onClick={() => void navigation.loadProjectSessions(project.id, true)}>加载失败，点击重试</button>}
-                  {!navigation.loadingProjectIds.has(project.id) && !navigation.errorsByProject[project.id] && (navigation.sessionsByProject[project.id] ?? []).filter(session=>!session.botParent).length === 0 && <div className="project-sessions__message">暂无独立会话记录</div>}
-                  {([...(navigation.sessionsByProject[project.id] ?? []).filter(session=>!session.botParent)]).reverse().map((session) => {
+                  {!navigation.loadingProjectIds.has(project.id) && !navigation.errorsByProject[project.id] && (navigation.sessionsByProject[project.id] ?? []).length === 0 && <div className="project-sessions__message">暂无独立会话记录</div>}
+                  {([...(navigation.sessionsByProject[project.id] ?? [])]).reverse().map((session) => {
                     const label = sessionLabel(session);
                     const active = isSelected(selection,"project-session",session.id);
                     return (
                       <div className="flex min-w-0 items-center gap-1" key={session.id}>
                       <button
                         className={`project-session-link flex-1${active ? " active" : ""}`}
-                        title={label+(session.botParent?' · '+session.botParent.conversationTitle:'')}
+                        title={label}
                         aria-current={active ? "page" : undefined}
                         onClick={() => {
                           onSessionSelect(project.id, session.id);
