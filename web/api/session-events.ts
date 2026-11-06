@@ -50,8 +50,8 @@ export function subscribeSession(base: string, options: { onReady: (lease: Sessi
   return () => { disposed = true; ++generation; if (reconnect) clearTimeout(reconnect); release(); };
 }
 
-export async function submitSessionMessage(base: string, leaseId: string, content: string, references?: import("../../src/domain/message-references").MessageReference[]) {
-  const response = await fetch(`${base}/messages`, { method: "POST", headers: { "content-type": "application/json", accept: "application/json", "idempotency-key": randomUUID(), "x-session-lease-id": leaseId }, body: JSON.stringify({ content, references }) });
+export async function submitSessionMessage(base: string, leaseId: string, content: string, references?: import("../../src/domain/message-references").MessageReference[], webSearch?: boolean, toolSearch?: boolean) {
+  const response = await fetch(`${base}/messages`, { method: "POST", headers: { "content-type": "application/json", accept: "application/json", "idempotency-key": randomUUID(), "x-session-lease-id": leaseId }, body: JSON.stringify({ content, references, webSearch, toolSearch }) });
   if (!response.ok) { const payload = await response.json(); throw new Error(payload.error?.message ?? "消息提交失败"); }
   return (await response.json()).data;
 }

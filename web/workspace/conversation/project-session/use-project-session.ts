@@ -23,9 +23,9 @@ export function useProjectSession(project: Project | null, preferredSessionId?: 
     void load(project, preferredSessionId).catch(cause => state.setError(cause instanceof Error ? cause.message : "无法加载项目会话"));
   }, [load, preferredSessionId, project]);
   const compacting=state.compacting;
-  async function send(content: string, _steer = false, references?: import("../../../../src/domain/message-references").MessageReference[]) {
+  async function send(content: string, _steer = false, references?: import("../../../../src/domain/message-references").MessageReference[], webSearch?: boolean, toolSearch?: boolean) {
     if (!state.ready || state.running || compacting) throw new Error("会话尚未就绪或正在运行");
-    try { await state.send(content, references); } catch (cause) { state.setError(cause instanceof Error ? cause.message : "无法发送项目消息"); throw cause; }
+    try { await state.send(content, references, webSearch, toolSearch); } catch (cause) { state.setError(cause instanceof Error ? cause.message : "无法发送项目消息"); throw cause; }
   }
   async function interrupt() {
     if (!project || !sessionId) return; const target = base; setStopping(true);

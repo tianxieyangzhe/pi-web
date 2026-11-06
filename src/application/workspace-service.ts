@@ -144,22 +144,24 @@ export function createWorkspaceService(d: { repository: WorkspaceRepository; dir
     close:(id:string,lease:string)=>presence.release(id,lease),
     async messages(workspaceId:string,id:string){const value=scope(workspaceId,id);if(!value.nativeRef)return {entries:[],activeLeafId:null};return rt.readTree!(input(value));},
     async accept(workspaceId:string,id:string,body:Record<string,unknown>,key:string,lease:string) {
-      exactKeys(body,['content','references']);const value=scope(workspaceId,id);presence.assertLease(id,lease);
+      exactKeys(body,['content','references','webSearch','toolSearch']);for(const field of ['webSearch','toolSearch'])if(body[field]!==undefined&&typeof body[field]!=='boolean')throw new DomainError('INVALID_INPUT',`${field}必须为布尔值`,400,true);const value=scope(workspaceId,id);presence.assertLease(id,lease);
       if(typeof body.content!=='string'||!body.content.trim()||Buffer.byteLength(body.content)>32768)throw new DomainError('INVALID_INPUT','消息不能为空且不得超过 32KiB',400,true);
       if(!key)throw new DomainError('PRECONDITION_REQUIRED','缺少 Idempotency-Key',428,true);
       if(configuring.has(workspaceId)||running.has(id)||ending.has(id))throw new DomainError('SESSION_BUSY','会话正在运行或工作区正在更新',409,true);
       // Reserve before the first await; a second request cannot race preparation.
       let finish!:()=>void;const done=new Promise<void>(resolve=>{finish=resolve;});running.set(id,{kind:'message',done});
       try {
-        const hash=digest(body),entries=await evidence(value);
+        const {webSearch,toolSearch,...originalBody}=body;const hash=digest({...originalBody,...(webSearch===true?{webSearch:true}:{}),...(toolSearch===true?{toolSearch:true}:{})}),entries=await evidence(value);
         const existing=entries.find(entry=>entry.type==='workspace_request'&&!(entry.data as Evidence).operation&&(entry.data as Evidence).key===key)?.data as Evidence|undefined;
         if(existing){if(existing.hash!==hash)throw new DomainError('IDEMPOTENCY_CONFLICT','请求键已用于其他消息',409,true);return {accepted:true,sessionId:id};}
         await assertKnown(value);
         const handle=await handleFor(value),workspace=r.get(workspaceId)!;
         const references=parseMessageReferences(body.references,new Set(workspace.projects.map(p=>p.id)),d.readReference?reference=>d.readReference!(workspaceId,reference):undefined);
+        if(body.webSearch===true){if(!rt.validateWebSearch)throw new DomainError('WEB_SEARCH_UNSUPPORTED','当前运行时不支持服务端搜索，请关闭联网搜索',422,true);rt.validateWebSearch(handle);}
+        if(body.toolSearch===true){if(!rt.validateToolSearch)throw new DomainError('TOOL_SEARCH_UNAVAILABLE','当前运行时未装配工具搜索，请关闭工具搜索或重启服务',422,true);rt.validateToolSearch();}
         rt.requestEntry(handle,'workspace_request',{key,hash});
         states.set(id,'running');events.agent(id,{type:'session_state',state:'starting'});
-        const work=rt.send(handle,body.content,event=>{if(event.type!=='pi_event'&&event.type!=='entry_link')events.agent(id,event);},undefined,references,true)
+        const work=rt.send(handle,body.content,event=>{if(event.type!=='pi_event'&&event.type!=='entry_link')events.agent(id,event);},undefined,references,true,body.webSearch===true,body.toolSearch===true)
           .then(()=>{rt.requestEntry(handle,'workspace_request_result',{key,hash,outcome:'settled'});states.set(id,'idle');events.agent(id,{type:'complete'});})
           .catch(error=>{const known=error instanceof DomainError&&error.code!=='REQUEST_UNKNOWN';try{if(known)rt.requestEntry(handle,'workspace_request_result',{key,hash,outcome:(error as DomainError).code==='REQUEST_ABORTED'?'aborted':'failed'});}catch{/* Keep pending evidence for recovery. */}states.set(id,known?'idle':'unavailable');events.agent(id,{type:'error',code:known?(error as DomainError).code:'REQUEST_UNKNOWN',message:known?(error as DomainError).message:'请求结果待核对，不能自动重试',recoverable:true});})
           .finally(()=>{running.delete(id);finish();presence.settled(id);});

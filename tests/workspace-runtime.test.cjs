@@ -30,7 +30,7 @@ test('production runtime restores exact native identity, uses native coding tool
   await runtime.close(handle);handle=null;const before=fs.readFileSync(nativeRef.sessionFile,'utf8');
   assert.equal((await runtime.readRequestEntries(input))[0].data.key,'k');
   assert.equal(fs.readFileSync(nativeRef.sessionFile,'utf8'),before);
-  const history=await runtime.history(input);assert.equal(history.requests.length,1);assert.equal(history.requests[0].user,'second branch');assert.equal(fs.readFileSync(nativeRef.sessionFile,'utf8'),before);
+  const coldTree=await runtime.readTree(input);assert(coldTree.entries.some(({entry})=>entry.id===one));assert(coldTree.entries.some(({entry})=>entry.id===two));assert.equal(fs.readFileSync(nativeRef.sessionFile,'utf8'),before);
   // Reproduce an existing conversation with obsolete tool declarations and successful calls.
   const legacy=SessionManager.open(nativeRef.sessionFile);
   legacy.appendMessage({role:'system',content:'',sections:{addendum:'Old workspace prompt',tools:'workspace_list, workspace_read'},toolsAdded:['workspace_list','workspace_read'].map(name=>({name,description:'obsolete workspace tool',parameters:{type:'object',properties:{}}})),timestamp:Date.now()});

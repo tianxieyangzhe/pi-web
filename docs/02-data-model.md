@@ -84,7 +84,7 @@ type NativeContextInspection = {
   runtimeReady: boolean;
   canCancelCompaction: boolean;
   usage: NativeContextUsage;
-  autoCompactionEnabled: false;
+  autoCompactionEnabled: boolean; // PSES-021：活动会话实际值true；未连接返回默认策略true
   compactionState: "idle" | "running" | "cancelled" | "failed";
   canCompact: boolean;
   unavailableReason: string | null;
@@ -223,3 +223,11 @@ journal 每行包含 version=1、sequence、previousHash、recordHash、timestam
 同一作用域键永久绑定载荷摘要；规范 JSON 使用递归对象键按 Unicode 字典序排序、数组原序、UTF-8、JSON 标准编码，缺省值先按 API 规则填充；不规范化正文/附件字节。key 是 1..128 个可见 ASCII 字符，缺失/非法返回 INVALID_IDEMPOTENCY_KEY/400。完成证据在业务行删除后仍保留为只读 tombstone；同键请求目标已删除返回 RESULT_GONE/410，不重建。历史无 journal 的会话可只读及精确打开；新操作前验证原生版本/身份，历史遗留未决调用无法证明完成时为 unknown，不能因 journal 缺失而认定安全。
 
 运行锁、lease、句柄与订阅仍仅在内存；journal 只证明已准备/已观察/已确认的边界，不把 prepared 当成模型已执行，不提供自动重放。恢复流程与客户端安全 DTO 见 03 §13。
+
+## SEARCH-002｜工具搜索意图
+
+toolSearch:boolean为本轮用户意图，API省略等价false，不持久化至SQL或配置；与webSearch独立，组合均允许。作用域持有本轮配置、计数、取消与原工具集，均为运行时对象。工具返回的搜索来源、URL、正文和失败只保存在该会话Pi原生toolCall/toolResult中（返回结构以03为准，不另存上游HTTP响应副本），不保存第二份对话，不新增表/字段/迁移。
+
+## SEARCH-001｜请求级搜索意图
+
+webSearch为单次发送意图，默认false，不是Session字段，不写SQL、配置或持久偏好。搜索调用与来源引用的原始provider output item只作为该Session唯一Pi树的server_web_search custom entry保存，数据为{type:provider事件类型,item:完整原始output item}，不复制至业务表或摘要；无搜索调用不得伪造搜索成功。开关无历史迁移。

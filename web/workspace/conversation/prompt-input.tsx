@@ -1,5 +1,5 @@
 import { randomUUID } from "../../api/random-uuid";
-import { ArrowUp, LoaderCircle, Square } from "lucide-react";
+import { ArrowUp, ChevronDown, Globe, LoaderCircle, Square } from "lucide-react";
 import { useEffect,useState,useRef, type FormEvent, type KeyboardEvent, type ClipboardEvent } from "react";
 import type { MessageReference, ProjectMessageReference, BotMessageReference } from "../../../src/domain/message-references";
 import type { Project } from "../../domain/models";
@@ -19,8 +19,10 @@ export function shouldSubmitOnEnter(event:Pick<KeyboardEvent<HTMLElement>,"key"|
   return event.key==="Enter"&&!event.shiftKey&&!compositionActive&&!event.nativeEvent.isComposing&&event.nativeEvent.keyCode!==229;
 }
 
-export function PromptInput({ placeholder, running, stopping = false, blocked = false, draftKey, blockedReason, onSubmit, onStop, referenceProjects = [], referenceWorkspace, listReferenceFiles }: { placeholder: string; running: boolean; stopping?: boolean; blocked?: boolean; draftKey?:string;blockedReason?:string; onSubmit: (value: string, references: MessageReference[]) => void | Promise<void>; onStop?: () => void; referenceProjects?: Project[]; referenceWorkspace?: {botId:string;conversationId:string}; listReferenceFiles?:(projectId:string,path:string)=>Promise<import('../../domain/models').ProjectFileListing> }) {
+export function PromptInput({ placeholder, running, stopping = false, blocked = false, draftKey, blockedReason, onSubmit, onStop, referenceProjects = [], referenceWorkspace, listReferenceFiles }: { placeholder: string; running: boolean; stopping?: boolean; blocked?: boolean; draftKey?:string;blockedReason?:string; onSubmit: (value: string, references: MessageReference[], webSearch?: boolean, toolSearch?: boolean) => void | Promise<void>; onStop?: () => void; referenceProjects?: Project[]; referenceWorkspace?: {botId:string;conversationId:string}; listReferenceFiles?:(projectId:string,path:string)=>Promise<import('../../domain/models').ProjectFileListing> }) {
   const [value, setValue] = useState(()=>draftKey?drafts.get(draftKey)??'':'');
+  const [searchMode,setSearchMode]=useState<"builtin"|"tool"|"none">("builtin");
+  useEffect(()=>setSearchMode("builtin"),[draftKey]);
   const [submitting,setSubmitting]=useState(false);
   const [references,setReferences]=useState<File[]>([]);
   const [referenceError,setReferenceError]=useState("");
@@ -71,7 +73,7 @@ export function PromptInput({ placeholder, running, stopping = false, blocked = 
     try{
       setReferenceError("");
       const uploads = references.length ? await Promise.all(references.map(readReference)) : [];
-      await onSubmit(next, [...uploads, ...projectReferences]);
+      await onSubmit(next, [...uploads, ...projectReferences], searchMode === "builtin", searchMode === "tool");
       if(currentKey.current===submittedKey){setReferences([]);setProjectReferences([]);}
     }catch(error){
       if (currentKey.current === submittedKey && (references.length || projectReferences.length)) setReferenceError(error instanceof Error ? error.message : "参考文件发送失败");
@@ -105,6 +107,11 @@ export function PromptInput({ placeholder, running, stopping = false, blocked = 
     <div className="prompt-input__references min-w-0 flex-1 gap-x-3! gap-y-0.5! py-1! [&_.reference-picker__trigger]:py-0.5!">
       <ReferencePicker key={`upload:${draftKey}`} selected={references} onChange={selectFiles} projectCount={projectReferences.length} disabled={running||submitting||blocked}/>
       <ProjectReferencePicker key={`project:${draftKey}`} onDone={() => editor.current?.focus()} projects={referenceProjects} workspace={referenceWorkspace} listFiles={listReferenceFiles} selected={projectReferences} onChange={selectProjects} uploadCount={references.length} disabled={running||submitting||blocked}/>
+      <label className={`relative inline-flex h-6 shrink-0 items-center self-center rounded border border-slate-200 bg-white shadow-none [text-shadow:none] ${searchMode!=="none"?"text-sky-700":"text-slate-500"}`} title="内置搜索：OpenAI服务端执行，需Responses模型；工具搜索：使用部署主机网络直接访问网页，无地址时搜索Bing，无需Key">
+        <Globe size={12} aria-hidden="true" className="pointer-events-none absolute left-1.5 top-1/2 -translate-y-1/2"/>
+        <select aria-label="联网搜索" value={searchMode} disabled={running||submitting||blocked} onChange={event=>{setSearchMode(event.target.value as "builtin"|"tool"|"none");editor.current?.focus();}} className="h-full! min-w-0 cursor-pointer appearance-none! rounded! border-0! bg-transparent! py-0! pr-5! pl-6! text-[11px]! leading-normal! font-normal! text-inherit! shadow-none! [text-shadow:none]! disabled:cursor-not-allowed disabled:opacity-50"><option value="builtin">内置搜索 · 服务端</option><option value="tool">工具搜索 · 应用端</option><option value="none">无搜索</option></select>
+        <ChevronDown size={10} aria-hidden="true" className="pointer-events-none absolute right-1 top-1/2 -translate-y-1/2"/>
+      </label>
     </div>
     <ErrorToast message={referenceError} onDismiss={() => setReferenceError("")} />
     <div className="prompt-input__footer min-h-0! max-w-full gap-2 border-0! py-1! pr-2! pl-0!"><span className="max-w-48 text-[10px] leading-tight" role="status">{stopping ? "正在停止" : blocked ? blockedReason??"当前暂不能发送" : running || submitting ? "正在处理" : "Enter 发送 · Shift+Enter 换行"}</span><div className="prompt-input__actions [&_button]:h-7! [&_button]:w-7!">{running && onStop && <button type="button" aria-label={stopping?"正在停止":"停止"} disabled={stopping} onClick={onStop}><Square size={14} fill="currentColor" /></button>}<button type="submit" aria-label="发送" disabled={(!composerText(value).trim() && !references.length && !projectReferences.length) || running || blocked||submitting}>{running||submitting ? <LoaderCircle className="spin" size={15} /> : <ArrowUp size={15} />}</button></div></div>

@@ -150,11 +150,7 @@ class BotRuntime implements BotRuntimePort {
       modelRuntime,
       model,
       resourceLoader: loader,
-      settingsManager: SettingsManager.inMemory({
-        compaction: {
-          enabled: false
-        }
-      }),
+      settingsManager: SettingsManager.inMemory(),
       sessionManager: manager,
       noTools: 'builtin',
       customTools: [...fileTools, ...toPiBotTools([...input.tools, ...additional])]
@@ -306,7 +302,6 @@ class BotRuntime implements BotRuntimePort {
     const mapEvent = createPiEventMapper(true, input.cwd, emit);
     const unsubscribe = handle.session.subscribe(mapEvent);
     try {
-      handle.session.setAutoCompactionEnabled(false);
       if (input.signal?.aborted) throw new DomainError('REQUEST_ABORTED', '执行已停止', 409, true);
       const referenceTurnId = handle.referenceScope.begin();
       if(input.inputMode==='resume_received')await handle.session.sendCustomMessage({customType:'bot_received_resume',content:[{type:'text',text:content}],display:false,details:{executionId:input.executionId,messageId:input.triggerMessageId,resumedFromExecutionId:input.resumedFromExecutionId,inputNativeEntryId:input.inputNativeEntryId}},{triggerTurn:true});
@@ -410,6 +405,7 @@ class BotRuntime implements BotRuntimePort {
       window = (await this.configured()).knownContextWindow;
     const value = emptyInspection('用量暂不可用');
     value.runtimeReady = true;
+    value.autoCompactionEnabled = h.session.autoCompactionEnabled;
     value.sessionState = h.session.isIdle ? 'idle' : 'running';
     value.canCompact = h.session.isIdle && h.manager.getBranch().filter(e => e.type === 'message').length > 2;
     value.unavailableReason = value.canCompact ? null : '当前不可压缩或会话较短';
@@ -428,7 +424,6 @@ class BotRuntime implements BotRuntimePort {
   }
   async compact(input: BotRuntimeInput) {
     const h = this.handles.get(input.identity) ?? (await this.handle(input));
-    h.session.setAutoCompactionEnabled(false);
     await h.session.compact();
   }
   cancelCompaction(identity: string) {

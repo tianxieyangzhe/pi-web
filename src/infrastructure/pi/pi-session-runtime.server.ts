@@ -1,3 +1,6 @@
+import { createToolSearchScope, toolSearchNames } from "./tool-search-scope";
+import { toolSearchConfiguration, type ToolSearchDependencies } from "./tool-search-client";
+import { createServerWebSearchScope, assertServerWebSearch } from "./server-web-search";
 import { appendWorkspaceRequest, readWorkspaceRequests, type WorkspaceRequestIdentity } from '@/infrastructure/workspaces/request-journal.server';
 import { createPersistentAgentSession } from "./create-session.server";
 import { subscribeNativeSession } from "./native-session-events.server";
@@ -44,6 +47,8 @@ import {projectTranscriptEntries} from "./transcript-projection";
 type Handle = {
   session: PiAgentSession;
   referenceScope: ReturnType<typeof createMessageReferenceScope>;
+  searchScope: ReturnType<typeof createServerWebSearchScope>;
+  toolSearchScope: ReturnType<typeof createToolSearchScope>;
   manager: SessionManager;
   cwd: string;
   isProjectSession: boolean;
@@ -143,11 +148,11 @@ export function extractPublicSummary(value: string): { summary?: string; text: s
   };
 }
 
-function loaderFor(input: SessionRuntimeInput, referenceScope: ReturnType<typeof createMessageReferenceScope>): DefaultResourceLoader {
+function loaderFor(input: SessionRuntimeInput, referenceScope: ReturnType<typeof createMessageReferenceScope>, searchScope: ReturnType<typeof createServerWebSearchScope>, toolSearchScope: ReturnType<typeof createToolSearchScope>): DefaultResourceLoader {
   const agent = input.session.agentSnapshot;
   const loader = new DefaultResourceLoader({
     noExtensions: true,
-    extensionFactories: [referenceScope.extension],
+    extensionFactories: [referenceScope.extension, searchScope.extension, toolSearchScope.extension],
     noSkills:true,noContextFiles:true,noPromptTemplates:true,
     cwd: input.workingDirectory,
     agentDir: getAgentDir(),
@@ -237,15 +242,17 @@ export function createPiEventMapper(showActionSummary: boolean, workingDirectory
 }
 
 export class PiSessionRuntime implements PiRuntimePort, PiContextPort {
-  constructor(private readonly modelSource: () => Promise<Awaited<ReturnType<typeof loadModelConfiguration>> & { model?: import("@earendil-works/pi-ai").Model<import("@earendil-works/pi-ai").Api> }> = loadModelConfiguration) {}
+  constructor(private readonly modelSource: () => Promise<Awaited<ReturnType<typeof loadModelConfiguration>> & { model?: import("@earendil-works/pi-ai").Model<import("@earendil-works/pi-ai").Api> }> = loadModelConfiguration, private readonly toolSearchDependencies: ToolSearchDependencies = {}) {}
   private readonly handles = new Map<string, Handle>();
 
   private configuredModel() { return this.modelSource(); }
 
   private async create(input: SessionRuntimeInput, manager: SessionManager): Promise<Handle> {
     const referenceScope = createMessageReferenceScope();
+    const searchScope = createServerWebSearchScope();
+    const toolSearchScope = createToolSearchScope(this.toolSearchDependencies);
     const writeAccess = { allowed: false };
-    const loader = loaderFor(input, referenceScope);
+    const loader = loaderFor(input, referenceScope, searchScope, toolSearchScope);
     await loader.reload();
     const configuration = await this.configuredModel();
     const selected = input.selectedModel ?? manager.getBranch().findLast(entry => entry.type === "model_change");
@@ -261,19 +268,22 @@ export class PiSessionRuntime implements PiRuntimePort, PiContextPort {
       sessionManager: manager,
       modelRuntime,
       resourceLoader: loader,
-      settingsManager: SettingsManager.inMemory({ compaction: { enabled: false } }),
+      settingsManager: SettingsManager.inMemory(),
       model,
-      ...(input.workspace ? { tools: ['read', 'bash', 'edit', 'write'] } : {
-        noTools: customTools.length ? "builtin" as const : "all" as const,
+      ...(input.workspace ? { tools: ['read', 'bash', 'edit', 'write', ...toolSearchNames] } : {
+        noTools: "builtin" as const,
         ...(customTools.length ? { customTools } : {}),
       }),
 
     });
+    result.session.setActiveToolsByName(result.session.getActiveToolNames().filter(name => !toolSearchNames.includes(name)));
     const effective=manager.getBranch().findLast(entry=>entry.type==='model_change');
     if(effective?.provider!==model.provider||effective?.modelId!==model.id)await result.session.setModel(model);
     return {
       session: result.session,
       referenceScope,
+      searchScope,
+      toolSearchScope,
       manager,
       cwd: input.workingDirectory,
       isProjectSession: input.projectSession !== false,
@@ -331,9 +341,15 @@ export class PiSessionRuntime implements PiRuntimePort, PiContextPort {
     return handle;
   }
 
-  async send(handle: object, message: string, emit: (event: AgentEvent) => void, onAssistantStream?: () => void, references?: import("@/domain/message-references").ReferenceContent, allowProjectWrite = false) {
+  validateToolSearch() { toolSearchConfiguration(this.toolSearchDependencies); }
+
+  validateWebSearch(handle: object) { assertServerWebSearch((handle as Handle).session.model); }
+
+  async send(handle: object, message: string, emit: (event: AgentEvent) => void, onAssistantStream?: () => void, references?: import("@/domain/message-references").ReferenceContent, allowProjectWrite = false, webSearch = false, toolSearch = false) {
     const piHandle = handle as Handle;
     await this.refreshHandle(piHandle);
+    if(webSearch)this.validateWebSearch(handle);
+    if(toolSearch)this.validateToolSearch();
     piHandle.writeAccess.allowed = allowProjectWrite;
     const turn: TurnState = {
       publicText: "",
@@ -364,7 +380,8 @@ export class PiSessionRuntime implements PiRuntimePort, PiContextPort {
       mapEvent(event as PiEvent, emit, turn, piHandle.cwd);
     });
     try {
-      piHandle.session.setAutoCompactionEnabled(false);
+      piHandle.searchScope.begin(webSearch);
+      piHandle.toolSearchScope.begin(toolSearch, piHandle.session);
       const referenceTurnId = piHandle.referenceScope.begin();
       await appendMessageReferences(piHandle.session, references, referenceTurnId);
       promptStarted=true;
@@ -378,6 +395,8 @@ export class PiSessionRuntime implements PiRuntimePort, PiContextPort {
     } finally {
       if(promptStarted)await piHandle.session.waitForIdle();
       await Promise.all(pendingLinks);
+      piHandle.searchScope.end();
+      await piHandle.toolSearchScope.end();
       piHandle.referenceScope.end();
       piHandle.writeAccess.allowed = false;
       unsubscribe();
@@ -492,7 +511,14 @@ export class PiSessionRuntime implements PiRuntimePort, PiContextPort {
     const native = readNativeFile(ref.sessionFile, input.workingDirectory, ref.sessionId);
     if (!native.endsWithNewline) throw new DomainError('SESSION_TREE_READ_FAILED', '原生历史末尾不完整', 500, true);
     const entries = handle ? structuredClone(handle.manager.getEntries()) : native.entries.slice(1) as SessionEntry[];
-    if(handle&&(canonical(handle.manager.getHeader())!==canonical(native.header)||canonical(entries)!==canonical(native.entries.slice(1))))throw new DomainError('REQUEST_UNKNOWN','内存树与原生文件不一致，不能生成快照',409,true);
+    if (handle) {
+      // Pi persists JSON: omitted optional fields and undefined array items must
+      // compare the same way as their serialized representation on disk.
+      const persisted = JSON.parse(JSON.stringify({ header: handle.manager.getHeader(), entries }));
+      if (canonical(persisted) !== canonical({ header: native.header, entries: native.entries.slice(1) })) {
+        throw new DomainError('REQUEST_UNKNOWN', '内存树与原生文件不一致，不能生成快照', 409, true);
+      }
+    }
     const leaf = handle ? handle.manager.getLeafId() : entries.at(-1)?.id ?? null;
     return { header: structuredClone(handle?.manager.getHeader() ?? native.header), entries, leaf, sessionFile: ref.sessionFile, cwd: input.workingDirectory };
   }
@@ -585,6 +611,7 @@ export class PiSessionRuntime implements PiRuntimePort, PiContextPort {
     const window=handle.session.model?.contextWindow && handle.session.model.contextWindow > 0 ? handle.session.model.contextWindow : null;
     const result=emptyInspection("暂无可靠用量");
     result.runtimeReady=true;
+    result.autoCompactionEnabled=handle.session.autoCompactionEnabled;
     result.sessionState=input.session.state;
     result.usage={usedTokens:tokens,contextWindowTokens:window,remainingTokens:tokens!==null&&window!==null?Math.max(0,window-tokens):null,usageRatio:tokens!==null&&window!==null?tokens/window:null,measurement:tokens===null?"unavailable":"estimated",measuredAt:tokens===null?null:new Date().toISOString(),freshness:tokens===null?"unavailable":"current"};
     const entries=handle.manager.getBranch();
@@ -604,7 +631,6 @@ export class PiSessionRuntime implements PiRuntimePort, PiContextPort {
     await this.refreshHandle(handle as Handle);
     const pi = (handle as Handle).session;
     if (!pi.isIdle) throw new DomainError("SESSION_BUSY","Session 正在运行",409,true);
-    pi.setAutoCompactionEnabled(false);
     const manager=(handle as Handle).manager,before=new Set(manager.getEntries().filter(entry=>entry.type==='compaction').map(entry=>entry.id));
     let settled=false,aborted=false;
     const unsubscribe=pi.subscribe(event=>{if(event.type==='compaction_end'){settled=true;aborted=event.aborted;}});
@@ -629,7 +655,6 @@ export class PiSessionRuntime implements PiRuntimePort, PiContextPort {
     if (
       handle && sameRuntimeConfiguration(handle.input,input)
     ) {
-      handle.session.setAutoCompactionEnabled(false);
       return handle;
     }
     if (handle) {

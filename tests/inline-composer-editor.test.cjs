@@ -26,6 +26,19 @@ async function submit(h){
  for(let i=0;i<100 && h.editor().getAttribute('aria-disabled')==='true';i++) await act(async()=>{await new Promise(resolve=>setTimeout(resolve,5));});
  assert.equal(h.editor().getAttribute('aria-disabled'),'false');
 }
+test('choosing each search mode returns focus and the saved caret to the composer without sending or changing the draft',async()=>{
+ const sent=[],h=await harness((...args)=>sent.push(args));
+ try{
+  const editor=h.editor();await type(editor,'left right');caret(editor,editor.firstChild,5);
+  const select=h.container.querySelector('select[aria-label="联网搜索"]');
+  for(const mode of ['tool','none','builtin']){
+   await act(async()=>{select.focus();select.value=mode;select.dispatchEvent(new window.Event('change',{bubbles:true}));});
+   assert.equal(document.activeElement,editor);assert.equal(window.getSelection().anchorNode,editor.firstChild);assert.equal(window.getSelection().anchorOffset,5);assert.equal(editor.textContent,'left right');assert.equal(select.value,mode);assert.equal(sent.length,0);
+  }
+  await paste(editor,'insert ');assert.equal(editor.textContent,'left insert right');
+ }finally{await h.close();}
+});
+
 test('long paste replaces selection with a chip at the caret; surrounding text remains editable and exact material is sent',async()=>{
  const sent=[],h=await harness((content,refs)=>sent.push({content,refs}));
  try{

@@ -8,7 +8,8 @@ import { SessionConversationView } from '../conversation/session-conversation-vi
 import { NativeContextSection } from '../inspector/native-context-section';
 import { SessionModelSettings } from '../inspector/session-model-settings';
 
-export function WorkspaceSessionView({ onOpenFileLink, workspace, session: initial, onChanged, inspectionOpen: panel, onInspectionChange:setPanel }: {
+export function WorkspaceSessionView({ scrollRevision, onOpenFileLink, workspace, session: initial, onChanged, inspectionOpen: panel, onInspectionChange:setPanel }: {
+  scrollRevision?:number;
   onOpenFileLink?: (href:string)=>void;
   inspectionOpen:boolean;
   onInspectionChange:(open:boolean)=>void;
@@ -60,8 +61,8 @@ export function WorkspaceSessionView({ onOpenFileLink, workspace, session: initi
   const controller = {
     ...tree, sessionId: initial.id, stopping, compacting:tree.compacting,
     ready: tree.ready && current.allowedActions.includes('send'),
-    send: async (text: string, references?: import('../../../src/domain/message-references').MessageReference[]) => {
-      try { await tree.send(text, references); }
+    send: async (text: string, references?: import('../../../src/domain/message-references').MessageReference[], webSearch?: boolean, toolSearch?: boolean) => {
+      try { await tree.send(text, references, webSearch, toolSearch); }
       catch (cause) { tree.setError(cause instanceof Error ? cause.message : '消息发送失败'); throw cause; }
     },
     interrupt: async () => { setStopping(true); try { await perform('interrupt'); } finally { setStopping(false); } },
@@ -72,7 +73,7 @@ export function WorkspaceSessionView({ onOpenFileLink, workspace, session: initi
       <div className="main-toolbar"><div className="main-toolbar__leading"><span>{workspace.name}</span></div><div className="main-toolbar__actions"><nav className="main-toolbar__panel-switcher" aria-label="会话辅助工具">
         <button type="button" aria-pressed={panel} onClick={()=>setPanel(!panel)}>会话检查</button>
       </nav></div></div>
-      <SessionConversationView onOpenFileLink={onOpenFileLink} title={workspace.name} label="工作区会话"
+      <SessionConversationView scrollRevision={scrollRevision} onOpenFileLink={onOpenFileLink} title={workspace.name} label="工作区会话"
         purpose={`${current.purpose} · 默认目录：${workspace.projects.find(p => p.id === current.defaultProjectId)?.rootPath ?? ''}`}
         session={controller} referenceProjects={projects} listReferenceFiles={listFiles} />
     </section>

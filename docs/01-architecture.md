@@ -29,7 +29,7 @@ Agent 是独立可复用的版本化 Markdown 定义，无 Project owner；会�
 
 模型通过当前依赖版本的 Pi ModelRuntime/ModelRegistry 原生解析和认证机制装配，完整支持 Pi 支持的模型、供应商及嵌套参数，不建立缩水白名单或丢弃未知字段后假装兼容；Pi 不支持的字段按其校验规则报错。包括 api、baseUrl、认证与环境变量引用、headers、兼容参数、reasoning、input、cost、contextWindow、maxTokens 等，新增 Pi 参数随依赖的原生契约适配。协议不限于单一供应商或 Chat Completions。凭据、配置全文、请求头和原生路径只在服务端使用。
 
-settings.json采用defaultProvider、defaultModel及enabledModels，不从另一份文件补值。enabledModels按Pi原生模型scope模式匹配（支持provider/id、通配与thinking后缀），用于模型列表及执行选择的过滤；省略或空数组不限制，非空但无匹配时无可用模型，字段类型错误报告配置错误。当前Session模型不存在、被过滤或认证不可用时，打开/恢复及下一次空闲操作自动采用配置默认模型；默认模型同样必须通过过滤及认证，默认也不可用才提示MODEL_UNAVAILABLE。不任意挑选其他模型，不重发失败请求。自动压缩和工具边界仍由应用契约决定。应用不再从环境文件中的固定模型三元组生成模型或提供备用模型；Pi 配置内显式声明的环境变量引用正常生效。
+settings.json采用defaultProvider、defaultModel及enabledModels，不从另一份文件补值。enabledModels按Pi原生模型scope模式匹配（支持provider/id、通配与thinking后缀），用于模型列表及执行选择的过滤；省略或空数组不限制，非空但无匹配时无可用模型，字段类型错误报告配置错误。当前Session模型不存在、被过滤或认证不可用时，打开/恢复及下一次空闲操作自动采用配置默认模型；默认模型同样必须通过过滤及认证，默认也不可用才提示MODEL_UNAVAILABLE。不任意挑选其他模型，不重发失败请求。自动压缩必须开启并采用Pi默认参数，工具边界仍由应用契约决定。应用不再从环境文件中的固定模型三元组生成模型或提供备用模型；Pi 配置内显式声明的环境变量引用正常生效。
 
 新会话及无原生模型选择的会话采用有效默认模型；已有会话优先恢复 Pi 当前分支保存的 provider/model，已保存型号不可用时按MCFG-002自动回退默认模型，默认也不可用才报告模型不可用。用户切换只调用本会话的 Pi setModel，并保存原生 model_change，不写默认配置或 SQL 模型副本。会话思考等级通过Pi getSupportedThinkingLevels/getAvailableThinkingLevels及setThinkingLevel读取和修改，持久事实仅为原生thinking_level_change，不写SQL或默认配置；接口见03 PSES-019。手动压缩使用当前会话模型；Agent 编辑器使用默认模型，保持独立无工具边界。
 
@@ -114,7 +114,7 @@ SCONN-001：当前Session的open/closed是连接使用权投影，不是SQL持�
 
 ## 7. Pi 上下文与会话检查
 
-Pi 管理原生有效窗口、压缩边界和完整历史，应用只调用原生 getContextUsage、compact、abortCompaction 和精确恢复能力。创建与恢复均关闭自动压缩；溢出不自动压缩重试。仅用户在会话设置中手动触发压缩，使用当前会话模型及完整参数。
+Pi 管理原生有效窗口、压缩边界和完整历史，应用只调用原生 getContextUsage、compact、abortCompaction 和精确恢复能力。PSES-021：所有业务Session开启Pi原生自动压缩，SettingsManager不传compaction覆盖，阈值、预留、保留近期Token及溢出恢复使用当前依赖版本Pi默认值；应用及页面无关闭入口，不写用户settings文件。自动压缩由所属Pi会话触发、落盘及续跑，应用不建立额外摘要或重试循环。用户仍可在会话设置中手动压缩。
 
 应用上下文端口负责用量、手动压缩、取消与恢复投影；与发送、模型切换、派生、删除及配置写入共用会话互斥，取消保持原操作锁直到 Pi 确认结束。不运行自动总结或回答后辅助任务。
 
@@ -125,3 +125,15 @@ Pi 管理原生有效窗口、压缩边界和完整历史，应用只调用原�
 主会话只保留左侧导航和中间对话，文件及会话检查是互斥的独立模态弹窗，投影见 04。页面壳统一在任意左侧按钮和实际会话切换前关闭现有弹窗，取消本地读取或忽略迟到响应；关闭不撤销已接受的后台操作。
 
 会话名称使用 API 返回的 purpose，空白时显示“新会话”，不生成或缓存模型摘要。Agent 编辑工作区的只读 Markdown 列按自身契约保留，不与会话辅助弹窗混为一体。
+
+## SEARCH-002｜应用执行工具搜索
+
+基础设施只提供一个默认inactive的web_fetch工具，通过显式Pi扩展按本轮toolSearch意图激活并在finally恢复原工具集。按03 SEARCH-003的input契约区分URL与查询词：URL由部署主机直接抓取，查询词访问https://www.bing.com/search并解析自然搜索结果，不依赖额外搜索服务或搜索Key。使用Undici联网、linkedom解析、Mozilla Readability提取正文，不执行脚本或加载子资源。HTTP_PROXY/HTTPS_PROXY/NO_PROXY显式生效，代理快照固定本轮并关闭dispatcher；Ubuntu部署即使用Ubuntu网络。Pi原生工具调用/结果拥有全部历史，不另建SQL、Session或摘要。内置搜索沿用SEARCH-001，不自动互相降级。
+
+UI在已有PromptInput包装内复用原生select，不新增组件或依赖。官方PromptInput工具栏承载选择动作，但当前未引入配套依赖，使用原生select表达单选；选项及默认值见04 SEARCH-002，统一输入基础组件时复核。
+
+## SEARCH-001｜服务端联网搜索
+
+共享Runtime显式装配请求级搜索扩展，不开放外部扩展发现。仅openai-responses协议可请求OpenAI内置web_search；保留编程工具，由供应商执行搜索。开关固定本轮工具循环，finally清除，不用于压缩或其他会话。通过provider_stream_event将搜索调用和带引用的原始message output_item.done保存为所属Pi树custom entry（server_web_search），不作为模型输入，不建立第二份对话。原生树和导出原文展示这些证据。cwd/nativeRef和恢复身份不变。
+
+组件评估：已检索官方Prompt Input（https://elements.ai-sdk.dev/components/prompt-input）的工具栏；最终输入投影使用SEARCH-002登记的原生select和lucide图标，选项与默认值见04，不增加独立开关或组件。统一基础输入组件时复核。

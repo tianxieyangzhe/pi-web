@@ -37,10 +37,10 @@ export function NativeContextSection({projectId,sessionId,onBusy,onRestore,runni
     <div className="session-inspector__row"><span>已用 Token</span><b>{number(usage?.usedTokens)}</b></div>
     <div className="session-inspector__row"><span>模型容量</span><b>{number(usage?.contextWindowTokens)}</b></div>
     <div className="session-inspector__row"><span>剩余 Token</span><b>{number(usage?.remainingTokens)}</b></div>
-    {ratio!=null&&<><progress max={1} value={Math.min(1,Math.max(0,ratio))} aria-label="Pi 上下文占用"/><p>{(ratio*100).toFixed(1)}%{ratio>=1?" · 上下文已满，请手动压缩":ratio>=.8?" · 可手动压缩减少占用":""}</p></>}
+    {ratio!=null&&<><progress max={1} value={Math.min(1,Math.max(0,ratio))} aria-label="Pi 上下文占用"/><p>{(ratio*100).toFixed(1)}%{ratio>=1?" · 上下文已满，Pi 将按原生策略自动压缩":ratio>=.8?" · 可手动压缩减少占用":""}</p></>}
     <div className="session-inspector__row"><span>测量口径</span><b>{error?"最新状态读取失败":usage?.measurement==="estimated"?"Pi 估算":usage?.measurement==="native"?"原生采样":"暂不可用"}</b></div>
     {usage?.measuredAt&&<div className="session-inspector__row"><span>{error||usage.freshness==="last_known"?"上次采样":"采样时间"}</span><b>{new Date(usage.measuredAt).toLocaleTimeString("zh-CN")}</b></div>}
-    <div className="session-inspector__row"><span>压缩策略</span><b>仅手动</b></div>
+    <div className="session-inspector__row"><span>压缩策略</span><b>{value ? value.autoCompactionEnabled ? "自动压缩 · Pi 默认" : "自动压缩未启用" : "读取中…"}</b></div>
     <div className="session-inspector__row"><span>最近压缩</span><b>{value?.lastCompactedAt?new Date(value.lastCompactedAt).toLocaleString("zh-CN"):"尚无记录"}</b></div>
     <div className="pi-context-section__actions">
       <button className="session-inspector__action" disabled={!sessionId||!!pending} onClick={()=>void act("refresh")}>{pending==="refresh"?"刷新中…":"刷新"}</button>
@@ -48,7 +48,7 @@ export function NativeContextSection({projectId,sessionId,onBusy,onRestore,runni
       {value?.sessionState==="unavailable"&&<button className="session-inspector__action" disabled={!!pending} onClick={()=>void act("restore")}>{pending==="restore"?"恢复中…":"恢复会话"}</button>}
     </div>
     {(!value?.canCompact||!value.runtimeReady)&&value?.compactionState!=="running"&&<p className="session-inspector__note">{value?.unavailableReason??"发送首条消息后可管理"}</p>}
-    <p className="session-inspector__note">Pi 管理当前对话窗口。压缩调用模型并保留历史，自动压缩已关闭。</p>
+    <p className="session-inspector__note">Pi 管理当前对话窗口。压缩调用模型并保留历史，自动压缩保持开启，参数使用 Pi 默认值；也可手动压缩。</p>
     {(error||value?.error)&&<p role="alert">{error||value?.error?.message}</p>}
   </section>;
 }

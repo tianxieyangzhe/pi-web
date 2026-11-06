@@ -14,6 +14,16 @@ function harness(onSubmit){
 }
 function deferred(){let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return {promise,resolve,reject};}
 
+test('one search select defaults to builtin, exclusively submits tool or none, resets per session and disables while running',async()=>{
+ const sent=[],h=harness((...args)=>sent.push(args));
+ function selects(){const found=[];function visit(node){if(!node||typeof node!=='object')return;if(Array.isArray(node)){node.forEach(visit);return;}if(node.type==='select'&&node.props['aria-label']==='联网搜索')found.push(node);visit(node.props?.children);}visit(h.render());return found;}
+ const select=()=>selects()[0];h.render();assert.equal(selects().length,1);assert.equal(select().props.value,'builtin');assert.deepEqual(select().props.children.map(node=>node.props.value),['builtin','tool','none']);assert.match(JSON.stringify(select().props.children),/服务端/);
+ h.change('first');await h.submit();assert.deepEqual(sent[0].slice(2),[true,false]);
+ select().props.onChange({target:{value:'tool'}});assert.equal(select().props.value,'tool');h.change('second');await h.submit();assert.deepEqual(sent[1].slice(2),[false,true]);
+ select().props.onChange({target:{value:'none'}});h.change('third');await h.submit();assert.deepEqual(sent[2].slice(2),[false,false]);
+ h.switchKey('search-other');assert.equal(select().props.value,'builtin');h.setRunning(true);assert.equal(select().props.disabled,true);
+});
+
 test('pasted long text sends as attachment alone, preserves on rejection and clears after acceptance',async()=>{
  const previous=global.FileReader;
  global.FileReader=class{readAsDataURL(file){file.arrayBuffer().then(bytes=>{this.result='data:text/plain;base64,'+Buffer.from(bytes).toString('base64');this.onload();});}};

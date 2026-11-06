@@ -81,7 +81,7 @@ PSES-010 光标内联整改验证：`tests/inline-composer-editor.test.cjs` 使�
 | UI-040 | 待实现并验证 | 项目会话等待反馈 | 发起项目消息后，在运行且尚未展示本轮文本、thinking 或工具活动时显示“正在思考”及转圈；展示其中任一内容、结束或失败后不再显示。该提示仅表示等待响应，不表示实际模型 thinking，不进入 transcript。 |
 | PSES-005 | 待验证 | 项目消息延迟诊断 | 服务端按一次发送记录阶段耗时，区分 Pi 句柄复用/创建/恢复、prompt、首个 assistant 流事件、首段可见文本、首个工具活动和完成或失败；另以流 turnId 关联服务端首段文字入队及完成事件、浏览器收到对应事件的时间，区分传输与生成延迟。各端耗时各自基于单调时钟，跨端时钟可能不同；不记录消息、思考、工具参数/结果、文件路径或密钥，不影响流和执行结果。 |
 | PSES-002 | 项目会话代码已接入；完整边界待验收 | Pi Session Tree 完整投影 | 项目会话的 messages API 恢复所属 Pi 的全部分支及节点，保留节点身份、父子关系、原生追加顺序和活动叶子；内部节点、thinking、原始工具参数和敏感结果不因类型或内容过滤。活动指针、异常节点、空树、读取错误和重启恢复按 `03` 如实返回；按部署边界校验读取许可和归属、禁止缓存及日志泄露，覆盖事件订阅竞态、临时关联、只读页面快照和重连，运行事件按原生树核对，不伪装为空历史或持久节点；不复制持久对话、不改历史。 |
-| PSES-004 | 代码已实现；压缩/取消API定向通过，真实模型待验 | 用户手动原生上下文压缩 | 创建和恢复 Pi Session 都关闭自动压缩，仅用户页面点击调用原生压缩；溢出不自动压缩重试，压缩只改变 Pi 有效窗口，完整历史继续可恢复 |
+| PSES-004 | 代码已实现；压缩/取消API定向通过，真实模型待验 | 用户手动原生上下文压缩 | 按PSES-021开启Pi默认自动压缩并保留手动入口；压缩只改变Pi有效窗口，完整历史继续可恢复 |
 
 PSES-002 / PSES-007 项目范围定向验证：`tests/project-session-tree.test.cjs` 覆盖多分支、敏感内容、只读历史及损坏版本；`tests/project-session-lifecycle.test.cjs` 覆盖并发打开、租约、发送复用与逐轮写入许可；`tests/project-session-optional-role.test.cjs` 覆盖独立项目工具的逐轮写入门禁；`tests/project-session-stream.test.cjs` 覆盖原始流、禁缓存、租约传递、UTF-8 解码及断线后继续消费。类型检查通过。未验收真实模型、浏览器、五分钟中止、崩溃恢复及全部竞态；不能标记整体现场验收完成。
 
@@ -103,7 +103,7 @@ PSES-005 代码验证：`tests/project-message-timing.test.cjs` 覆盖阶段顺�
 | UI-011 | 代码已实现；文件弹窗最小DOM通过，视觉待验 | 项目优先布局与文件 | 侧栏浅灰蓝、文字中性、选中浅绿；导航可收缩；文件树非 Git 也可用，文件浏览与预览按 UI-042 合并在独立文件弹窗中，路径显示项目绝对根目录，代码预览不用深色背景 |
 | UI-013 | 现有实现待复验 | Next 单应用分层 | 页面、Feature、Hook、API Client、领域协议与服务端分层；页面不承载事件解析或业务编排 |
 | UI-018 | 待设计 | 项目资源页面 | 项目实例在所属 Project 下管理和调试；项目为空的模板在模板库展示；详细交互随资源基础模型确定 |
-| UI-019 | 代码已实现；上下文API定向通过，真实浏览器待验 | 原生上下文检查与压缩入口 | 会话检查的设置页显示已用/容量/剩余 Token、占比、测量口径与时间、自动压缩关闭状态、最近压缩时间和手动按钮；未知指标不伪造，繁忙禁用，完成刷新，失败可手动重试 |
+| UI-019 | 代码已实现；上下文API定向通过，真实浏览器待验 | 原生上下文检查与压缩入口 | 会话检查的设置页显示已用/容量/剩余 Token、占比、测量口径与时间、Pi默认自动压缩开启状态、最近压缩时间和手动按钮；未知指标不伪造，繁忙禁用，完成刷新，失败可手动重试 |
 | UI-039 | 代码已接入；针对性测试及类型检查通过，真实浏览器待验证 | 提交后的输入框 | 项目会话提交时立即清空输入框并在对话中回显，不等待长流结束；发送失败仅在原会话草稿未修改时恢复，不能覆盖其他会话或新输入，也不自动重发。 |
 | UI-038 | 代码已接入；键盘回归与 TypeScript 检查通过，真实浏览器输入法验收待做 | 输入法安全的对话发送快捷键 | 项目 Composer；Enter 发送、Shift+Enter 换行，点击发送按钮行为不变。IME 候选组合期间 Enter 只确认候选且不调用发送，需兼容 composition 状态、`isComposing` 和旧浏览器 `keyCode=229`。 |
 | UI-026 | 修订中 | 对话无额外读写勾选 | 项目会话 Composer 不显示读写模式。独立项目工具权限由项目执行策略确定而非角色，实际操作遵循用户请求。 |
@@ -133,7 +133,7 @@ UI-039 验证：`tests/prompt-input-submit.test.cjs` 覆盖流进行时清空与
 | PCTX-001 | 代码已实现；受控Runtime定向通过，真实模型待验 | Pi 原生上下文为主 | 原生窗口用量读取 Pi getContextUsage；压缩和取消调用 compact/abortCompaction，无第二份 transcript 或数据库窗口 |
 | UI-020 | 代码已实现；上下文API定向通过，真实浏览器待验 | 可操作的会话设置 | 会话设置展示 Pi 上下文，用量与状态真实可辨；支持刷新、手动压缩、取消及已有会话恢复；未知值不补零，操作期间保留输入 |
 
-验收包括：读取/刷新不触发模型或压缩；未启动/不可恢复/只读正确限制；取消压缩不会中止主回答、提前释放锁或自动恢复对话；取消与成功竞态按 Pi 实际结果展示；设置用量 DTO 不另行返回原生正文，完整树与导出仍保留全部原文；原生操作不改变业务会话归属；保留手动压缩策略。本次不新增自动压缩策略、分支编辑或原生消息编辑功能。
+验收包括：读取/刷新不触发模型或压缩；未启动/不可恢复/只读正确限制；取消压缩不会中止主回答、提前释放锁或自动恢复对话；取消与成功竞态按 Pi 实际结果展示；设置用量 DTO 不另行返回原生正文，完整树与导出仍保留全部原文；原生操作不改变业务会话归属；保留手动压缩入口，自动压缩按PSES-021采用Pi默认策略。本次不新增应用级自动压缩算法、分支编辑或原生消息编辑功能。
 
 2026-10-08 实现验证：已读取 Pi SDK 原生上下文/取消能力声明，完成上下文端口拆分、原生 getContextUsage 估算读取、取消压缩及优先检查 UI。18 项针对性测试和类型检查通过；包括取消保持锁、只读限制与完成/取消竞态。新功能未修改数据库或原生历史；生产构建通过；当时 3000 返回旧版 DTO，页面联调尚未复验；该历史记录不代表当前服务状态或新弹窗验收。
 
@@ -255,3 +255,33 @@ GAP-001～005 已落到通用/独立项目模型与 API：目标 Schema 移除�
 正式执行前重新预检为 ready、冲突零项并确认无其他打开连接；来源摘要 15f005c7e038263a22e942d0796e552d90b2947a38387aba653b6d10d9e3c5b0，目标摘要 e7bee0c5415d7bd99a769b993b855b2eaa20153b021d2be53c25126c59759889。脚本返回 migrated，后续预检返回 current，实际运行时 matchesTargetSchema=true、integrity_check=ok、foreign_key_check=0。事务中已逐表验证所有保留列值一致；6个项目、5个Agent、8个独立项目会话和1个工作区会话保留，9条记忆记录在只读备份中核验存在。
 
 完整归档位于 .data/ai-workspace-v5.sqlite.session-upgrade-34c046da-4f87-427d-8554-cfcee4766fdc/，包含 before.sqlite 和 manifest.json，备份SHA-256为 25d446b60a71a5616834a4a6ec24e3a5e398987f609f071249a70c7a8e3c4d8e。此次授权仅覆盖本次目标，后续迁移仍须独立确认。未调用Pi或模型，未改写原生历史、Agent Markdown、配置或journal，未操作服务启停；§16中“历史库未迁移”描述为本次执行前的记录。GAP-006与06保持原范围。
+
+## 本批提交文档核对与最终验证
+
+本批未提交改动均有对应记录：SEARCH-001内置搜索、SEARCH-002本机Bing/网页工具和紧凑单选及焦点恢复、SEARCH-003单一input参数、PSES-020原生快照409修复、PSES-021默认自动压缩及UI-045滚动。架构、模型、API、页面分别更新01～04；工作区及历史Bot Runtime适用范围见06。README补齐联网/代理、input示例、会话滚动和自动压缩及重新发布说明。新增运行依赖为Undici、linkedom、Mozilla Readability；随package/lock发布，不要求搜索Key或服务，不迁移数据库。
+
+提交前最终验证：15个定向文件共59项通过，npm run typecheck及git diff --check通过。实际文件：tests/inline-composer-editor.test.cjs、tests/project-operation-recovery.test.cjs、tests/prompt-input-submit.test.cjs、tests/workspace-runtime.test.cjs、tests/pi-auto-compaction.test.cjs、tests/pi-native-snapshot.test.cjs、tests/server-web-search.test.cjs、tests/session-conversation-scroll.test.cjs、tests/tool-search.test.cjs、tests/workspace-web-search.test.cjs、tests/workspace-context.test.cjs、tests/pi-session-fork-export.test.cjs、tests/message-references-composer.test.cjs、tests/session-auxiliary-dialog.test.cjs、tests/pi-context.test.cjs。覆盖本批模型/API/工具循环/幂等/压缩/快照/输入与滚动及关联边界；全部用临时库/目录、受控网络/模型流或模拟DOM。未做真实Bing/模型/代理/Ubuntu出网或浏览器视觉验收、生产构建、用户服务启停或历史迁移。以下各需求中的测试计数为对应阶段记录，以本段作为本批最终验证依据。
+
+## PSES-021 / UI-045｜Pi默认自动压缩与会话滚动
+
+状态：已实现，定向验证通过；真实模型与浏览器视觉待验。PSES-021：所有业务Session开启Pi原生自动压缩，无关闭入口，压缩参数使用Pi默认值；创建/恢复/发送/手动压缩/句柄复用不得关闭。验收实际Pi默认配置、热/冷恢复、受控自动压缩及事件/记录、手动入口后仍开启。UI-045：单击会话（含当前会话）在所属历史载入后滚至底部；提交提示词立即滚至底部，底部跟随实时内容，上翻阅读或树定位时不抢滚动，重新发送/点击恢复跟随。两类会话共享实现，无新持久模型或API。实际验证：tests/pi-auto-compaction.test.cjs（项目与Workspace真实SDK默认参数、阈值压缩/事件/原生记录、settled顺序、手动调用后保持开启及冷恢复）、tests/pi-context.test.cjs（只读/取消互斥/成功竞态）、tests/session-conversation-scroll.test.cjs（共享视图选择/迟到快照/发送/增高跟随/上翻暂停）、tests/session-auxiliary-dialog.test.cjs（实际Workspace导航/树定位/非模态浮窗），共7项通过；npm run typecheck、git diff --check通过。全部使用临时会话/受控流和模拟DOM，不调用真实模型、不启停服务、不改用户数据库或历史，不执行生产构建。
+
+## PSES-020｜原生快照JSON语义一致性
+
+状态：已修复，定向验证通过；用户报告会话的线上原生文件未读取，不能确认其具体差异。活动Pi manager与原生文件按JSON持久化语义比较，避免工具参数/结果的undefined可选字段引发虚假409；实际内容、节点数量/顺序/关系或身份变化仍拒绝快照。无SQL/历史迁移或Pi身份改变；只读校验不得重写历史、重载句柄或重发请求。验收：真实Pi SessionManager临时会话复现旧错误、修复后热/冷树一致且字节不变，内存内容修改及外部追加继续REQUEST_UNKNOWN并保留文件。实际验证：tests/pi-native-snapshot.test.cjs、tests/pi-session-fork-export.test.cjs、tests/tool-search.test.cjs共12项通过，git diff --check通过；使用临时目录及受控依赖，无真实模型/Bing/用户服务操作或历史迁移。
+
+## SEARCH-003｜网页工具调用参数修复
+
+状态：已实现，定向验证通过。web_fetch改为单一必填input，HTTP(S)地址直接读取，文本查询Bing；旧url/query在prepareArguments归一化，旧两字段并存时URL优先。空参数不得联网，参数说明和schema保持一致，避免可选互斥参数导致模型反复重试。验收包括schema必填、网址/查询路由、旧格式和空白归一化、实际Pi工具循环与工具参数持久记录，不修改用户历史。实际验证：tests/tool-search.test.cjs共6项通过（受控fetch/模型流、临时目录）；npm run typecheck、git diff --check通过。未调用真实模型或Bing，用户报告的四次调用缺少原始toolCall.arguments，不能确认每次的具体参数。
+
+## SEARCH-002｜内置搜索与工具搜索
+
+状态：已整改，定向验证通过；真实Bing/Ubuntu出网与浏览器待验。输入框使用一个select选择内置搜索/工具搜索/无搜索，默认内置搜索，选项标注执行方；单一web_fetch直接访问Bing搜索或目标网页，适用于支持Pi工具调用的模型。选择固定本轮、工具结果原生持久化；API严格布尔校验、配置预检、摘要包含开启意图，未开启不能调用，不自动降级。验收包含Bing结果解析与直接网页读取、正文提取、代理/取消/限额/失败，实际Pi工具装配/循环/清理，两范围API和输入选择器。真实供应商验证须另行记录，不改写用户配置或历史。
+
+SEARCH-002本轮验收：tests/tool-search.test.cjs（5项）、tests/server-web-search.test.cjs（2项）、tests/project-operation-recovery.test.cjs（7项）、tests/workspace-web-search.test.cjs（3项）、tests/prompt-input-submit.test.cjs（7项）、tests/inline-composer-editor.test.cjs（10项），合计34项通过；npm run typecheck、git diff --check通过。覆盖单一web_fetch无Key/服务依赖、无URL请求Bing与编码查询/来源跳转解析、已知URL直接正文提取/不执行脚本、错误/响应上限/取消/公开地址及重定向/DNS校验、代理配置及dispatcher、每轮限额/隔离/工具恢复、实际Pi项目与工作区调用结果落盘；保留内置搜索、API幂等、三种选择与光标恢复。使用临时目录/内存库及受控fetch/模型流；未访问真实Bing/网页、未验证Ubuntu出网/真实代理或浏览器、不启停服务/迁移用户库/生产构建。Bing验证码、限流和格式变化明确失败，无自动服务降级。
+
+## SEARCH-001｜输入框服务端联网搜索
+
+状态：已实现，定向验证通过；真实OpenAI与浏览器待验。项目/工作区输入框增加默认开启且标明服务端搜索的按钮，真实透传OpenAI Responses内置web_search；保留编程工具、仅本轮生效，非法参数和不支持协议拒绝，幂等区分搜索意图，失败无静默降级。搜索调用和来源原文保留所属Pi树，未执行不得声称已搜索。验收覆盖请求payload/隔离/清理、两类消息API、按钮及参数传递；不调用真实模型或迁移用户库。
+
+SEARCH-001验证：tests/server-web-search.test.cjs、tests/prompt-input-submit.test.cjs共9项；tests/project-operation-recovery.test.cjs、tests/workspace-web-search.test.cjs、tests/message-references-composer.test.cjs共15项，合计24项通过。覆盖按钮默认/关闭/切换重置、HTTP透传、项目/工作区参数和幂等/预检拒绝、实际Pi Runtime扩展装配、工具循环、原生搜索证据落盘与成功/失败清理；npm run typecheck及git diff --check通过。使用临时目录/内存库/受控Pi流，无真实模型、服务启停、用户库改写、迁移或生产构建。仅协议预检，不保证所有Responses型号或中转支持搜索；上游失败按现有错误返回。

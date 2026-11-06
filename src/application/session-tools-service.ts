@@ -12,7 +12,7 @@ import { createdSessionId, canonical, hash, operationIdentity } from '@/domain/p
 import { acquireSession, sessionLocks } from './session-lock';
 import { exactFields } from './project-session-service';
 
-type Execution = { assertLease:(id:string,lease:string|null)=>void; hasLease:(id:string)=>boolean; open:(id:string,key:string,readOnly?:boolean)=>Promise<unknown>; interrupt:(id:string)=>Promise<void>; restore:(id:string)=>Promise<Session>; deleteSession?:(projectId:string,id:string)=>Promise<unknown>; accept:(id:string,content:string,references?:unknown,onSettled?:(error?:unknown)=>void)=>{accepted:boolean;sessionId:string}; };
+type Execution = { assertLease:(id:string,lease:string|null)=>void; hasLease:(id:string)=>boolean; open:(id:string,key:string,readOnly?:boolean)=>Promise<unknown>; interrupt:(id:string)=>Promise<void>; restore:(id:string)=>Promise<Session>; deleteSession?:(projectId:string,id:string)=>Promise<unknown>; accept:(id:string,content:string,references?:unknown,onSettled?:(error?:unknown)=>void,webSearch?:boolean,toolSearch?:boolean)=>{accepted:boolean;sessionId:string}; };
 export function createSessionToolsService(d: {
   sessions:SessionRepositoryPort; projects:ProjectRepositoryPort; runtime:PiRuntimePort & SessionToolsRuntimePort;
   operations:ProjectOperationStore; execution:Execution; assertWritable:()=>void;
@@ -105,15 +105,18 @@ export function createSessionToolsService(d: {
       return run(projectId,id,'open',key,{},async(_input,observe)=>{const result=await d.execution.open(id,key);observe({after:d.runtime.operationEvidence({...input,session:d.sessions.get(id)!})});return result;},()=>d.execution.open(id,key),true);
     },
     accept(projectId:string,id:string,body:Record<string,unknown>,key:string,lease:string|null) {
-      exactFields(body,['content','references']);
+      exactFields(body,['content','references','webSearch','toolSearch']);
+      for(const field of ['webSearch','toolSearch'])if(body[field]!==undefined&&typeof body[field]!=='boolean')throw new DomainError('INVALID_INPUT',`${field}必须为布尔值`,400,true);
       if(typeof body.content!=='string'||!body.content.trim())throw new DomainError('INVALID_INPUT','消息不能为空',400,true);
       if(Buffer.byteLength(body.content)>32768)throw new DomainError('REQUEST_TOO_LARGE','消息不得超过32KiB',413,true);
       const input=scope(projectId,id);d.execution.assertLease(id,lease);d.assertWritable();editable(input);
-      const operationId=operationIdentity(projectId,id,'message',key),payload={content:body.content,references:body.references??[]};
+      const operationId=operationIdentity(projectId,id,'message',key),payload={content:body.content,references:body.references??[],...(body.webSearch===true?{webSearch:true}:{}),...(body.toolSearch===true?{toolSearch:true}:{})};
       const prior=d.operations.read(projectId,operationId).at(-1);
       if(prior&&prior.payloadSha256!==hash(canonical(payload)))throw new DomainError('IDEMPOTENCY_CONFLICT','请求键已用于不同消息',409,true);
       if(prior){if(prior.phase==='completed'||active.has(operationId))return {accepted:true,sessionId:id,operationId};throw new DomainError('REQUEST_UNKNOWN','此前请求结果待核对',409,true);}
       assertKnown(projectId,id);if(sessionLocks.has(id))throw new DomainError('SESSION_BUSY','会话正在执行',409,true);
+      if(body.webSearch===true){const handle=d.runtime.getHandle(id);if(!handle||!d.runtime.validateWebSearch)throw new DomainError('WEB_SEARCH_UNSUPPORTED','当前运行时不支持服务端搜索，请关闭联网搜索',422,true);d.runtime.validateWebSearch(handle);}
+      if(body.toolSearch===true){if(!d.runtime.validateToolSearch)throw new DomainError('TOOL_SEARCH_UNAVAILABLE','当前运行时未装配工具搜索，请关闭工具搜索或重启服务',422,true);d.runtime.validateToolSearch();}
       let record=d.operations.prepare(projectId,id,'message',key,payload,{baseline:d.runtime.operationEvidence(input)});
       let finish!:()=>void;const done=new Promise<void>(resolve=>{finish=resolve;});active.set(operationId,done);
       try {
@@ -124,7 +127,7 @@ export function createSessionToolsService(d: {
               d.operations.append(record,'completed',{resultSessionId:id});
             }
           }catch{/* A missing receipt remains unknown; never replay it. */}finally{active.delete(operationId);finish();}
-        });
+        },body.webSearch===true,body.toolSearch===true);
       }catch(error){active.delete(operationId);finish();throw error;}
       return {accepted:true,sessionId:id,operationId};
     },

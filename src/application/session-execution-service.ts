@@ -200,8 +200,8 @@ export function createSessionExecutionService(dependencies: {
       try { return await promise; } catch (error) { idempotency.delete(scopedKey); schedule(sessionId); throw error; }
     },
     events,
-    accept(sessionId: string, instruction: string, references?: unknown, onSettled?: (error?: unknown) => void) {
-      const source = this.send(sessionId, instruction, undefined, references);
+    accept(sessionId: string, instruction: string, references?: unknown, onSettled?: (error?: unknown) => void, webSearch = false, toolSearch = false) {
+      const source = this.send(sessionId, instruction, undefined, references, webSearch, toolSearch);
       void (async () => {
         let failure:unknown;
         for await (const event of source) {
@@ -220,7 +220,7 @@ export function createSessionExecutionService(dependencies: {
     },
     closeLease(sessionId: string, leaseId: string) { if (leases.get(leaseId)?.sessionId === sessionId) { leases.delete(leaseId); schedule(sessionId); } },
     assertLease,
-    send(sessionId: string, instruction: string, operation?: "read" | "project_write" | "external_write", references?: unknown): AsyncGenerator<AgentEvent> {
+    send(sessionId: string, instruction: string, operation?: "read" | "project_write" | "external_write", references?: unknown, webSearch = false, toolSearch = false): AsyncGenerator<AgentEvent> {
       const value = session(sessionId);
       operation ??= 'project_write';
       dependencies.assertSessionAllowed?.(sessionId);
@@ -273,7 +273,7 @@ export function createSessionExecutionService(dependencies: {
               if (event.type === "message_delta" && event.text) timing("first_text");
               if (event.type === "activity" && event.kind === "tool") timing("first_tool");
               queue.push(event);
-            }, () => timing("assistant_stream"), referenceContent, operation === "project_write")
+            }, () => timing("assistant_stream"), referenceContent, operation === "project_write", webSearch, toolSearch)
             .then(() => {
               timing("completed");
               sessions.updateRuntime(sessionId, { state: "idle" });

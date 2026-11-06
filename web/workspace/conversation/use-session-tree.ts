@@ -75,11 +75,11 @@ export function useSessionTree(base: string | null, read: () => Promise<SessionT
     });
     return () => { disposed = true; disconnect(); lease.current = null; refreshRef.current = async () => {}; };
   }, [base, retry,closed]);
-  const send = useCallback(async (content: string, references?: import("../../../src/domain/message-references").MessageReference[]) => {
+  const send = useCallback(async (content: string, references?: import("../../../src/domain/message-references").MessageReference[], webSearch?: boolean, toolSearch?: boolean) => {
     const opened = lease.current, selected = currentBase.current;
     if (!base || base !== selected || !opened) throw new Error("请先连接会话");
     setPendingText(content);setError("");
-    try { await submitSessionMessage(base, opened.leaseId, content, references); }
+    try { await submitSessionMessage(base, opened.leaseId, content, references, webSearch, toolSearch); }
     catch (cause) { if (currentBase.current === selected) { setPendingText(""); } throw cause; }
   }, [base]);
   return { tree, temporary, ready,connection,compacting,eventRevision,close:()=>setClosed(true), leaseId: lease.current?.leaseId ?? null, running, setRunning, pendingText, error, setError, send, refresh: useCallback(() => refreshRef.current(), []), retryOpen: () => {setClosed(false);setRetry(n => n + 1);} };

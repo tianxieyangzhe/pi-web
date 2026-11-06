@@ -113,15 +113,15 @@ Pi 初始 cwd 为选定项目根目录。访问其他项目时显式定位目标
 
 ### 3.3 首期装配规则
 
-Pi DefaultResourceLoader 保留默认提示词，使用 appendSystemPrompt 添加带来源标签的 XML 工作区结构体及原生工具路径说明，关闭隐式资源发现。定位规则单独放在 <project_resolution> 标签中，明确先按用户提到的项目名称匹配 <projects> 中的项目，再以对应 <cwd> 为检索起点。结构体 projects 是当前完整项目清单，workspace.cwd 仅表示默认目录，不缩小 projects 范围；项目定位直接采用 projects[].cwd，不从知识库、README 或历史工具结果反推。历史 workspace_* 调用记录仅是旧记录，提示词明确工具已退役，当前工具仅为 read/bash/edit/write。保留历史原文，不注册兼容工具或把错误调用重定向为原生工具。每次根请求在会话互斥内重读本工作区配置；空闲句柄配置变化时释放并按精确 nativeRef 恢复，不更换树。工具循环固定使用本轮配置。
+Pi DefaultResourceLoader 保留默认提示词，使用 appendSystemPrompt 添加带来源标签的 XML 工作区结构体及原生工具路径说明，关闭隐式资源发现。定位规则单独放在 <project_resolution> 标签中，明确先按用户提到的项目名称匹配 <projects> 中的项目，再以对应 <cwd> 为检索起点。结构体 projects 是当前完整项目清单，workspace.cwd 仅表示默认目录，不缩小 projects 范围；项目定位直接采用 projects[].cwd，不从知识库、README 或历史工具结果反推。历史 workspace_* 调用记录仅是旧记录，提示词明确旧工具已退役，项目编码工具为 read/bash/edit/write；可选联网工具以本轮实际声明为准（SEARCH-002），不得把联网工具当作本地项目检索入口。保留历史原文，不注册兼容工具或把错误调用重定向为原生工具。每次根请求在会话互斥内重读本工作区配置；空闲句柄配置变化时释放并按精确 nativeRef 恢复，不更换树。工具循环固定使用本轮配置。
 
-结构体上限 64KiB UTF-8，消息正文上限 32KiB；项目数组最多 32 项，按项目 ID 排序。超限返回 WORKSPACE_CONTEXT_TOO_LARGE，不截断项目。模型装配遵循 `01` 的应用级 Pi 配置及当前 Session 模型选择，自动压缩关闭；上下文不足返回 CONTEXT_LIMIT_REACHED，由用户手动压缩。
+结构体上限 64KiB UTF-8，消息正文上限 32KiB；项目数组最多 32 项，按项目 ID 排序。超限返回 WORKSPACE_CONTEXT_TOO_LARGE，不截断项目。模型装配遵循 `01` 的应用级 Pi 配置及当前 Session 模型选择，自动压缩按03 PSES-021开启，使用Pi默认参数及原生溢出恢复；最终仍失败才返回CONTEXT_LIMIT_REACHED，应用不重发。
 
 工作区结构体不通过 `workspace_context` custom message 替代系统提示词。本期不定义 Agent.md 格式或说明文件预算。当前 Pi 在模型请求的 role=system 消息中传递系统提示词，不要求 context.systemPrompt 字段有值，也不把它作为普通消息写入原生会话文件；原生树缺少系统提示词节点不能作为未注入的证据。项目集合直接取系统提示词中的结构体，不通过工具或读取磁盘发现集合。Workspace Runtime 不注册任何 workspace_* 工具；请求幂等和恢复记账保存于应用独立 journal，不追加 Pi custom 节点，不转换为模型消息；旧的请求记账 custom 节点只读兼容，原文仍按完整树规则展示。
 
 ## 4. Pi 原生编码工具
 
-Workspace 会话直接使用 Pi SDK 原生 read、bash、edit、write，沿用原生参数、返回值和执行行为，不注册任何 workspace_* 或 project_* 工具，不自动启用工作区专属 codemode 扩展。项目集合只通过系统提示词的结构体提供，不提供模型查询项目清单的工具。
+Workspace 会话默认使用 Pi SDK 原生 read、bash、edit、write，沿用原生参数、返回值和执行行为；用户本轮显式开启时额外装配SEARCH-002工具搜索。不注册任何 workspace_* 或 project_* 工具，不自动启用工作区专属 codemode 扩展。项目集合只通过系统提示词的结构体提供，不提供模型查询项目清单的工具。
 
 Pi cwd 固定为会话默认项目目录；原生工具相对路径从该目录解析，跨项目使用结构体提供的绝对路径，bash 可按用户意图在目标目录执行命令。工具访问采用可信单用户宿主的进程权限，不声称 cwd 或项目清单提供文件系统沙箱，不建立自定义多目录权限层、跨项目路径锁或命令拒绝占位工具。执行修改遵循用户意图。
 
@@ -176,7 +176,7 @@ WorkspaceRequestJournal 是每个工作区 Session 的应用请求证据，不�
 | POST S/runtime/open、pong、close；GET S/events | 沿用 `03` 租约与订阅 DTO；open 允许无正文、零字节请求流或 {}，pong/close 仍要求各自参数 | 复用 SessionPresence/SessionEvents；后台请求持有使用权，断线不重发 |
 | GET/POST S/messages | GET 完整 Tree；POST content、references? → 202 accepted | 有效 lease；正文不改写，附件按通用格式，项目引用限本 Workspace；会话 busy 409，无队列 |
 | POST S/interrupt、restore、end | 无业务正文（无正文、零字节请求流或 {}）→ SessionDTO | interrupt 调用 abort 并等待；restore 只恢复可确定失败状态，unknown 先核对；end 仅空闲，保留历史 |
-| GET S/context；POST S/compact、compact/cancel | 通用 NativeContextInspection | 仅用户手动，压缩与消息互斥；调用唯一 Pi 原生能力 |
+| GET S/context；POST S/compact、compact/cancel | 通用 NativeContextInspection | 此API为手动入口，压缩与消息互斥；自动压缩按03 PSES-021由唯一Pi会话执行 |
 | POST S/recover | action=inspect/acknowledge-unknown | 检查请求 journal 及只读旧证据；用户承认未知时写 journal 回执，再解除本会话门禁，不重发旧输入 |
 
 无业务正文的操作按实际读取的字节数判断空请求，不能依据 request.body 是否存在；零字节等价 {}，非空正文必须是合法 JSON 对象且不含未知字段。仅空白、损坏 JSON、数组、null 仍返回 INVALID_JSON，正文容量限制不变；创建、消息及其他必填正文接口继续拒绝空正文。
@@ -188,6 +188,8 @@ S=/workspaces/:id/sessions/:sid。配置 JSON ≤64KiB，目录元数据 ≤2000
 模型工具沿用 Pi 原生参数；相对路径对应会话 cwd，跨项目使用系统提示词中的绝对路径。不把项目 ID 作为自定义工具参数。
 
 ## 7. 页面投影与代码职责
+
+共享同步：PSES-021自动压缩和UI-045会话滚动按01～05实施与验收，Workspace无关闭自动压缩的独立配置。历史Bot Runtime也采用Pi默认压缩参数，不扩展旧Bot产品范围。
 
 首期 UI 同步范围明确包括左侧导航的列表展示、选择与切换，以及中间会话区域。Workspace 与 Project 在这些通用部分复用组件、布局、样式及交互；后续通用 UI 调整须同步适用于两种会话入口。Workspace 的新增页面及创建业务流程独立定义，不属于与现有 Project 新增页面同步的范围。
 
@@ -314,3 +316,11 @@ S=/api/workspaces/:id/sessions/:sid。每个入口先校验真实调用方许可
 ## WSP-018｜删除工作区会话的应用记忆依赖
 
 状态：目标已定，目标 Schema 及共享 DTO 待按 05 §15 补齐，未实现验收。本轮只整改文档，不修改运行代码或用户库。通用 SREM-001～003 引用 05；工作区专属要求是 Session/DTO/创建/删除/派生不再持有记忆绑定，删除全部本范围记忆/总结 API、后台任务与轮询，名称只用 purpose。目标创建和删除仅写 workspace_sessions；旧库必须按 §5 显式处理约束后才允许目标写入。退役路径 404，旧字段不继续接收；Pi 身份、完整树、模型选择、压缩、订阅和请求 journal 保留。定向验收须覆盖跨工作区归属、幂等、unknown、旧库门禁，以及回答结束不再启动独立总结。
+
+## SEARCH-002｜工作区工具搜索
+
+工作区POST S/messages同步接受toolSearch?:boolean（默认false），消息哈希仅在true时增加toolSearch。引用03 SEARCH-002的配置预检、错误、工具参数（SEARCH-003单一必填input及旧格式归一化）、Bing和本机网页读取、代理、限额和生命周期；与webSearch独立校验。沿用工作区归属、cwd、journal和共享输入框，不新增表/会话或替换原生四个编程工具；搜索工具只在本轮显式开启后可用。状态：已整改为单一web_fetch（无URL时访问Bing），定向验证与限制见05 SEARCH-002；真实Bing/Ubuntu出网与浏览器待验。
+
+## SEARCH-001｜工作区服务端搜索
+
+工作区POST S/messages同步接受webSearch:boolean（默认false），共享03 SEARCH-001的协议校验、错误、请求扩展、Pi证据及输入框投影。校验在workspace_request准备前完成；true进入原body摘要，false/省略沿用旧摘要。工作区归属、默认cwd、项目集合、原生身份与既有journal不变。不新增Bot或搜索服务表。状态：已实现，定向验证与实际限制见05 SEARCH-001；真实模型和浏览器待验。

@@ -5,6 +5,33 @@ const {operationIdentity,createdSessionId}=require('../src/domain/project-operat
 const {createSessionToolsService}=require('../src/application/session-tools-service.ts');
 const {sessionLocks}=require('../src/application/session-lock.ts');
 function fixture(){const root=fs.mkdtempSync(path.join(os.tmpdir(),'project-operations-'));const operations=createProjectOperationStore(root),rows=new Map([['s',{id:'s',projectId:'p',purpose:'original',agentId:null,agentSnapshot:null,nativeRef:{kind:'pi',sessionId:'native',sessionFile:'/temp/native',cwd:'/temp'},endedAt:null}]]);let calls=0,sqlFails=false,settle;const runtime={validateForkCandidate:()=>({fileSha256:'candidate-hash'}),operationEvidence:input=>({nativeRef:input.session.nativeRef,fileSha256:'unchanged'}),readTree:async()=>({entries:[],activeLeafId:null}),models:async()=>({current:null,defaults:{provider:null,modelId:null},sources:{models:'native',settings:'native'},models:[],canSwitch:true,unavailableReason:null}),switchModel:async()=>{calls++;},fork:async()=>{calls++;return {kind:'pi',sessionId:'child',sessionFile:'/temp/child',cwd:'/temp'};},export:async()=>'',getHandle:()=>({})};const sessions={get:id=>rows.get(id)??null,updateRuntime:(id,patch)=>Object.assign(rows.get(id),patch),create:input=>{if(sqlFails)throw Error('SQL failed');const row={...input,id:input.stableId};rows.set(row.id,row);return row;}};const execution={assertLease(){},hasLease:()=>true,open:async()=>({leaseId:'l',status:'ready'}),interrupt:async()=>{settle?.();},restore:async()=>rows.get('s'),accept:(id,text,refs,callback)=>{calls++;settle=()=>callback();return {accepted:true,sessionId:id};}};const create=()=>createSessionToolsService({sessions,projects:{get:()=>({id:'p',status:'active',rootPath:'/temp'})},operations,runtime,execution,assertWritable(){},present:value=>value,catalog:{}});return {root,operations,rows,runtime,sessions,execution,create,get calls(){return calls;},failSql(value){sqlFails=value;},settle:()=>settle?.(),close(){sessionLocks.delete('s');fs.rmSync(root,{recursive:true,force:true});}};}
+test('Project search intent validates before journal writes, reaches execution and participates in idempotency',()=>{
+ const f=fixture();try{const service=f.create();
+  for(const webSearch of [null,1,'true'])assert.throws(()=>service.accept('p','s',{content:'search',webSearch},'bad','lease'),e=>e.code==='INVALID_INPUT');
+  assert.throws(()=>service.accept('p','s',{content:'search',webSearch:true},'search','lease'),e=>e.code==='WEB_SEARCH_UNSUPPORTED');assert.equal(f.operations.list('p','s').length,0);
+  const seen=[];f.runtime.validateWebSearch=()=>{};f.execution.accept=(...args)=>{seen.push(args);args[3]();return {accepted:true,sessionId:'s'};};
+  const result=service.accept('p','s',{content:'search',webSearch:true},'search','lease');assert.equal(seen[0][4],true);
+  assert.equal(service.accept('p','s',{content:'search',webSearch:true},'search','lease').operationId,result.operationId);assert.equal(seen.length,1);
+  assert.throws(()=>service.accept('p','s',{content:'search',webSearch:false},'search','lease'),e=>e.code==='IDEMPOTENCY_CONFLICT');
+  service.accept('p','s',{content:'plain',webSearch:false},'plain','lease');assert.equal(seen[1][4],false);
+  service.accept('p','s',{content:'plain'},'plain','lease');assert.equal(seen.length,2);
+ }finally{f.close();}
+});
+
+test('Project tool search validates configuration, forwards both independent choices and preserves disabled-request hashes',()=>{
+ const f=fixture();try{const service=f.create();
+  for(const toolSearch of [null,1,'true'])assert.throws(()=>service.accept('p','s',{content:'q',toolSearch},'bad','lease'),e=>e.code==='INVALID_INPUT');
+  assert.throws(()=>service.accept('p','s',{content:'q',toolSearch:true},'tools','lease'),e=>e.code==='TOOL_SEARCH_UNAVAILABLE');assert.equal(f.operations.list('p','s').length,0);
+  const seen=[];let configured=false;f.runtime.validateToolSearch=()=>{if(!configured)throw Object.assign(Error('missing config'),{code:'TOOL_SEARCH_UNAVAILABLE'});};
+  assert.throws(()=>service.accept('p','s',{content:'q',toolSearch:true},'tools','lease'),e=>e.code==='TOOL_SEARCH_UNAVAILABLE');assert.equal(f.operations.list('p','s').length,0);
+  configured=true;f.runtime.validateWebSearch=()=>{};f.execution.accept=(...args)=>{seen.push(args);args[3]();return {accepted:true,sessionId:'s'};};
+  const body={content:'q',toolSearch:true,webSearch:false};service.accept('p','s',body,'tools','lease');assert.equal(seen[0][4],false);assert.equal(seen[0][5],true);
+  service.accept('p','s',body,'tools','lease');assert.equal(seen.length,1);assert.throws(()=>service.accept('p','s',{...body,toolSearch:false},'tools','lease'),e=>e.code==='IDEMPOTENCY_CONFLICT');
+  service.accept('p','s',{content:'both',toolSearch:true,webSearch:true},'both','lease');assert.equal(seen[1][4],true);assert.equal(seen[1][5],true);
+  service.accept('p','s',{content:'off',toolSearch:false,webSearch:false},'off','lease');service.accept('p','s',{content:'off'},'off','lease');assert.equal(seen.length,3);
+ }finally{f.close();}
+});
+
 test('durable journal canonical payload conflict, restart refusal, chain corruption and permanent tombstones',()=>{
  const f=fixture();try{let record=f.operations.prepare('p','s','switch-model','key',{b:2,a:1});assert.equal(f.operations.prepare('p','s','switch-model','key',{a:1,b:2}).operationId,record.operationId);assert.throws(()=>f.operations.prepare('p','s','switch-model','key',{a:2}),e=>e.code==='IDEMPOTENCY_CONFLICT');record=f.operations.append(record,'observed',{leafId:'n'});f.operations.append(record,'completed');assert.equal(createProjectOperationStore(f.root).read('p',record.operationId).at(-1).phase,'completed');assert.throws(()=>operationIdentity('p','s','fork','\n'),e=>e.code==='INVALID_IDEMPOTENCY_KEY');const directory=path.join(f.root,'project-session-operations',require('node:crypto').createHash('sha256').update('p').digest('hex'));fs.appendFileSync(path.join(directory,record.operationId+'.jsonl'),'partial');assert.throws(()=>f.operations.list('p','s'),e=>e.code==='REQUEST_UNKNOWN');}finally{f.close();}
 });

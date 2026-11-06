@@ -26,7 +26,9 @@ export interface PiRuntimePort {
   restore(input: SessionRuntimeInput): Promise<PiSessionHandle>;
   initializeProject?(input: SessionRuntimeInput, commit: (ref: JsonObject) => JsonObject): Promise<PiSessionHandle>;
   readTree?(input: SessionRuntimeInput): Promise<{ entries: Array<{ entry: unknown; label: string | null; labelTimestamp: string | null }>; activeLeafId: string | null }>;
-  send(handle: PiSessionHandle, message: string, emit: (event: AgentEvent) => void, onAssistantStream?: () => void, references?: import("@/domain/message-references").ReferenceContent, allowProjectWrite?: boolean): Promise<void>;
+  validateToolSearch?(): void;
+  validateWebSearch?(handle: PiSessionHandle): void;
+  send(handle: PiSessionHandle, message: string, emit: (event: AgentEvent) => void, onAssistantStream?: () => void, references?: import("@/domain/message-references").ReferenceContent, allowProjectWrite?: boolean, webSearch?: boolean, toolSearch?: boolean): Promise<void>;
   interrupt(handle: PiSessionHandle): Promise<void>;
   projectHandle?(input: SessionRuntimeInput): Promise<import("@/infrastructure/pi/coordinator-bridge-plugin").ProjectSessionHandle>;
   readMessages(input: SessionRuntimeInput): Promise<Array<{
