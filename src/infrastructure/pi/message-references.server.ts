@@ -7,7 +7,7 @@ export async function appendMessageReferences(session: AgentSession, references?
   if (!references?.length) return;
   if (!referenceTurnId) throw new Error("Reference turn scope is required");
   if (references.some(item => item.type === "image") && !session.model?.input.includes("image")) {
-    throw new DomainError("MODEL_IMAGE_UNSUPPORTED", "当前模型未声明支持图片输入，请切换支持图片的模型，或在对应 models.json 型号中配置 input: [\"text\", \"image\"] 后重试", 422, true);
+    throw new DomainError("MODEL_IMAGE_UNSUPPORTED", "当前模型未声明支持图片输入，请切换支持图片的模型后重试", 422, true);
   }
   const content = references.map(item => {
     if(item.type==='file'){

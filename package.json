@@ -8,7 +8,7 @@
   "scripts": {
     "dev": "next dev --webpack --hostname localhost --port 3000",
     "build": "next build --webpack",
-    "release": "npm run build && node scripts/package-release.cjs",
+    "release": "node scripts/release.cjs",
     "start": "next start --hostname localhost",
     "systemd": "node scripts/systemd.cjs",
     "lint": "tsc --noEmit",

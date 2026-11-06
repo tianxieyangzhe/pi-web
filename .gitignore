@@ -1,5 +1,9 @@
 node_modules/
 .next/
+.next-release/
+.release.lock/
+.release-stage-*/
+release-previous-*/
 dist/
 release/
 .data/

@@ -17,6 +17,35 @@ test('missing runtime or expired lease rejects file messages before journal writ
   f.runtime.getHandle=()=>undefined;assert.equal(service.accept('p','s',body,'file','fresh').operationId,accepted.operationId);assert.equal(f.calls,1,'completed replay must not resend even if runtime is gone');
  }finally{f.close();}
 });
+test('image rejection settles the message API as failed, keeps the session usable and never replays the failed key',async()=>{
+ const {DomainError}=require('../src/domain/errors.ts');
+ const {createSessionExecutionService}=require('../src/application/session-execution-service.ts');
+ const Database=require('better-sqlite3'),db=new Database(':memory:'),f=fixture();
+ try{
+  db.exec('CREATE TABLE sessions (id TEXT PRIMARY KEY, value TEXT NOT NULL)');
+  db.prepare('INSERT INTO sessions VALUES (?,?)').run('s',JSON.stringify({...f.rows.get('s'),state:'idle',mcpIds:[]}));
+  f.sessions.get=id=>{const row=db.prepare('SELECT value FROM sessions WHERE id=?').get(id);return row?JSON.parse(row.value):null;};
+  f.sessions.updateRuntime=(id,patch)=>{const value={...f.sessions.get(id),...patch};db.prepare('UPDATE sessions SET value=? WHERE id=?').run(JSON.stringify(value),id);return value;};
+  let sends=0,rejectImage=true;
+  f.runtime.close=async()=>{};
+  f.runtime.send=async()=>{sends++;if(rejectImage)throw new DomainError('MODEL_IMAGE_UNSUPPORTED','当前模型不支持此图片输入，请切换模型后重试',422,true);};
+  const execution=createSessionExecutionService({sessions:f.sessions,catalog:{getAgent:()=>null},projects:{get:()=>({id:'p',rootPath:'/temp',status:'active'})},runtime:f.runtime});
+  f.execution.accept=execution.accept.bind(execution);
+  const service=f.create(),body={content:'describe',references:[{name:'photo.png',data:'iVBORw0KGgo='}]};
+  const accepted=service.accept('p','s',body,'image','lease');
+  for(let i=0;i<20&&f.operations.read('p',accepted.operationId).at(-1).phase==='prepared';i++)await new Promise(resolve=>setImmediate(resolve));
+  const record=f.operations.read('p',accepted.operationId).at(-1);
+  assert.equal(record.phase,'failed');assert.equal(record.evidence.errorCode,'MODEL_IMAGE_UNSUPPORTED');assert.equal(f.sessions.get('s').state,'idle');
+  assert.throws(()=>service.accept('p','s',body,'image','lease'),e=>e.code==='MODEL_IMAGE_UNSUPPORTED');assert.equal(sends,1);
+  rejectImage=false;const next=service.accept('p','s',{content:'continue without image'},'next','lease');
+  for(let i=0;i<20&&f.operations.read('p',next.operationId).at(-1).phase==='prepared';i++)await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(f.operations.read('p',next.operationId).at(-1).phase,'completed');assert.equal(sends,2);
+  f.runtime.send=async()=>{throw new DomainError('RUNTIME_ERROR','connection lost',503,true);};
+  const unknown=service.accept('p','s',{content:'network error'},'unknown','lease');
+  for(let i=0;i<5;i++)await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(f.operations.read('p',unknown.operationId).at(-1).phase,'prepared');assert.equal(f.sessions.get('s').state,'unavailable');
+ }finally{db.close();f.close();}
+});
 test('Project search intent validates before journal writes, reaches execution and participates in idempotency',()=>{
  const f=fixture();try{const service=f.create();
   for(const webSearch of [null,1,'true'])assert.throws(()=>service.accept('p','s',{content:'search',webSearch},'bad','lease'),e=>e.code==='INVALID_INPUT');

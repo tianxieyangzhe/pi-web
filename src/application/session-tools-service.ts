@@ -113,7 +113,7 @@ export function createSessionToolsService(d: {
       const operationId=operationIdentity(projectId,id,'message',key),payload={content:body.content,references:body.references??[],...(body.webSearch===true?{webSearch:true}:{}),...(body.toolSearch===true?{toolSearch:true}:{})};
       const prior=d.operations.read(projectId,operationId).at(-1);
       if(prior&&prior.payloadSha256!==hash(canonical(payload)))throw new DomainError('IDEMPOTENCY_CONFLICT','请求键已用于不同消息',409,true);
-      if(prior){if(prior.phase==='completed'||active.has(operationId))return {accepted:true,sessionId:id,operationId};throw new DomainError('REQUEST_UNKNOWN','此前请求结果待核对',409,true);}
+      if(prior){if(prior.phase==='completed'||active.has(operationId))return {accepted:true,sessionId:id,operationId};if(prior.phase==='failed')throw new DomainError(String(prior.evidence.errorCode??'RUNTIME_ERROR'),'此前请求已失败，请使用新请求键重试',422,true);throw new DomainError('REQUEST_UNKNOWN','此前请求结果待核对',409,true);}
       assertKnown(projectId,id);if(sessionLocks.has(id))throw new DomainError('SESSION_BUSY','会话正在执行',409,true);
       if(!d.runtime.getHandle(id))throw new DomainError('RUNTIME_NOT_OPEN','会话运行连接已失效，请重新连接后发送，输入和文件将保留',409,true);
       if(body.webSearch===true){const handle=d.runtime.getHandle(id);if(!handle||!d.runtime.validateWebSearch)throw new DomainError('WEB_SEARCH_UNSUPPORTED','当前运行时不支持服务端搜索，请关闭联网搜索',422,true);d.runtime.validateWebSearch(handle);}
@@ -126,6 +126,9 @@ export function createSessionToolsService(d: {
             if(!error||error instanceof DomainError&&error.code==='REQUEST_ABORTED'){
               record=d.operations.append(record,'observed',{after:d.runtime.operationEvidence({...input,session:d.sessions.get(id)!}),settled:true,...(error instanceof DomainError?{errorCode:error.code}:{})});
               d.operations.append(record,'completed',{resultSessionId:id});
+            }else if(error instanceof DomainError&&error.code==='MODEL_IMAGE_UNSUPPORTED'){
+              record=d.operations.append(record,'observed',{after:d.runtime.operationEvidence({...input,session:d.sessions.get(id)!}),settled:true,errorCode:error.code});
+              d.operations.append(record,'failed',{errorCode:error.code});
             }
           }catch{/* A missing receipt remains unknown; never replay it. */}finally{active.delete(operationId);finish();}
         },body.webSearch===true,body.toolSearch===true);

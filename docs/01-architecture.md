@@ -98,9 +98,11 @@ FILE-001：文件读取/下载用例在application/project-file-service，bootst
 AI Elements 不承担 API、SSE解析、持久状态或权限校验。Tailwind CSS 与现有项目样式系统承载视觉样式。
 
 
+IMG-FAIL-001：Pi适配层仅在明确图片能力错误及可靠终结/落盘后返回MODEL_IMAGE_UNSUPPORTED，application按03记录已知失败并保持会话可用；不靠页面隐藏unknown、不改写历史。
+
 ## 6. 持久化与运行边界
 
-OPS-006：发布支持 --without-node-modules 选项，跳过依赖目录并随包带入原始 package.json/package-lock.json；服务器执行 npm ci --omit=dev 安装锁定运行依赖后 node server.js 启动，不编译应用。默认继续随包带依赖。无依赖包不保证跨平台编译产物兼容，原生依赖由运行端安装。生产支持 Next standalone 独立发布目录，包含 server.js、编译产物、静态资源、追踪依赖、runtime/database SQL 和 systemd 启动工具，不依赖应用 TS/TSX 源码或服务器 npm install/build。Schema 在发布目录从 runtime/database 读取，源码运行仍读取原 SQL；不改目标模型或迁移。发布目录为稳定应用根，cwd/INIT_CWD、本地 Pi 配置、.data 和原生历史路径归属保持原契约；构建包不包含用户数据库、认证、模型配置或环境文件。原生依赖要求构建与运行平台/架构/Node ABI兼容。打包不覆盖已有输出、不迁移数据、不启停服务。Next生产构建阶段（NEXT_PHASE=phase-production-build）数据库模块仅初始化进程内临时内存库，不创建目录或打开用户库；正式运行仍按固定路径和历史兼容检查。
+OPS-006：发布支持 --without-node-modules 选项，跳过依赖目录并随包带入原始 package.json/package-lock.json；服务器执行 npm ci --omit=dev 安装锁定运行依赖后 node server.js 启动，不编译应用。默认继续随包带依赖。无依赖包不保证跨平台编译产物兼容，原生依赖由运行端安装。生产支持 Next standalone 独立发布目录，包含 server.js、编译产物、静态资源、追踪依赖、runtime/database SQL 和 systemd 启动工具，不依赖应用 TS/TSX 源码或服务器 npm install/build。Schema 在发布目录从 runtime/database 读取，源码运行仍读取原 SQL；不改目标模型或迁移。发布目录为稳定应用根，cwd/INIT_CWD、本地 Pi 配置、.data 和原生历史路径归属保持原契约；构建包不包含用户数据库、认证、模型配置或环境文件。原生依赖要求构建与运行平台/架构/Node ABI兼容。OPS-007：npm run release 由 scripts/release.cjs 串行编排，固定在 .next-release 构建，与默认开发目录 .next 隔离；忽略继承的 AI_WORKSPACE_BUILD_DIR，防止误用开发产物。取得发布锁后先校验并删除旧 .next-release（包含缓存），再完整构建并打包到临时目录，成功后发布到默认 release；已有纯发布包临时改名为 release-previous-<唯一标识>，新包放入成功后自动删除该旧包，切换失败时恢复原目录。旧包清理失败须报告残留位置，不伪装为发布失败；不扫描删除其他历史目录。开发目录 .next 不参与清理。含 .data、模型/认证/环境配置、符号链接或缺少发布标识的目录拒绝替换；显式指定的已存在输出仍拒绝覆盖。根目录发布锁阻止并发发布；失败不将旧构建作为新包发布。完成输出绝对目录与 Build ID，release.json 记录打包时间。低层 package-release.cjs 仍仅复制指定构建且拒绝覆盖；不迁移数据、不启停服务。Next生产构建阶段（NEXT_PHASE=phase-production-build）数据库模块仅初始化进程内临时内存库，不创建目录或打开用户库；正式运行仍按固定路径和历史兼容检查。
 
 OPS-005：next.config.mjs 从 AI_WORKSPACE_ALLOWED_DEV_ORIGINS 读取开发资源允许来源，以逗号分隔并去掉首尾空白及空项；未配置时为空数组，保留 Next 默认来源规则，不硬编码部署 IP。只配置开发资源/HMR 校验，不改变监听地址、业务 API、持久模型或 Pi 归属，不调用 Pi。
 

@@ -279,8 +279,9 @@ export function createSessionExecutionService(dependencies: {
             .catch((error) => {
               const cancelled = error instanceof DomainError && error.code === "REQUEST_ABORTED";
               timing(cancelled ? "cancelled" : "failed");
-              sessions.updateRuntime(sessionId, { state: cancelled ? "idle" : "unavailable" });
-              if (cancelled) queue.push({ type: "session_state", state: "idle" });
+              const imageRejected = error instanceof DomainError && error.code === 'MODEL_IMAGE_UNSUPPORTED';
+              sessions.updateRuntime(sessionId, { state: cancelled || imageRejected ? "idle" : "unavailable" });
+              if (cancelled || imageRejected) queue.push({ type: "session_state", state: "idle" });
               const timeout = cancelled && timeouts.delete(sessionId);
               if (timeout) lastTimeouts.add(sessionId);
               queue.push({ type: "error", code: timeout ? "SESSION_BACKGROUND_TIMEOUT" : error instanceof DomainError ? error.code : "RUNTIME_ERROR", message: timeout ? "会话离开后运行超时并已停止" : error instanceof DomainError ? error.message : "Pi Runtime 执行失败", recoverable: true });
@@ -294,7 +295,7 @@ export function createSessionExecutionService(dependencies: {
         } catch (error) {
           const cancelled = error instanceof DomainError && error.code === "REQUEST_ABORTED";
           timing(cancelled ? "cancelled" : "failed");
-          if (runtimeStarted) sessions.updateRuntime(sessionId, { state: cancelled ? "idle" : "unavailable" });
+          if (runtimeStarted) sessions.updateRuntime(sessionId, { state: cancelled || error instanceof DomainError && error.code === 'MODEL_IMAGE_UNSUPPORTED' ? "idle" : "unavailable" });
           yield {
             type: "error",
             code: error instanceof DomainError ? error.code : "RUNTIME_ERROR",

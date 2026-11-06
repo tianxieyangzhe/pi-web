@@ -6,6 +6,8 @@ FILE-003：新增GET /api/workspaces/:id/sessions/:sessionId/files/content与fil
 FILE-002：工作区文件预览同步支持通用03定义的XLSX/PPTX/PDF派生格式，按工作区项目归属读取；PDF仍经同范围download API获取，不新增Workspace模型/表或授权。页面复用文件浮窗与原件下载，验收按05 FILE-002的两类API测试。
 
 
+IMG-FAIL-001：图片输入不支持沿用03的明确错误分类；Workspace消息已有已知DomainError的failed收尾，保持idle，未确认结束仍保留unknown；不自动修改旧请求证据。
+
 ## FILE-001 工作区文件下载与Word预览
 
 GET /api/workspaces/:id/projects/:projectId/files/download?path=相对路径：application先从Workspace读取并校验WorkspaceProject归属，错误NOT_FOUND/404；其余下载头、50MB上限、原始字节及失败契约复用03 FILE-001。GET同路径files/content扩展通用FilePreview与DOCX内容块，取代WSP-016仅UTF-8限制；保留根目录身份与路径边界检查，并统一执行通用敏感路径/真实文件身份校验。只读项目文件，不写三张Workspace表、不调用Pi或模型，不产生新持久对象。已有文件浮窗投影预览及下载按钮，关闭/切换丢弃晚响应；相对链接从默认项目解析，绝对链接仍必须属于工作区项目。

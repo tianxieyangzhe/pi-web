@@ -27,7 +27,7 @@ function packageRelease(root,destination=path.join(root,'release'),{withoutNodeM
  for(const name of schemas)fs.copyFileSync(path.join(root,'src/infrastructure/database',name),path.join(destination,'runtime/database',name));
  fs.mkdirSync(path.join(destination,'scripts'),{recursive:true});
  for(const name of ['start-systemd.sh','systemd.cjs'])fs.copyFileSync(path.join(root,'scripts',name),path.join(destination,'scripts',name));
- fs.writeFileSync(path.join(destination,'release.json'),JSON.stringify({dependencies:withoutNodeModules?'install-on-server':'included',platform:process.platform,arch:process.arch,node:process.versions.node,nodeModulesABI:process.versions.modules,buildId:fs.readFileSync(path.join(build,'BUILD_ID'),'utf8').trim()},null,2)+'\n');
+ fs.writeFileSync(path.join(destination,'release.json'),JSON.stringify({generatedAt:new Date().toISOString(),dependencies:withoutNodeModules?'install-on-server':'included',platform:process.platform,arch:process.arch,node:process.versions.node,nodeModulesABI:process.versions.modules,buildId:fs.readFileSync(path.join(build,'BUILD_ID'),'utf8').trim()},null,2)+'\n');
  fs.writeFileSync(path.join(destination,'RUN.txt'),(withoutNodeModules?'First install locked production dependencies: npm ci --omit=dev\n':'')+'Run from this directory with compatible Node.js >=22.19.0:\n  HOSTNAME=0.0.0.0 PORT=3000 node server.js\nSet INIT_CWD to this directory if inherited from another npm command.\nKeep the deployment path stable; .data and Pi session identities must be preserved.\nProvide models.json/settings.json and credentials separately; no user data is included.\nBuild and run on compatible OS, architecture, libc and Node ABI.\n');
  return destination;
 }

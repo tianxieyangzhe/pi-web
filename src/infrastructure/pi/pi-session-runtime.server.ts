@@ -375,7 +375,7 @@ export class PiSessionRuntime implements PiRuntimePort, PiContextPort {
       if(!settled||!piHandle.session.isIdle)throw new DomainError('REQUEST_UNKNOWN','模型或工具循环终结尚未确认',409,true);
       if(settledAborted)throw new DomainError('REQUEST_ABORTED','请求已停止',409,true);
       const last=piHandle.session.messages.filter(item=>item.role==="assistant").at(-1) as {stopReason?:string;errorMessage?:string} | undefined;
-      if(last?.stopReason==="error") { if(/context|token.*limit|maximum.*length/i.test(last.errorMessage??""))throw new DomainError("CONTEXT_LIMIT_REACHED","原生上下文已满，请在检查中手动压缩后重新发送",409,true);throw new DomainError("RUNTIME_ERROR", references?.some(item => item.type === "image") ? "模型请求失败；模型或服务可能不支持图片输入" : "模型请求失败，请检查配置或恢复状态",503,true); }
+      if(last?.stopReason==="error") { if(/(?:does not|doesn't|do not|not|unsupported|cannot|can't).{0,60}(?:support|accept|process).{0,40}(?:image|vision)|(?:image|vision).{0,60}(?:not supported|unsupported|not allowed)|unsupported.{0,30}(?:image|vision)/i.test(last.errorMessage??""))throw new DomainError('MODEL_IMAGE_UNSUPPORTED','当前模型不支持此图片输入，请切换模型后重试',422,true);if(/context|token.*limit|maximum.*length/i.test(last.errorMessage??""))throw new DomainError("CONTEXT_LIMIT_REACHED","原生上下文已满，请在检查中手动压缩后重新发送",409,true);throw new DomainError("RUNTIME_ERROR", references?.some(item => item.type === "image") ? "模型请求失败；模型或服务可能不支持图片输入" : "模型请求失败，请检查配置或恢复状态",503,true); }
       if(last?.stopReason==="aborted")throw new DomainError("REQUEST_ABORTED","请求已停止",409,true);
     } finally {
       if(promptStarted)await piHandle.session.waitForIdle();

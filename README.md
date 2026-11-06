@@ -118,7 +118,7 @@ npm run release -- --without-node-modules
 ```text
 release/
 ├── server.js
-├── .next/              # 编译产物和静态资源
+├── .next-release/      # 独立生产编译产物和静态资源
 ├── runtime/database/   # SQL 运行资源
 ├── package.json
 ├── package-lock.json
@@ -129,13 +129,17 @@ release/
 
 如果项目有 `public/`，也会一并复制。发布包不包含 `node_modules`、应用 TS/TSX 源码、用户 `.data`、模型配置、认证或环境文件。
 
-输出目录已存在时拒绝覆盖。后续可构建并打包到一个新的目录，例如 `release-new/`：
+`npm run release` 固定使用 `.next-release/` 构建，不读取开发服务使用的 `.next/`，也不受继承的 `AI_WORKSPACE_BUILD_DIR` 影响。每次先自动删除旧 `.next-release/`（包含构建缓存），再完整构建和暂存打包，成功后更新默认 `release/`，无需手动删除产物。旧发布包只在切换期间临时保留，切换成功后自动删除；构建或切换失败则保留或恢复原包。若旧包清理失败，会明确输出残留路径。不会扫描删除其他历史备份。只有最后出现 `Release ready` 和 `Build ID` 才表示发布包就绪。`release.json` 同时记录 `generatedAt` 和 `buildId`。
+
+默认目录含 `.data`、模型/认证/环境配置，或不是可识别的发布包时，拒绝替换。此命令用于构建机，不用于更新正在运行的部署目录。并发发布由 `.release.lock/` 阻止；进程被强制终止后，须确认没有发布进程再手动移除残留锁。
+
+也可指定一个新的输出目录，例如 `release-new/`；显式指定的目录已存在时仍拒绝覆盖：
 
 ```bash
-npm run release -- release- --without-node-modules
+npm run release -- release-new --without-node-modules
 ```
 
-它等价于先运行 `npm run build`，再运行 `node scripts/package-release.cjs release-new --without-node-modules`。**直接运行打包脚本只复制已有编译产物，不会编译最新源码，也不检查构建是否过期。** `--without-node-modules` 只控制是否携带依赖，不改变构建行为。
+所有 `npm run release` 命令都会先重新执行生产构建，再打包同一 `.next-release/` 中的产物。**直接运行底层 `node scripts/package-release.cjs` 仍只复制已有编译产物，默认读取 `.next/`，不会编译最新源码，也不检查构建是否过期；日常发布统一使用 `npm run release`。** `--without-node-modules` 只控制是否携带依赖，不改变构建行为。
 
 **构建输出、压缩来源和上传文件必须对应同一份新包。** 如果生成的是 `release-new/`，就必须从该目录压缩；同时存在的旧 `release/` 不会自动更新：
 
@@ -241,7 +245,7 @@ pm2 restart ai-workspace
 
 按以下顺序核对：
 
-1. 源码已更新，并重新执行了构建；单独执行 `node scripts/package-release.cjs` 不会构建。
+1. 源码已更新，`npm run release` 已成功退出并输出 `Release ready` 和 `Build ID`；单独执行 `node scripts/package-release.cjs` 不会构建。
 2. 压缩命令的 `-C` 指向本次实际生成的目录，例如 `release-new`，没有继续打包旧 `release`。
 3. 在服务器实际部署目录运行 `node -p "require('./release.json').buildId"`，与本地新包的 Build ID 对比。
 4. 运行 `pm2 describe ai-workspace`，核对 `script path` 指向该目录的 `server.js`，`exec cwd` 也是该固定目录；从其他目录执行 `pm2 restart` 不会改变原来的启动路径。
