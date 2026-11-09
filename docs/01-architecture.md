@@ -104,13 +104,13 @@ IMG-FAIL-001：Pi适配层仅在明确图片能力错误及可靠终结/落盘�
 
 OPS-006：发布支持 --without-node-modules 选项，跳过依赖目录并随包带入原始 package.json/package-lock.json；服务器执行 npm ci --omit=dev 安装锁定运行依赖后 node server.js 启动，不编译应用。默认继续随包带依赖。无依赖包不保证跨平台编译产物兼容，原生依赖由运行端安装。生产支持 Next standalone 独立发布目录，包含 server.js、编译产物、静态资源、追踪依赖、runtime/database SQL 和 systemd 启动工具，不依赖应用 TS/TSX 源码或服务器 npm install/build。Schema 在发布目录从 runtime/database 读取，源码运行仍读取原 SQL；不改目标模型或迁移。发布目录为稳定应用根，cwd/INIT_CWD、本地 Pi 配置、.data 和原生历史路径归属保持原契约；构建包不包含用户数据库、认证、模型配置或环境文件。原生依赖要求构建与运行平台/架构/Node ABI兼容。OPS-007：npm run release 由 scripts/release.cjs 串行编排，固定在 .next-release 构建，与默认开发目录 .next 隔离；忽略继承的 AI_WORKSPACE_BUILD_DIR，防止误用开发产物。取得发布锁后先校验并删除旧 .next-release（包含缓存），再完整构建并打包到临时目录，成功后发布到默认 release；已有纯发布包临时改名为 release-previous-<唯一标识>，新包放入成功后自动删除该旧包，切换失败时恢复原目录。旧包清理失败须报告残留位置，不伪装为发布失败；不扫描删除其他历史目录。开发目录 .next 不参与清理。含 .data、模型/认证/环境配置、符号链接或缺少发布标识的目录拒绝替换；显式指定的已存在输出仍拒绝覆盖。根目录发布锁阻止并发发布；失败不将旧构建作为新包发布。完成输出绝对目录与 Build ID，release.json 记录打包时间。低层 package-release.cjs 仍仅复制指定构建且拒绝覆盖；不迁移数据、不启停服务。Next生产构建阶段（NEXT_PHASE=phase-production-build）数据库模块仅初始化进程内临时内存库，不创建目录或打开用户库；正式运行仍按固定路径和历史兼容检查。
 
-OPS-005：next.config.mjs 从 AI_WORKSPACE_ALLOWED_DEV_ORIGINS 读取开发资源允许来源，以逗号分隔并去掉首尾空白及空项；未配置时为空数组，保留 Next 默认来源规则，不硬编码部署 IP。只配置开发资源/HMR 校验，不改变监听地址、业务 API、持久模型或 Pi 归属，不调用 Pi。
+OPS-005：next.config.mjs 默认允许任意IPv4地址及多段域名（Next模式 **.*）、本机主机名和本机IPv6地址访问开发资源与HMR，不硬编码部署IP；AI_WORKSPACE_ALLOWED_DEV_ORIGINS 继续作为追加来源，以逗号分隔并去掉首尾空白及空项。只配置开发资源/HMR 校验，不改变监听地址、业务 API、持久模型或 Pi 归属，不调用 Pi。
 
 OPS-004：web/api/random-uuid.ts 统一提供浏览器 API 请求键和本地附件标识的安全随机 UUID，兼容公网 HTTP；不依赖 Node crypto，不修改全局 crypto，不创建持久模型或调用 Pi。
 
 OPS-003：Next配置采用next.config.mjs，构建manifest插件采用显式.cjs导入，不依赖配置加载阶段的TypeScript扩展解析或SWC原生二进制；保留开发manifest原子替换行为。旧glibc平台的SWC回退与后续原生模块兼容性由部署环境验证，不自动升级系统库。
 
-OPS-002：开发、生产及systemd默认监听localhost:3000；可显式指定0.0.0.0、任意本机IPv4或IPv6监听地址，不设来源IP白名单。监听由Next CLI与启动脚本配置，不新增跨域API或修改业务归属校验。
+OPS-002：开发、生产及systemd默认监听0.0.0.0:3000，接受所有IPv4网卡上的访问，PM2继承npm脚本监听配置；可显式指定任意本机IPv4或IPv6监听地址，不设来源IP白名单。监听由Next CLI与启动脚本配置，不新增跨域API或修改业务归属校验。
 
 OPS-001：Linux systemd以单实例长驻Node运行生产Next服务。scripts/start-systemd.sh定位仓库根作为WorkingDirectory与INIT_CWD，exec已选Node的next start，保持配置、.data及Pi恢复身份，不调用Pi或迁移数据库。scripts/systemd.cjs仅生成/安装unit（user默认，system显式指定非root运行用户），安装只写unit并daemon-reload，不自动构建/启动/enable。服务保留运行用户HOME与可执行PATH，不启用会遮蔽用户项目/家目录/临时文件的沙箱；停止信号传给Node进程组，stdout/stderr交journald。使用说明在scripts/systemd-guide.md；版本升级构建与服务启停由操作者单独执行，不由应用启动隐式完成。
 

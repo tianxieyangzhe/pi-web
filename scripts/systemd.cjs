@@ -7,13 +7,13 @@ const help=`Usage: node scripts/systemd.cjs <render|install> [options]
   --app-dir PATH     Repository root (default: script's parent directory)
   --node PATH        Absolute Node executable (default: current Node)
   --port NUMBER      Listen port (default: 3000)
-  --host ADDRESS     Listen address (default: localhost)
+  --host ADDRESS     Listen address (default: 0.0.0.0)
   --name NAME        Unit name without .service (default: ai-workspace)
   --force            Allow install to replace a different existing unit
 Install reloads systemd only; it does not build, enable, start or restart the app.
 `;
 function parse(argv){
- const options={command:argv[0],system:false,user:null,appDir:path.resolve(__dirname,'..'),node:process.execPath,port:'3000',host:'localhost',name:'ai-workspace',force:false};
+ const options={command:argv[0],system:false,user:null,appDir:path.resolve(__dirname,'..'),node:process.execPath,port:'3000',host:'0.0.0.0',name:'ai-workspace',force:false};
  if(!['render','install'].includes(options.command))throw Error(help);
  const fields={'--user':'user','--app-dir':'appDir','--node':'node','--port':'port','--host':'host','--name':'name'};
  for(let i=1;i<argv.length;i++){const arg=argv[i];if(arg==='--system')options.system=true;else if(arg==='--force')options.force=true;else if(fields[arg]){const value=argv[++i];if(!value||value.startsWith('--'))throw Error(`Missing value for ${arg}`);options[fields[arg]]=value;}else throw Error(`Unknown option: ${arg}`);}

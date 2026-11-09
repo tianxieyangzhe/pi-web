@@ -43,13 +43,13 @@ OPS-006依赖下载选项（已实现，打包定向通过；服务器安装待�
 
 OPS-006（已实现，本机独立产物验证通过；Ubuntu实机待验）：npm run release 生成可独立部署的 standalone 发布目录；运行端仅需兼容 Node 和系统运行依赖，使用 node server.js 或随包 systemd 脚本。tests/standalone-release.test.cjs 四项验证包内容、静态资源/SQL、无应用源码及用户数据、覆盖保护、缺失构建拒绝、构建阶段内存库且不打开/创建用户库、systemd产物入口；与tests/next-dev-origins.test.cjs及tests/systemd-scripts.test.cjs合计9项通过。临时完整副本npm run release真实构建（含Next类型检查）通过，构建不创建.data；移出产物并删除副本src/web/node_modules后启动独立server.js，首页/静态JS及projects/agents/mcps/workspaces四API均200，Pi SDK从产物导入成功。全部使用临时库、隔离HOME和配置，仅启停临时测试进程，无真实模型调用或用户服务/数据库改写；脚本语法及git diff --check通过。原生依赖跨系统/架构不可直接复用，Linux产物须在兼容环境构建，未宣称Ubuntu真实模型验收。
 
-OPS-005（已实现，配置定向验证通过）：开发资源允许来源通过 AI_WORKSPACE_ALLOWED_DEV_ORIGINS 配置，支持多个 IP/域名与 Next 子域名模式，去掉空白和空项；未设置或空值不额外放行，保留 Next 默认规则。配置项仅开发模式使用，修改后重启。tests/next-dev-origins.test.cjs 两项通过，直接加载 Next 配置验证默认、空值、多来源及环境切换不残留部署 IP；node --check next.config.mjs、git diff --check通过。不启动服务或操作数据库，真实公网 HMR 待现场验证。
+OPS-005（已实现，配置静态核验通过，真实HMR待现场验收）：开发资源及HMR默认允许任意IPv4地址、多段域名、本机主机名和本机IPv6地址，不要求逐个登记访问IP。AI_WORKSPACE_ALLOWED_DEV_ORIGINS 追加额外来源，支持多个IP/域名与Next子域名模式，去掉空白和空项；空值仍保留默认来源。验收直接加载配置并用当前Next来源匹配器核对默认来源与追加来源，修改后重启生效。不启动服务或操作数据库。
 
 OPS-004（已实现，函数与客户端定向验证通过；真实浏览器待验）：公网 HTTP 访问时，浏览器缺少 crypto.randomUUID 不得阻断创建表单、附件及 API 提交；统一使用安全随机 UUID，原生方法缺失时以 getRandomValues 生成 UUID v4，不使用 Math.random。既有 API 幂等键的作用域、重试复用、权限、模型及 Pi 归属不变，无数据库迁移。tests/browser-random-uuid.test.cjs（4项）验证原生与回退路径、UUID 格式与安全随机来源、项目/工作区/消息/历史Bot客户端实际提交、显式幂等键保留，以及无安全随机源时阻止提交；tests/session-subscription-client.test.cjs（3项）验证订阅/心跳/重连与发送，合计7项通过。git diff --check通过，web中无直接crypto.randomUUID调用；未启动服务、操作用户库或调用真实模型，公网浏览器现场待验。
 
 OPS-003（已实现，定向测试通过）：修复Linux旧glibc/SWC回退下next.config.ts扩展解析失败；配置与插件直接由Node加载，不启动服务，定向验证配置导入、webpack插件挂载及原子manifest行为。无模型/API或数据库变更。实际运行tests/atomic-manifest.test.cjs（5项，直接Node导入配置、开发插件挂载、manifest原子写/失败保留及真实临时Webpack编译）、tests/systemd-scripts.test.cjs（3项），共8项通过；npm run typecheck、git diff --check通过。未启动用户服务，未在CentOS实机验证SWC WASM或系统原生库兼容性。
 
-OPS-002（已实现，定向测试通过）：启动默认绑定localhost，支持显式绑定任意本机IP；生产CLI与systemd支持指定本机IPv4/IPv6地址，应用不新增IP白名单。定向验证默认地址与显式覆盖，不改防火墙或用户服务。实际运行tests/systemd-scripts.test.cjs三项通过，含默认localhost、指定IPv4/IPv6及启动脚本覆盖；Bash/Node语法、git diff --check通过。未启动服务或做真实网络连通验收。
+OPS-002（已实现，启动配置静态核验通过，网络连通待现场验收）：开发、生产CLI与systemd默认绑定0.0.0.0:3000，PM2执行npm脚本时继承相同默认值，不设来源IP白名单；保留显式本机IPv4/IPv6地址覆盖。验收核对npm脚本、systemd生成结果与启动脚本默认值，不改防火墙、用户服务或数据库。未启动服务或做真实网络连通验收。
 
 OPS-001（脚本已实现，受控测试通过；Linux实机待验）：提供可审查systemd unit生成/安装脚本及生产启动脚本；支持user/system作用域，固定cwd/INIT_CWD、明确运行用户HOME/Node/PATH、端口/监听地址可配、异常重启及journald。缺依赖/构建失败时明确退出，不自动构建/迁移/启停；安装不自动enable/start，已有不同unit默认不覆盖。验证参数与systemd转义、安装写入边界、启动参数/工作目录和预检，使用临时目录和假命令，不碰用户服务/数据库。实际运行tests/systemd-scripts.test.cjs三项通过（unit参数/转义、启动前置检查/exec与配置根、临时unit安装及覆盖保护）；bash -n scripts/start-systemd.sh、node --check scripts/systemd.cjs、git diff --check通过。未生产构建，未调用真实systemctl、安装unit或启停服务；Linux systemd实机验收留给部署步骤。
 

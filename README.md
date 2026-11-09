@@ -79,17 +79,13 @@ pm2 restart ai-workspace --update-env
 npm run dev
 ```
 
-默认访问 <http://localhost:3000>。远程开发时，可在项目根目录 `.env.local` 配置浏览器访问使用的 IP 或域名：
+开发、生产（`npm start`）和systemd默认监听 `0.0.0.0:3000`，PM2运行npm脚本时同样生效。本机访问 <http://localhost:3000>，其他设备访问 `http://服务器IP:3000`。开发资源及热更新默认允许任意IPv4地址、多段域名、本机主机名和本机IPv6地址，无需逐个配置IP。额外的单段域名等来源可在项目根目录 `.env.local` 追加：
 
 ```dotenv
 AI_WORKSPACE_ALLOWED_DEV_ORIGINS=106.12.15.161,dev.example.com
 ```
 
-多个来源用逗号分隔，不带协议、端口或路径；支持 `*.example.com`，不支持单独的 `*` 或 `**`。修改后重启，再监听全部 IPv4 网卡：
-
-```bash
-npm run dev -- --hostname 0.0.0.0
-```
+多个来源用逗号分隔，不带协议、端口或路径；支持 `*.example.com`，不支持单独的 `*` 或 `**`。修改后重启。需要IPv6监听时，npm启动命令可追加 `-- --hostname ::`，systemd使用 `--host ::`。
 
 该配置只控制开发资源及热更新的来源校验。开发模式首次访问会编译路由，生产部署使用下文的构建产物。
 

@@ -1,3 +1,4 @@
+import { hostname, networkInterfaces } from "node:os";
 import manifestPlugin from "./src/infrastructure/build/atomic-manifest-plugin.cjs";
 const { AtomicManifestPlugin } = manifestPlugin;
 
@@ -13,10 +14,19 @@ const nextConfig = {
     ],
   },
   ...(process.env.AI_WORKSPACE_BUILD_DIR ? {distDir:process.env.AI_WORKSPACE_BUILD_DIR} : {}),
-  allowedDevOrigins: (process.env.AI_WORKSPACE_ALLOWED_DEV_ORIGINS ?? "")
-    .split(",")
-    .map(origin => origin.trim())
-    .filter(Boolean),
+  allowedDevOrigins: [
+    // Next rejects bare wildcards; **.* matches IPv4 addresses and dotted hosts.
+    "**.*",
+    hostname(),
+    ...Object.values(networkInterfaces()).flatMap(addresses =>
+      (addresses ?? []).filter(address => address.family === "IPv6")
+        .flatMap(address => [address.address, `[${address.address}]`]),
+    ),
+    ...(process.env.AI_WORKSPACE_ALLOWED_DEV_ORIGINS ?? "")
+      .split(",")
+      .map(origin => origin.trim())
+      .filter(Boolean),
+  ],
   devIndicators: false,
   reactStrictMode: true,
   // Pi loads project-local extensions, credentials and provider modules with
