@@ -44,6 +44,9 @@ export type CatalogDependencies = {
   mcps: McpRepositoryPort;
   agents: AgentRepositoryPort;
   normalizeProjectRoot(value: unknown): string;
+  resolveAssistantSource?:(source:NonNullable<import('@/domain/assistant-document').UnifiedAssistantDefinition['source']>)=>Array<{id:string;name:string;rootPath:string}>;
+  validateAssistant?:(definition:import("@/domain/models").AgentDefinition)=>void;
+  assistantInUse?:(id:string)=>boolean;
   assertProjectMutable?:(id:string)=>void;
   getAgentVersion?:(id:string,revision:number,sha256:string)=>Agent|null;
 };

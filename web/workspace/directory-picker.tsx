@@ -1,3 +1,4 @@
+import {Button} from '../components/button';
 import {useEffect,useRef,useState} from 'react';
 import {ArrowLeft,Folder,X} from 'lucide-react';
 import {workspaceApi} from '../api/workspace-client';
@@ -28,7 +29,7 @@ export function DirectoryPicker({ onSelect, onClose }: { onSelect: (path: string
   return <dialog ref={dialog} className="m-auto w-[min(44rem,90vw)] rounded-xl border border-slate-200 bg-white p-5 text-slate-700 shadow-xl backdrop:bg-slate-900/30" onClose={onClose} aria-label="选择项目目录">
     <header className="mb-4 flex items-center justify-between">
       <h2 className="text-base font-semibold">选择项目目录</h2>
-      <button type="button" aria-label="关闭目录选择器" onClick={onClose}><X size={18}/></button>
+      <Button variant="ghost" size="icon" type="button" aria-label="关闭目录选择器" onClick={onClose}><X size={18}/></Button>
     </header>
     <form className="mb-3 flex items-end gap-2" onSubmit={event => { event.preventDefault(); if (pathInput.trim() && !loading) navigate(pathInput.trim()); }}>
       <label className="min-w-0 flex-1 text-sm" htmlFor="workspace-directory-path">目录路径
@@ -36,21 +37,21 @@ export function DirectoryPicker({ onSelect, onClose }: { onSelect: (path: string
           placeholder="输入或粘贴绝对路径" onChange={event => setPathInput(event.target.value)}
           className="mt-2 block w-full rounded-md border border-slate-200 px-3 py-2 font-mono text-sm outline-none focus:border-emerald-600 disabled:opacity-50"/>
       </label>
-      <button type="submit" disabled={loading || !pathInput.trim()} className="rounded-md bg-emerald-700 px-3 py-2 text-sm text-white disabled:opacity-40">跳转</button>
+      <Button variant="primary" type="submit" disabled={loading || !pathInput.trim()} >跳转</Button>
     </form>
     <div className="mb-3 flex items-center gap-2">
-      <button type="button" disabled={!listing?.parent || loading} onClick={() => listing?.parent && navigate(listing.parent)} aria-label="上一级目录"><ArrowLeft size={16}/></button>
+      <Button variant="ghost" size="icon" type="button" disabled={!listing?.parent || loading} onClick={() => listing?.parent && navigate(listing.parent)} aria-label="上一级目录"><ArrowLeft size={16}/></Button>
       <span className="min-w-0 break-all font-mono text-xs">{listing?.path ?? '正在读取目录…'}</span>
     </div>
     <div className="max-h-80 min-h-40 overflow-auto rounded-lg border border-slate-200">
       {loading ? <p className="p-3 text-sm" role="status">正在加载…</p> : !error && listing?.directories.map(entry =>
-        <button key={entry.path} type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-slate-50" onClick={() => navigate(entry.path)}><Folder size={15}/>{entry.name}</button>)}
+        <Button variant="ghost" size="row" key={entry.path} type="button"  onClick={() => navigate(entry.path)}><Folder size={15}/>{entry.name}</Button>)}
     </div>
     {error && <p role="alert" className="mt-3 text-sm text-red-700">{error}</p>}
     <footer className="mt-4 flex justify-end gap-2">
-      <button type="button" className="rounded-md px-3 py-2 text-sm hover:bg-slate-100" onClick={onClose}>取消</button>
-      <button type="button" className="rounded-md bg-emerald-700 px-3 py-2 text-sm text-white disabled:opacity-40"
-        disabled={!listing || loading || !!error || pathInput.trim() !== listing.path} onClick={() => listing && onSelect(listing.path)}>选择此目录</button>
+      <Button type="button"  onClick={onClose}>取消</Button>
+      <Button variant="primary" type="button"
+        disabled={!listing || loading || !!error || pathInput.trim() !== listing.path} onClick={() => listing && onSelect(listing.path)}>选择此目录</Button>
     </footer>
   </dialog>;
 }

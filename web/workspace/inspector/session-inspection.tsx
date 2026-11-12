@@ -1,3 +1,4 @@
+import {Button} from '../../components/button';
 import { useEffect, useId, useMemo, useState } from 'react';
 import type { SessionTree } from '../../domain/models';
 function previewText(content:unknown):string {
@@ -8,7 +9,13 @@ function previewText(content:unknown):string {
 function entryPreview(entry:SessionTree['entries'][number]['entry']) {
   const message=entry.message as {role?:string;content?:unknown;toolName?:string;command?:string;stopReason?:string;errorMessage?:string}|undefined;
   if(entry.type==='message'&&message){
-    if(message.role==='user'||message.role==='assistant')return {kind:`${message.role}: `,text:previewText(message.content)|| (message.stopReason==='aborted'?'(aborted)':message.errorMessage?'(error)':'(no content)'),tone:message.role==='user'?'text-sky-700':'text-emerald-700'};
+    if(message.role==='user'||message.role==='assistant'){
+      const blocks:Array<{type?:string;name?:string}>=Array.isArray(message.content)?message.content.filter(part=>part&&typeof part==='object'):[];
+      const tools=blocks.filter(block=>block.type==='toolCall').map(block=>block.name||'tool');
+      const types=[...new Set(blocks.filter(block=>block.type!=='text').map(block=>block.type==='thinking'?'思考':block.type==='image'?'图片':block.type||'未知内容'))];
+      const fallback=message.stopReason==='aborted'?'(aborted)':message.errorMessage?'(error)':tools.length?`工具调用 · ${tools.join('、')}`:types.length?types.join('、'):'(无正文)';
+      return {kind:`${message.role}: `,text:previewText(message.content)||fallback,tone:message.role==='user'?'text-sky-700':'text-emerald-700'};
+    }
     if(message.role==='toolResult')return {kind:`[${message.toolName||'tool'}]`,text:'',tone:'text-slate-500'};
     if(message.role==='bashExecution')return {kind:'[bash]: ',text:previewText(message.command),tone:'text-slate-500'};
     return {kind:`[${message.role||'message'}]`,text:'',tone:'text-slate-500'};
@@ -58,10 +65,10 @@ export function SessionTreeNavigator({tree,onLocate,onSelect,selected}:{tree:Ses
     {rows.map(({item,prefix,anomaly})=>{
       const preview=entryPreview(item.entry),chosen=selectedId===item.entry.id,active=activePath.has(item.entry.id),leaf=tree.activeLeafId===item.entry.id;
       const title=`${item.label?`[${item.label}] `:''}${preview.kind}${preview.text}`;
-      return <button type="button" key={item.entry.id} aria-current={chosen?'true':undefined} aria-label={`${title}${leaf?' · 当前叶子':active?' · 活动路径':''}${anomaly?' · 关系异常':''}`} title={`${title}\n${item.entry.id}`} className={`flex w-full min-w-0 items-center rounded-sm text-left hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-emerald-500 ${chosen?'bg-emerald-50 font-semibold':'text-slate-700'}`} onClick={()=>{onSelect(item.entry.id);onLocate(item.entry.id);}}>
+      return <Button variant="ghost" size="row" selected={chosen} type="button" key={item.entry.id} aria-current={chosen?'true':undefined} aria-label={`${title}${leaf?' · 当前叶子':active?' · 活动路径':''}${anomaly?' · 关系异常':''}`} title={`${title}\n${item.entry.id}`}  onClick={()=>{onSelect(item.entry.id);onLocate(item.entry.id);}}>
         <span aria-hidden="true" className="sticky left-0 w-[2ch] shrink-0 self-stretch text-emerald-700">{chosen?'›':' '}</span>
         <span className="min-w-0 flex-1 truncate"><span aria-hidden="true" className="whitespace-pre text-slate-400">{prefix}</span>{active&&<span aria-hidden="true" className="text-emerald-600">• </span>}{anomaly&&<span className="text-amber-700">[关系异常] </span>}{item.label&&<span className="text-amber-700">[{item.label}] </span>}<span className={preview.tone}>{preview.kind}</span>{preview.text}</span>
-      </button>;
+      </Button>;
     })}
     <p className="mt-1 text-slate-400" aria-label="会话树节点计数">  ({Math.max(0,rows.findIndex(row=>row.item.entry.id===selectedId)+1)}/{rows.length})</p>
   </nav>;
@@ -69,7 +76,7 @@ export function SessionTreeNavigator({tree,onLocate,onSelect,selected}:{tree:Ses
 export function SessionInspection({tree,settings,onLocate,selected,onSelect}:{tree:SessionTree;settings:import('react').ReactNode;onLocate:(id:string)=>void;selected:string|null;onSelect:(id:string)=>void}) {
   const [tab,setTab]=useState<'tree'|'settings'>('tree'),id=useId();
   useEffect(()=>{if(selected&&!tree.entries.some(item=>item.entry.id===selected))onSelect('');},[tree,selected,onSelect]);
-  return <div className="flex min-h-0 flex-1 flex-col overflow-hidden"><div role="tablist" className="flex shrink-0 border-b border-slate-200 px-4 pt-2" aria-label="会话检查内容">{(['tree','settings'] as const).map(value=><button key={value} id={`${id}-${value}-tab`} type="button" role="tab" aria-selected={tab===value} aria-controls={`${id}-${value}-panel`} tabIndex={tab===value?0:-1} onClick={()=>setTab(value)} onKeyDown={event=>{if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;event.preventDefault();const next=event.key==='Home'?'tree':event.key==='End'?'settings':value==='tree'?'settings':'tree';setTab(next);document.getElementById(`${id}-${next}-tab`)?.focus();}} className={`relative -mb-px min-w-0 flex-1 rounded-t-md border-b-2 px-4 py-2.5 text-sm transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-emerald-600 ${tab===value?'border-emerald-600 bg-emerald-50 font-semibold text-emerald-800':'border-transparent bg-transparent font-normal text-slate-400 hover:text-slate-600'}`}>{value==='tree'?'会话树':'Session 设置'}</button>)}</div><div className="relative grid min-h-0 grid-cols-1 grid-rows-[minmax(0,1fr)] overflow-hidden"><div role="tabpanel" id={`${id}-settings-panel`} aria-labelledby={`${id}-settings-tab`} tabIndex={tab==='settings'?0:-1} aria-hidden={tab!=='settings'} inert={tab!=='settings'} className={`min-h-0 overflow-auto ${tab==='settings'?'visible':'invisible'}`}><div className="space-y-5 p-5 text-sm">{settings}</div></div>{tab==='tree'&&<div role="tabpanel" id={`${id}-tree-panel`} aria-labelledby={`${id}-tree-tab`} tabIndex={0} className="absolute inset-0 overflow-auto"><SessionTreeNavigator tree={tree} onLocate={onLocate} selected={selected} onSelect={onSelect}/></div>}</div></div>;
+  return <div className="flex min-h-0 flex-1 flex-col overflow-hidden"><div role="tablist" className="flex shrink-0 border-b border-slate-200 px-4 pt-2" aria-label="会话检查内容">{(['tree','settings'] as const).map(value=><Button variant="tab" selected={tab===value} key={value} id={`${id}-${value}-tab`} type="button" role="tab" aria-selected={tab===value} aria-controls={`${id}-${value}-panel`} tabIndex={tab===value?0:-1} onClick={()=>setTab(value)} onKeyDown={event=>{if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;event.preventDefault();const next=event.key==='Home'?'tree':event.key==='End'?'settings':value==='tree'?'settings':'tree';setTab(next);document.getElementById(`${id}-${next}-tab`)?.focus();}} >{value==='tree'?'会话树':'Session 设置'}</Button>)}</div><div className="relative grid min-h-0 grid-cols-1 grid-rows-[minmax(0,1fr)] overflow-hidden"><div role="tabpanel" id={`${id}-settings-panel`} aria-labelledby={`${id}-settings-tab`} tabIndex={tab==='settings'?0:-1} aria-hidden={tab!=='settings'} inert={tab!=='settings'} className={`min-h-0 overflow-auto ${tab==='settings'?'visible':'invisible'}`}><div className="space-y-5 p-5 text-sm">{settings}</div></div>{tab==='tree'&&<div role="tabpanel" id={`${id}-tree-panel`} aria-labelledby={`${id}-tree-tab`} tabIndex={0} className="absolute inset-0 overflow-auto"><SessionTreeNavigator tree={tree} onLocate={onLocate} selected={selected} onSelect={onSelect}/></div>}</div></div>;
 }
 export function locateSessionEntry(id:string) {
   const target=[...document.querySelectorAll<HTMLElement>('[data-entry-id]')].find(element=>element.dataset.entryId===id);

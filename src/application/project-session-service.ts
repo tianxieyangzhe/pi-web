@@ -6,7 +6,7 @@ import type { ProjectRepositoryPort } from './ports/catalog';
 import type { SessionRepositoryPort } from './ports/core';
 import type { ProjectOperationStore } from './ports/project-operations';
 import { canonical, createdSessionId, hash, operationIdentity } from '@/domain/project-operations';
-import { acquireSession, sessionLocks } from './session-lock';
+import { assertSessionAvailable, isSessionDeleting, sessionLocks } from './session-lock';
 
 export function exactFields(body: Record<string,unknown>, allowed: string[]) {
   if(Object.keys(body).some(key=>!allowed.includes(key)))throw new DomainError('INVALID_INPUT','请求包含不支持的字段',400,true);
@@ -28,7 +28,7 @@ export function createProjectSessionService(dependencies: {
 }) {
   const {projects,sessions,operations}=dependencies;
   function project(id:string,active=false) {const value=projects.get(id);if(!value)throw new DomainError('NOT_FOUND','项目不存在',404,true);if(active&&value.status!=='active')throw new DomainError('PROJECT_UNAVAILABLE','项目当前不可用',409,true);return value;}
-  function get(projectId:string,id:string) {project(projectId);const value=sessions.get(id);if(!value||value.projectId!==projectId)throw new DomainError('NOT_FOUND','会话不存在',404,true);return value;}
+  function get(projectId:string,id:string) {project(projectId);const value=sessions.get(id);if(!value||value.projectId!==projectId)throw new DomainError('NOT_FOUND','会话不存在',404,true);assertSessionAvailable(id);return value;}
   function pending(value:Session) {return operations.list(value.projectId,value.id).filter(record=>!['completed','failed','acknowledged'].includes(record.phase)).map(record=>({operationId:record.operationId,operation:record.operation,status:dependencies.operationRunning?.(record.operationId)?'running' as const:'unknown' as const}));}
   function present(value:Session) {
     let unresolved:ReturnType<typeof pending>=[],corrupt=false;
@@ -37,13 +37,15 @@ export function createProjectSessionService(dependencies: {
     const history=!!value.nativeRef;
     const permission=(name:ActionName):{allowed:boolean;reason:string|null}=>{
       let reason:string|null=null;
-      if(name==='export')reason=history?null:'NO_NATIVE_REF';
+      if(isSessionDeleting(value.id))reason='SESSION_BUSY';
+      else if(name==='delete')reason=compatible?null:'SCHEMA_INCOMPATIBLE';
+      else if(name==='export')reason=history?null:'NO_NATIVE_REF';
       else if(!compatible)reason='SCHEMA_INCOMPATIBLE';
       else if(name==='interrupt')reason=['starting','running','interrupting'].includes(value.state)?null:'SESSION_NOT_RUNNING';
       else if(name==='cancelCompaction')reason=busy?null:'COMPACTION_NOT_RUNNING';
       else if(unknown)reason='REQUEST_UNKNOWN';
+      else if(name==='steer')reason=!active?'PROJECT_UNAVAILABLE':!lease?'RUNTIME_NOT_OPEN':value.state==='running'&&busy?null:'SESSION_NOT_RUNNING';
       else if(busy)reason='SESSION_BUSY';
-      else if(name==='delete')reason=null;
       else if(name==='fork')reason=!active?'PROJECT_UNAVAILABLE':!history?'NO_NATIVE_REF':null;
       else if(name==='restore')reason=history?null:'NO_NATIVE_REF';
       else if(!active)reason='PROJECT_UNAVAILABLE';
@@ -52,7 +54,7 @@ export function createProjectSessionService(dependencies: {
       else if(name==='adoptAgent'&&!value.agentId)reason='ROLE_BINDING_INVALID';
       return {allowed:reason===null,reason};
     };
-    const names:ActionName[]=['send','interrupt','end','restore','delete','compact','cancelCompaction','switchModel','fork','export','adoptAgent'];
+    const names:ActionName[]=['send','steer','interrupt','end','restore','delete','compact','cancelCompaction','switchModel','fork','export','adoptAgent'];
     const snapshot=value.agentSnapshot;
     const safeSnapshot=snapshot&&isRoleSnapshot(snapshot)?snapshotReference(snapshot):snapshot?{agentId:value.agentId!,revision:snapshot.revision,legacy:true as const}:null;
     const persisted={id:value.id,projectId:value.projectId,purpose:value.purpose,agentId:value.agentId,agentSnapshot:safeSnapshot,status:lease?'open' as const:'closed' as const,createdAt:value.createdAt,updatedAt:value.updatedAt};
@@ -81,6 +83,7 @@ export function createProjectSessionService(dependencies: {
     create: createRecord,
     async end(projectId:string,id:string,_key:string) {
       const value=get(projectId,id);
+      assertSessionAvailable(id);
       if(sessionLocks.has(id))throw new DomainError('SESSION_BUSY','请先停止回答或压缩',409,true);
       if(pending(value).length)throw new DomainError('REQUEST_UNKNOWN','请先核对未决操作',409,true);
       await dependencies.releaseHandle?.(id);return present(sessions.get(id)!);

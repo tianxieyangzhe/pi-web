@@ -1,4 +1,6 @@
 # 01｜架构：模型与 Pi 的归属
+UI-049/UI-050：连续工具调用复用现有Conversation/Disclosure。已重新检索官方Tool（https://elements.ai-sdk.dev/components/tool），其单工具折叠不能直接表达Pi多分支历史与跨实时/历史的连续组，沿用原生details及既有折叠样式，统一组件体系支持该语义时复核。等待沿用已评估的Loader/Spinner与WaitingIndicator；单轮统计按RUN-001由application/session-run-metrics收集Runtime公开message_end用量并计时，通过既有SSE发送，页面只显示最近一轮及Session累计；application复用messages已读取的全树派生tokenUsage，不另读历史或增加前端遍历。无新增Pi调用或持久模型。
+
 
 FILE-003：会话文件只读用例位于application/session-file-service，基础设施复用会话附件目录与有界文件读取，bootstrap注入SQL Session查询；不通过项目文件API绕过归属、不改变Pi/文件归属。
 
@@ -35,13 +37,13 @@ Agent 是独立可复用的版本化 Markdown 定义，无 Project owner；会�
 | models.json | `<applicationConfigRoot>/models.json` | `~/.pi/agent/models.json` |
 | settings.json | `<applicationConfigRoot>/settings.json` | `~/.pi/agent/settings.json` |
 
-两个文件分别选择来源。只在本地文件不存在（ENOENT）时读取对应全局文件；本地存在则整份使用，不读取、不合并全局对应文件。空文件、JSON 损坏、权限错误、字段无效均报告配置错误，不以回退掩盖。两级均缺失时按 Pi 原生无自定义文件的行为解析；需要默认模型的新会话/无原生选择的操作，缺少可确定的默认模型或认证时明确报错，不任取首项；已有原生选择按该型号校验，不因缺少未使用的默认项而替换或阻断。
+两个文件分别选择来源。只在本地文件不存在（ENOENT）时读取对应全局文件；本地存在则整份使用，不读取、不合并全局对应文件。空文件、JSON 损坏、权限错误、字段无效均报告配置错误，不以回退掩盖。两级均缺失时按 Pi 原生无自定义文件的行为解析；会话打开必须采用可确定且可用的默认模型，缺少默认模型或认证时明确报错，不任取首项；打开后的空闲操作按当前原生选择校验。
 
 模型通过当前依赖版本的 Pi ModelRuntime/ModelRegistry 原生解析和认证机制装配，完整支持 Pi 支持的模型、供应商及嵌套参数，不建立缩水白名单或丢弃未知字段后假装兼容；Pi 不支持的字段按其校验规则报错。包括 api、baseUrl、认证与环境变量引用、headers、兼容参数、reasoning、input、cost、contextWindow、maxTokens 等，新增 Pi 参数随依赖的原生契约适配。协议不限于单一供应商或 Chat Completions。凭据、配置全文、请求头和原生路径只在服务端使用。
 
 settings.json采用defaultProvider、defaultModel及enabledModels，不从另一份文件补值。enabledModels按Pi原生模型scope模式匹配（支持provider/id、通配与thinking后缀），用于模型列表及执行选择的过滤；省略或空数组不限制，非空但无匹配时无可用模型，字段类型错误报告配置错误。当前Session模型不存在、被过滤或认证不可用时，打开/恢复及下一次空闲操作自动采用配置默认模型；默认模型同样必须通过过滤及认证，默认也不可用才提示MODEL_UNAVAILABLE。不任意挑选其他模型，不重发失败请求。自动压缩必须开启并采用Pi默认参数，工具边界仍由应用契约决定。应用不再从环境文件中的固定模型三元组生成模型或提供备用模型；Pi 配置内显式声明的环境变量引用正常生效。
 
-新会话及无原生模型选择的会话采用有效默认模型；已有会话优先恢复 Pi 当前分支保存的 provider/model，已保存型号不可用时按MCFG-002自动回退默认模型，默认也不可用才报告模型不可用。用户切换只调用本会话的 Pi setModel，并保存原生 model_change，不写默认配置或 SQL 模型副本。会话思考等级通过Pi getSupportedThinkingLevels/getAvailableThinkingLevels及setThinkingLevel读取和修改，持久事实仅为原生thinking_level_change，不写SQL或默认配置；接口见03 PSES-019。手动压缩使用当前会话模型；Agent 编辑器使用默认模型，保持独立无工具边界。
+MCFG-003：新会话和已有会话每次打开均采用有效默认模型；精确恢复历史身份后，当前分支的provider/model与默认不同则调用Pi setModel并持久化model_change，相同则不重复追加。已有活动句柄空闲时同样检查，正在回复或压缩时保持本轮快照，下次空闲打开再对齐。默认不可用时返回MODEL_UNAVAILABLE及恢复用途租约。打开后手动选择的模型在本次会话操作中继续生效，空闲操作仍按MCFG-002校验可用性。用户切换只调用本会话的 Pi setModel，并保存原生 model_change，不写默认配置或 SQL 模型副本。会话思考等级通过Pi getSupportedThinkingLevels/getAvailableThinkingLevels及setThinkingLevel读取和修改，持久事实仅为原生thinking_level_change，不写SQL或默认配置；接口见03 PSES-019。手动压缩使用当前会话模型；Agent 编辑器使用默认模型；自定义润色无工具，项目生成按WAGENT-010在目标cwd使用读取工具。
 
 显式 contextWindow 和 maxTokens 必须进入实际 Runtime，分别用于上下文容量和最大输出限制，禁止应用硬编码容量或输出上限覆盖配置。缺省使用 Pi 解析结果；容量不能确认时指标为未知。配置读取发生在应用初始化、模型列表请求及后续操作的配置校验边界；运行中的模型/工具循环固定本次快照，变更在下一次空闲操作时生效，不在流中热替换。重新解析失败必须报告，不能用旧缓存伪装成功。应用不提供配置文件写入或隐式修改能力。
 
@@ -80,6 +82,7 @@ FILE-001：文件读取/下载用例在application/project-file-service，bootst
 
 | 场景 | 组件语义 | 现有例外或替代 |
 | --- | --- | --- |
+| 全应用按钮 | 原生Button / Prompt Input / Confirmation | 已重新检索官方组件目录（https://elements.ai-sdk.dev/components），其Prompt Input与Confirmation内含按钮但不提供独立应用级按钮入口；未引入shadcn依赖。由web/components/button.tsx集中包装原生button，上传触发器复用buttonStyles；以04 BUTTON-001为唯一外观规范。引入统一基础组件库时复核。 |
 | Session 消息与 Markdown 回复 | Conversation / Message / Response | 现有 `web/workspace/conversation/ai-elements/response.tsx` 提供安全 Markdown 子集；官方依赖可用后复核替换 |
 | 项目会话等待响应 | Loader / Spinner | 已检索官方 [Loader](https://elements.ai-sdk.dev/components/loader)，当前指向 shadcn Spinner，匹配加载语义；项目尚未引入 shadcn 组件体系，复用现有 lucide `LoaderCircle` 和 `.spin`，在项目会话 Feature Wrapper 中配合可访问状态文本；统一基础组件体系引入时复核。 |
 | Pi Session Tree entry（含工具） | Conversation / Message / Tool | 会话栏按 `03` 投影整棵树；工具内容及其他节点不得过滤，现有 `conversation.tsx` 可使用原生 disclosure 展开完整内容，官方组件能够承载节点和分支关系时复核 |
@@ -98,9 +101,13 @@ FILE-001：文件读取/下载用例在application/project-file-service，bootst
 AI Elements 不承担 API、SSE解析、持久状态或权限校验。Tailwind CSS 与现有项目样式系统承载视觉样式。
 
 
+MODEL-FAIL-001：基础设施Pi send在可靠终结并落盘后标记本次错误的requestSettled；application/session-execution-service通过本次send的内部失败回调保留原DomainError，公开事件只发code/message，不从事件重新构造错误后丢失证据；session-tools-service按03记录已知模型请求失败，保持同一会话可切型号。确定未调用的模型注册/认证错误以noSideEffects传递。不从供应商文案推断unknown、不添加Runtime或替代树、不改默认配置。历史unknown只能经已有recover显式确认。
+
 IMG-FAIL-001：Pi适配层仅在明确图片能力错误及可靠终结/落盘后返回MODEL_IMAGE_UNSUPPORTED，application按03记录已知失败并保持会话可用；不靠页面隐藏unknown、不改写历史。
 
 ## 6. 持久化与运行边界
+
+DEL-001：删除优先级由application共享删除门禁及两类会话服务协调，Pi适配提供终止且禁止句柄继续启动prompt/compact的能力；SQL删除仍在各Repository短事务。页面使用现有应用壳的inert及删除进度屏障，不新增业务状态或可见组件，Pi归属与持久文件保留。
 
 OPS-006：发布支持 --without-node-modules 选项，跳过依赖目录并随包带入原始 package.json/package-lock.json；服务器执行 npm ci --omit=dev 安装锁定运行依赖后 node server.js 启动，不编译应用。默认继续随包带依赖。无依赖包不保证跨平台编译产物兼容，原生依赖由运行端安装。生产支持 Next standalone 独立发布目录，包含 server.js、编译产物、静态资源、追踪依赖、runtime/database SQL 和 systemd 启动工具，不依赖应用 TS/TSX 源码或服务器 npm install/build。Schema 在发布目录从 runtime/database 读取，源码运行仍读取原 SQL；不改目标模型或迁移。发布目录为稳定应用根，cwd/INIT_CWD、本地 Pi 配置、.data 和原生历史路径归属保持原契约；构建包不包含用户数据库、认证、模型配置或环境文件。原生依赖要求构建与运行平台/架构/Node ABI兼容。OPS-007：npm run release 由 scripts/release.cjs 串行编排，固定在 .next-release 构建，与默认开发目录 .next 隔离；忽略继承的 AI_WORKSPACE_BUILD_DIR，防止误用开发产物。取得发布锁后先校验并删除旧 .next-release（包含缓存），再完整构建并打包到临时目录，成功后发布到默认 release；已有纯发布包临时改名为 release-previous-<唯一标识>，新包放入成功后自动删除该旧包，切换失败时恢复原目录。旧包清理失败须报告残留位置，不伪装为发布失败；不扫描删除其他历史目录。开发目录 .next 不参与清理。含 .data、模型/认证/环境配置、符号链接或缺少发布标识的目录拒绝替换；显式指定的已存在输出仍拒绝覆盖。根目录发布锁阻止并发发布；失败不将旧构建作为新包发布。完成输出绝对目录与 Build ID，release.json 记录打包时间。低层 package-release.cjs 仍仅复制指定构建且拒绝覆盖；不迁移数据、不启停服务。Next生产构建阶段（NEXT_PHASE=phase-production-build）数据库模块仅初始化进程内临时内存库，不创建目录或打开用户库；正式运行仍按固定路径和历史兼容检查。
 
@@ -122,7 +129,7 @@ SCONN-001：当前Session的open/closed是连接使用权投影，不是SQL持�
 
 数据库固定为 .data/ai-workspace-v5.sqlite。目标表与退役映射由 02/06 定义；结构调整不等于历史库迁移授权，启动不对历史库自动执行 DDL、清库或重建；仅全新空库按目标 Schema 初始化。已有原生身份不可替换，不删除 Pi 文件或将损坏历史伪装为空会话。
 
-运行环境是单个长驻 Node 进程、单个 SQLite 数据库；会话执行互斥、连接租约、订阅和后台使用权在进程内共享，Route 不创建各自的独立锁。不声称支持请求结束即冻结的部署或多副本部署。数据库条件更新仍是写入屏障。独立项目会话副作用由 02 §13 的 ProjectSessionOperationJournal 保存耐久准备/观察/完成证据，文件 IO 位于 infrastructure，操作门禁与恢复规则位于 application，HTTP 恢复入口按 03 §13；它不拥有 Pi transcript，也不改变 Workspace 的专属 journal。Agent 编辑对话只持有客户端候选与独立无工具 LLM 请求，不另建 Pi Session 或持久编辑会话。
+运行环境是单个长驻 Node 进程、单个 SQLite 数据库；会话执行互斥、连接租约、订阅和后台使用权在进程内共享，Route 不创建各自的独立锁。不声称支持请求结束即冻结的部署或多副本部署。数据库条件更新仍是写入屏障。独立项目会话副作用由 02 §13 的 ProjectSessionOperationJournal 保存耐久准备/观察/完成证据，文件 IO 位于 infrastructure，操作门禁与恢复规则位于 application，HTTP 恢复入口按 03 §13；它不拥有 Pi transcript，也不改变 Workspace 的专属 journal。Agent 编辑对话只持有客户端候选；项目生成按WAGENT-010使用逐项目临时Pi会话，自定义润色无工具，均不创建业务Session或持久编辑会话。
 
 会话安全 DTO 不单独暴露原生路径、句柄或凭据。messages 和导出按 03 保留全部原生节点及原文，不能因内部节点、thinking 或敏感工具结果而过滤。
 
@@ -148,6 +155,44 @@ UI在已有PromptInput包装内复用原生select，不新增组件或依赖。�
 
 ## SEARCH-001｜服务端联网搜索
 
-共享Runtime显式装配请求级搜索扩展，不开放外部扩展发现。仅openai-responses协议可请求OpenAI内置web_search；保留编程工具，由供应商执行搜索。开关固定本轮工具循环，finally清除，不用于压缩或其他会话。通过provider_stream_event将搜索调用和带引用的原始message output_item.done保存为所属Pi树custom entry（server_web_search），不作为模型输入，不建立第二份对话。原生树和导出原文展示这些证据。cwd/nativeRef和恢复身份不变。
+共享Runtime显式装配请求级搜索扩展，不开放外部扩展发现。infrastructure/pi/server-web-search按api适配openai-responses的web_search及google-generative-ai/google-vertex的Google Search；协议参考见07（非新增契约），许可与hook参数以03为准；保留编程工具，由供应商执行搜索。开关固定本轮工具循环，finally清除，不用于压缩或其他会话。通过provider_stream_event将OpenAI搜索调用/带引用message及Google携带groundingMetadata的完整原始chunk保存为所属Pi树custom entry（server_web_search），不作为模型输入，不建立第二份对话。原生树和导出原文展示这些证据。cwd/nativeRef和恢复身份不变。
 
 组件评估：已检索官方Prompt Input（https://elements.ai-sdk.dev/components/prompt-input）的工具栏；最终输入投影使用SEARCH-002登记的原生select和lucide图标，选项与默认值见04，不增加独立开关或组件。统一基础输入组件时复核。
+
+## PSES-029｜运行中纠正
+
+同一 Session 的文字纠正由 application 校验归属、lease、活动主请求及幂等证据，经 PiRuntimePort.steer 调用现有 AgentSession.steer；不创建 Session、不释放主请求锁、不重新装配工具或模型。队列由 Pi 拥有，终态/停止/删除清除未消费输入，不能带入后续 prompt。接口及失败规则见03，模型见02；Workspace专属映射见06。
+
+CTX-001：仅参考项目文件改为Session持续上下文；上传、粘贴保持原逻辑。infrastructure/references保存明确清单，application校验，入口仅分派；Pi根请求前将完整正文装配context files。不自动发现目录文档。
+
+## AGENT-002｜助手生成、原文存储与装配
+
+本节替代旧Agent能力开关、单一instructions、Agent.md frontmatter和仅独立项目可用的规则。助手为应用管理的版本化AGENTS.md；生成流程、文件持久化和Pi装配分属application、infrastructure/agents和infrastructure/pi。助手列表及编辑页占据导航右侧完整区域，不使用模态弹窗；复用现有对话/只读预览组件。
+
+两入口为从项目生成、自定义助手。前者以服务端核验的独立项目、整个工作区或工作区子项目为分析范围；按WAGENT-010逐项目设置cwd，以Pi读取工具执行完整所选技能，自主调查项目后生成规则，通过对话修订；不预采集固定数量文件。后者首次输入、上传和后续对话均调用独立无工具LLM：原文作为润色材料，返回完整系统提示词；成功后才进入可保存草稿。自定义助手管理完整系统提示词及独立的作用范围；范围只记录项目/工作区关系，不参与材料采集或生成正文。从项目生成只管理项目规则，没有补充指令。对话修订默认依据完整草稿和用户意见返回相关段落变更，由application校验并合并，未涉及正文保留原文。生成/修订请求不写项目原件或正式助手，不创建业务Pi Session；使用应用默认模型。
+
+自定义系统提示词通过Pi systemPrompt完整替换默认系统提示词；从项目生成保持Pi默认，禁止生成或覆盖系统提示词。关闭SYSTEM.md隐式发现。项目规则仅在Pi运行时装配进固定project/workspace XML，仅填非空rules，不另建XML协议，不把XML放到普通消息。AGENTS.md保存与预览只含原始Markdown正文，不加入项目/工作区组织标签。自定义正文逐字符保留，不注入名称/frontmatter/标题/默认提示词说明；不存在的部分省略。XML属性与规则正文转义。参考文件和Skills不属于助手。
+
+新文件与元信息的布局、兼容及Session选择按02；助手文件默认根目录统一为应用启动目录下agents，旧.data/agents仅只读兼容，不自动改写历史AGENT文件、SQL或Pi历史。
+
+
+## AGENT-003｜生成技能
+
+仓库统一以skills/<id>/SKILL.md保存生成技能原文；skills/README.md记录添加方法与来源，首个技能create-agentsmd来自github/awesome-copilot。infrastructure/agents读取技能，application选择并装配生成输入，GET接口供编辑页投影可用技能。所选技能全文进入项目生成器，工具能力及逐项目流程见06 WAGENT-010，不改变业务Session技能发现。项目规则生成可不选技能；显式选择技能时加载完整正文，缺失或损坏不静默回退。项目真实规则、用户要求及AGENT-002正文/JSON契约优先于技能模板；缺乏依据的段落省略，不写示例占位、不执行技能命令。
+
+
+工作区助手的项目独立文件、工作区自身AGENTS.md、自定义单选及存储format=5由06 WAGENT-010统一定义，取代本文先前的工作区合并正文与自定义多选描述；通用独立项目行为不变。
+
+修复要求 WAGENT-010：项目生成在目标cwd使用完整读取工具执行技能，按项目串行并反馈进度；generated不含工作区自身规则，custom工作区仅自身一份文件。最新模型/API/验收统一见06 WAGENT-010，替代此前工作区生成入口及预采集规则。
+
+
+ASSIST-013：无上传材料沿用unified-assistant-service→agent-service→infrastructure/pi/agent-generation的独立无工具Pi生成链路。agent-generation保留Pi errorMessage/SDK Error.message并包装既有DomainError；协议与页面只投影该原因，不复制模型配置或原始错误日志。输入、候选与错误不拥有业务Pi transcript，不新增Runtime或持久Session。
+
+## ASSIST-011｜配置装配
+统一助手系统提示词与作用范围独立于项目规则文件；模型与API见02/03，工作区专属见06。application装配作用范围和project rules，infrastructure/agents保存规则版本与state，infrastructure/pi仅按配置指纹刷新已缓存的系统提示词与XML。临时项目规则生成仍使用现有逐项目有读取工具的Pi会话；助手润色无工具。助手编辑器不生成AGENTS.md。新增项目规则设置区复用既有原生按钮、select、details与设置面板，不引入新可见组件体系；已评估AI Elements Prompt Input/Code Block，前者非设置表单，后者不能表达现有state开关及生成动作，沿用Feature Wrapper，在统一设置组件库可用时复核。
+
+
+ASSIST-012：沿用助手编辑器、Response及引用选择器，不新增组件体系；编辑页布局、输入和按钮使用Tailwind，删除被替代的role-editor专用CSS。通用型模型见02，引用候选范围与排序在application/catalog-service计算，页面直接投影API顺序。
+
+
+RULEGEN-001：application/project-rules-service负责项目规则生成任务、并发及幂等，infrastructure/agents/project-rule-generations保存任务证据。每个项目仅一个活动任务，后台使用独立AbortController和临时Pi会话；不绑定Request.signal或页面生命周期。技能为null时同样在真实项目cwd使用read/grep/find/ls自主调查。规则润色沿用同一后台任务，application从服务端规则构造currentDraft并调用既有项目prepare revise能力，非助手无工具润色；模式与历史兼容见02/03。复用现有ProjectRulesSettings与SettingsPage，以Tailwind两列显示配置及只读正文，不新增组件体系。

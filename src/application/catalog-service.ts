@@ -57,7 +57,7 @@ export function createCatalogService({
   projects: projectRepository,
   mcps: mcpRepository,
   agents: agentRepository,
-  normalizeProjectRoot, assertProjectMutable
+  normalizeProjectRoot, assertProjectMutable, validateAssistant, assistantInUse, resolveAssistantSource
 }: CatalogDependencies) {
   return {
     listProjects: () => projectRepository.list().map(value=>({...value,writeETag:roleETag(value)})),
@@ -145,6 +145,29 @@ export function createCatalogService({
       if (!mcpRepository.delete(id)) throw new DomainError("NOT_FOUND", "MCP 不存在", 404, true);
     },
     listAgents: () => agentRepository.list().map(presentAgent),
+    listReferenceAgents(context:Record<string,unknown>={}) {
+      if(Object.keys(context).some(k=>!['projectId','workspaceId'].includes(k))||Object.values(context).some(v=>typeof v!=='string'||!v.trim()))throw new DomainError('INVALID_INPUT','引用范围无效',400,true);
+      const projectId=context.projectId as string|undefined,workspaceId=context.workspaceId as string|undefined;
+      let projects:Array<{id:string;rootPath:string}>=[];
+      if(workspaceId){
+        if(!resolveAssistantSource)throw new DomainError('REFERENCE_OUTSIDE_SCOPE','无法核验工作区',403,true);
+        projects=resolveAssistantSource({kind:'workspace',workspaceId,projectIds:projectId?[projectId]:null});
+      }else if(projectId){const p=projectRepository.get(projectId);if(!p||p.status!=='active')throw new DomainError('NOT_FOUND','项目不可用',404,true);projects=[p];}
+      const scoped:Agent[]=[],unbound:Agent[]=[];
+      for(const agent of agentRepository.list()){
+        const definition=agent.definition;if(agent.status!=='active'||!agent.contentSha256||!definition)continue;
+        const source=definition.source;
+        if(definition.format===4?definition.scope==='global'&&source===null:!source&&definition.scope!=='workspace'){unbound.push(agent);continue;}
+        if(!source)continue;
+        if(source.kind==='workspace'){
+          if(workspaceId===source.workspaceId&&(source.projectIds===null||source.projectIds.length===0||projects.some(p=>source.projectIds!.includes(p.id))))scoped.push(agent);
+        }else{
+          const owner=projectRepository.get(source.projectId);
+          if(projects.some(p=>p.id===source.projectId||workspaceId&&owner?.status==='active'&&owner.rootPath===p.rootPath))scoped.push(agent);
+        }
+      }
+      return [...scoped,...unbound].map(presentAgent);
+    },
     presentAgent,
     getAgent: (id: string) => agentRepository.get(id),
     getAgentVersion: (id:string,revision:number,sha256:string) => agentRepository.getVersion(id,revision,sha256),
@@ -158,7 +181,7 @@ export function createCatalogService({
       const current = agentRepository.get(id);
       if (!current) throw new DomainError("NOT_FOUND", "角色不存在", 404, true);
       match(current,expected);
-      if (agentRepository.isInUse(id)) {
+      if (agentRepository.isInUse(id) || assistantInUse?.(id)) {
         agentRepository.update(id, { status: "archived" }, roleETag(current));
         return {deleted:false,archived:true};
       }
@@ -186,6 +209,10 @@ export function createCatalogService({
       description = optionalText(body.description === undefined ? current?.description : body.description);
     if ([...name].length > 120 || description && [...description].length > 2000) throw new DomainError('INVALID_ROLE', '名称或描述超长', 422, true);
     const definition = validateDefinition(body.definition ?? current?.definition, kind);
+    if((!current||body.definition!==undefined)&&definition.mode==='custom'&&definition.source?.kind==='workspace'&&(definition.source.projectIds?.length??0)>0)throw new DomainError('INVALID_ROLE','工作区自定义助手只能作用于工作区自身',422,true);
+    if((!current||body.definition!==undefined)&&definition.workspaceRules!==undefined)throw new DomainError('INVALID_ROLE','项目生成只能包含项目规则，请移除旧工作区规则',422,true);
+    if((!current||body.definition!==undefined)&&definition.format!==4)throw new DomainError('INVALID_ROLE','请使用统一助手格式',422,true);
+    validateAssistant?.(definition);
     const input = {
       name,
       description,

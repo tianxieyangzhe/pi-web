@@ -18,8 +18,8 @@ function validData(data: unknown): boolean {
   const value = data as Record<string, unknown>;
   return typeof value.key === 'string' && !!value.key && typeof value.hash === 'string' && !!value.hash
     && Object.keys(value).every(key => ['key', 'hash', 'outcome', 'operation'].includes(key))
-    && (value.operation === undefined || value.operation === 'switch-model')
-    && (value.outcome === undefined || ['settled', 'failed', 'aborted'].includes(String(value.outcome)));
+    && (value.operation === undefined || value.operation === 'switch-model' || value.operation === 'steer')
+    && (value.outcome === undefined || ['settled', 'failed', 'aborted', 'queued'].includes(String(value.outcome)));
 }
 export function readWorkspaceRequests(identity: WorkspaceRequestIdentity): WorkspaceRequestRecord[] {
   let source: string;

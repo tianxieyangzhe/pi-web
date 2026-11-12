@@ -31,8 +31,18 @@ export type Mcp = {
 };
 
 export type AgentDefinition = {
-  instructions: string;
-  capabilities: {readFiles:boolean;writeFiles:boolean};
+  format?: 2|3|4;
+  systemPromptMode?: 'inherit'|'replace';
+  mode?: "generated"|"custom";
+  scope?: "global"|"project"|"workspace";
+  systemPrompt?: string;
+  source?: import("./assistant-document").AssistantSource|import("./assistant-document").UnifiedAssistantDefinition['source']|null;
+  projects?: Array<{id:string;name:string;rules:string}>;
+  workspaceRules?: string;
+  /** Read-only legacy versions; new assistants never contain appended instructions. */
+  instructions?: string;
+  /** Legacy version decoding only; new assistant definitions omit capabilities. */
+  capabilities?: {readFiles:boolean;writeFiles:boolean};
 };
 export type Agent = {
   id: EntityId; kind: "project"|null;  projectId:string|null; sourceTemplateId:string|null;
@@ -86,7 +96,10 @@ export type ActivityEvent = {
 };
 
 export type AgentEvent =
+  | { type: 'run_started'; requestId: string; startedAt: string }
+  | ({ type: 'run_metrics' } & import('./session-run-metrics').SessionRunMetrics)
   | {type:"context_changed"}
+  | {type:"steering_cleared"}
   | { type: "pi_event"; piType: string; payload: unknown; temporaryId: string | null }
   | { type: "entry_link"; entryId: string; temporaryId: string }
   | { type: "message_delta"; text: string }

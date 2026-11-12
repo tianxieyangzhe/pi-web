@@ -1,4 +1,7 @@
 export class DomainError extends Error {
+  // Internal execution evidence only; never part of an HTTP error DTO.
+  readonly requestSettled?: boolean;
+  readonly noSideEffects?: boolean;
   constructor(
     readonly code: string,
     message: string,
@@ -9,6 +12,11 @@ export class DomainError extends Error {
     super(message);
     this.name = "DomainError";
   }
+}
+
+export function isKnownMessageFailure(value: unknown): value is DomainError {
+  return value instanceof DomainError && value.code !== 'REQUEST_UNKNOWN' &&
+    (value.code === 'MODEL_IMAGE_UNSUPPORTED' || value.requestSettled === true || value.noSideEffects === true);
 }
 
 export function requiredText(

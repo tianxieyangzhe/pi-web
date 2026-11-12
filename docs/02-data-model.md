@@ -1,4 +1,6 @@
 # 02｜模型：持久事实与 SQL
+UI-049：工具连续组仅由所属Pi树与SSE投影，折叠选择是当前Session的客户端浏览状态。UI-050计时由RUN-001单轮统计替代，不新增持久对象或迁移，显示规则见04。
+
 
 本文范围：独立项目与通用资源模型。Workspace 的专属设计、模型、API、交互与需求统一见 [06｜Workspace](06-workspace.md)，本文不定义或复写其规则。
 
@@ -136,13 +138,15 @@ Session 的持久字段与运行投影只按 §3 定义。Agent 引用和快照�
 
 ## 8. 用户删除独立项目会话（PSES-012）
 
-用户确认后，在事务中只 DELETE sessions 的指定 id/project_id 行；Project、Agent、其他会话和 Pi 文件不变。外键引用返回 SESSION_REFERENCED 并回滚，不推导Bot父级或专属删除许可。运行、打开、压缩或结果未知时不删除。源 nativeRef 不改写；只释放空闲句柄，不删除原生历史。旧库结构未兼容时按 §4 阻止写入，不暗中删改退役数据。
+用户确认后，在事务中只 DELETE sessions 的指定 id/project_id 行；Project、Agent、其他会话和 Pi 文件不变。外键引用返回 SESSION_REFERENCED 并回滚，不推导Bot父级或专属删除许可。DEL-001：运行、打开、压缩、模型不可用和结果未知不阻止用户删除；删除门禁只在进程内存在。终止并等待活跃操作收尾后释放句柄，再删除本会话行。源 nativeRef 不改写，不删除原生历史。旧库结构未兼容时按 §4 阻止写入，不暗中删改退役数据。
 
 ## 9. 会话检查与模型配置投影
 
 树标题、选中节点、弹窗开关和浏览位置属于派生或客户端临时状态。节点身份、parentId、label 和 activeLeafId 来自原生树，不建标题表。
 
 Session 安全 DTO 的 allowedActions 扩展 switchModel、fork、export 及各自不可用原因，均由服务端从归属、生命周期、执行互斥、原生证据和恢复状态派生，不新增持久状态。fork 许可表示可进入节点创建流程，具体 entryId 仍在提交时校验；export 只要求历史可读，switchModel要求有效运行租约与空闲句柄；当前型号失效先按MCFG-002回退默认，默认也不可用时的显式恢复见03 §13。
+
+MODEL-FAIL-001：已确认模型请求失败的判断来自本轮Pi终结/持久化或明确未调用证据，操作journal记failed；不新增持久模型、SQL列、模型可用性副本或历史迁移。内部错误证据标记只是当前调用结果，运行阶段与许可按03派生，历史unknown不自动转换。
 
 会话模型身份来自 Pi 当前分支的 model_change 及实际 Runtime；完整参数来自应用级 Pi 配置，SQL 不保存 provider、modelId、容量、凭据或配置副本。配置来源标记仅为 local/global/native，不下发配置绝对路径。
 
@@ -170,7 +174,7 @@ contextWindow 与 maxTokens 是 Pi 解析结果中的正整数，无法确认时
 
 ## 10. 从节点创建独立会话与导出
 
-派生会话是新的 Session，沿用来源 Project 归属及可选精确 Agent 引用；来源 Session、nativeRef、活动叶子和已有内容均不可改写。新会话拥有新 ID、新 Pi sessionId 与文件；原生历史仅继承根到选定 entryId 的完整祖先路径，包含该节点，不复制旁支或节点后的历史。节点 ID 可在两个不同 Pi Session 内保留，其身份始终以所属 Session 为边界。新会话模型取继承路径的最后模型选择，无选择时采用默认模型。工作区专属关系见 06。
+派生会话是新的 Session，沿用来源 Project 归属及可选精确 Agent 引用；来源 Session、nativeRef、活动叶子和已有内容均不可改写。新会话拥有新 ID、新 Pi sessionId 与文件；原生历史仅继承根到选定 entryId 的完整祖先路径，包含该节点，不复制旁支或节点后的历史。节点 ID 可在两个不同 Pi Session 内保留，其身份始终以所属 Session 为边界。派生时保留继承路径的最后模型选择；首次打开按MCFG-003对齐默认模型，模型事实仍只追加到所属Pi树，不写SQL副本。工作区专属关系见 06。
 
 数据库事务只插入一行 sessions，保持 Project、可选 Agent 引用及首次 nativeRef 约束；不修改源记录。Pi 文件准备与 SQL 事务不是跨存储原子提交，恢复与幂等规则在 03 定义。派生本身不新增表；全局退役导致的旧库处理见 §4，现有库不兼容时报告 SCHEMA_INCOMPATIBLE，不绕过约束。
 
@@ -214,15 +218,15 @@ DBUP-001记录的是此前记忆退役目标的已完成迁移，不涵盖BOT-RE
 
 SessionDTO 精确为 {id,projectId,purpose,agentId,agentSnapshot,status,createdAt,updatedAt,lastUserInput,lastActivityAt,lastOpenedAt,previewUnavailable,writeETag,allowedActions,pendingOperations}，agentSnapshot 为 §7 的 AgentSnapshotRef、null 或旧引用的 {agentId:string,revision:number,legacy:true} 安全标识投影（不带原生路径/旧配置），status='open'|'closed'，来源为连接租约；pendingOperations 为 {operationId:string,operation:string,status:"running"|"unknown"}[]，只投影当前未决/活动记录，供重连后定位恢复；不返回载荷/键/证据原文。不返回 nativeRef、nativeMetadata、创建键或操作证据文件。writeETag 是对该对象持久可写事实的规范 JSON SHA-256，加双引号；不含连接status/运行活动/许可/采样，业务持久字段变化即变化。Project/Agent 同理，以其本对象持久字段计算；Agent 内容使用 revision/hash，不把运行状态写入 ETag。
 
-allowedActions 是 Record<'send'|'interrupt'|'end'|'restore'|'delete'|'compact'|'cancelCompaction'|'switchModel'|'fork'|'export'|'adoptAgent', {allowed:boolean,reason:string|null}>；允许时 reason=null，拒绝为 03 的稳定错误码。它是读取时快照，提交必须再次核验；无调用方运行 lease 时 send/switchModel=false。动作优先按归属/许可、结构兼容、unknown、忙碌、模型/原生条件计算原因。只读 export 不要求结构可写、lease、默认模型可用或请求已确定；fork允许从有历史ended_at的源派生，但所属 Project 必须 active、源历史可读且无 unknown/执行操作，entryId 提交时另验。
+allowedActions 是 Record<'send'|'steer'|'interrupt'|'end'|'restore'|'delete'|'compact'|'cancelCompaction'|'switchModel'|'fork'|'export'|'adoptAgent', {allowed:boolean,reason:string|null}>；允许时 reason=null，拒绝为 03 的稳定错误码。它是读取时快照，提交必须再次核验；无调用方运行 lease 时 send/steer/switchModel=false。动作先核验归属/许可；DEL-001删除门禁期间其他动作拒绝，新删除可复用进行中的结果。删除只受结构可写及实际SQL约束限制，其余动作继续按结构兼容、unknown、忙碌、模型/原生条件计算原因。只读 export 不要求结构可写、lease、默认模型可用或请求已确定；fork允许从有历史ended_at的源派生，但所属 Project 必须 active、源历史可读且无 unknown/执行操作，entryId 提交时另验。
 
 Runtime活动派生优先级：操作证据未决/损坏、原生身份无效或配置不可用→unavailable；正在打开/初始化→starting；正在中止主回复→interrupting；正在 prompt/工具循环→running；已有合法 nativeRef→idle；其他→not_started。无句柄不代表 not_started；当前模型不存在、被enabledModels过滤或认证不可用时按01/03自动回退配置默认模型，保留Pi身份和历史，仅追加实际model_change；默认也不可用才报告模型不可用。压缩通过 compactionState 单独表达，期间 Session busy，不写运行 state 到 SQL。
 
-send：active、未结束、有当前 lease/空闲句柄、模型可用、无 unknown；interrupt：本进程有可取消的主请求（不含压缩）；end：未结束且空闲、无 unknown；restore：未结束、无活任务、需要恢复或核对；delete：无打开/运行/压缩/修改任务、无 unknown 与外键引用，Project 无需 active；compact：send 的运行条件且有可压缩历史；cancelCompaction：有当前压缩任务（Project 状态变化不阻止取消）；switchModel：active、未结束、无 unknown/任务且有 lease，型号失效的恢复例外见 03 §13；adoptAgent：active、未结束、无 unknown/任务，目标同 Agent 的正式可用版本。只读权限与真实归属始终先于动作许可，不能以 lease 替代身份校验。
+send：active、未结束、有当前 lease/空闲句柄、模型可用、无 unknown；steer：active、有当前lease、正在执行主请求且未停止/压缩/删除，无未知历史操作；interrupt：本进程有可取消的主请求（不含压缩）；end：未结束且空闲、无 unknown；restore：未结束、无活任务、需要恢复或核对；delete：结构可写且会话归属有效，不受打开/运行/压缩/修改任务及unknown限制，Project无需active，实际SQL外键失败仍如实回滚；compact：send 的运行条件且有可压缩历史；cancelCompaction：有当前压缩任务（Project 状态变化不阻止取消）；switchModel：active、未结束、无 unknown/任务且有 lease，型号失效的恢复例外见 03 §13；adoptAgent：active、未结束、无 unknown/任务，目标同 Agent 的正式可用版本。只读权限与真实归属始终先于动作许可，不能以 lease 替代身份校验。
 
 ## 13. 独立项目会话操作证据（GAP-004）
 
-ProjectSessionOperationJournal 是应用的耐久副作用证据文件，不是对话、模型上下文或通用任务平台；仅覆盖独立项目 Session 的 create/open/restore、message、switch-model、compact/compact-cancel、interrupt、end、adopt-agent、fork 与显式 recover 修改动作。它不拥有 Pi Session，不调用 Pi，不进入系统提示词或树，不影响 06 的 WorkspaceRequestJournal 或 GAP-006。SQL 表数量不增加。
+ProjectSessionOperationJournal 是应用的耐久副作用证据文件，不是对话、模型上下文或通用任务平台；仅覆盖独立项目 Session 的 create/open/restore、message、steer、switch-model、compact/compact-cancel、interrupt、end、adopt-agent、fork 与显式 recover 修改动作。它不拥有 Pi Session，不调用 Pi，不进入系统提示词或树，不影响 06 的 WorkspaceRequestJournal 或 GAP-006。SQL 表数量不增加。
 
 每个 operationId 的文件位于 .data/project-session-operations/<projectId的SHA256>/<operationId>.jsonl，路径只在服务端构造。operationId=SHA256(UTF8(JSON.stringify(['project-session-operation-v1',projectId,sessionId或空串,operation,Idempotency-Key])))；新建/派生 Session ID 分别为 's_'+SHA256(UTF8(JSON.stringify(['session-create-v1',projectId,key]))) 和 's_'+SHA256(UTF8(JSON.stringify(['session-fork-v1',projectId,sourceSessionId,key])))，使用完整64位摘要，不截短。普通创建与 fork 的 create_request_key_hash 均等于各自 operationId，create_request_sha256 为规范化用户载荷摘要；journal.keyHash=SHA256(UTF8(key))，不保存原始键。operationId 中 create 的 sessionId 使用空串、fork 使用源 Session ID；journal.sessionId 对 create 是确定的新 ID、对 fork 是源 ID，候选新 ID 存 evidence.resultSessionId。entryId 属于载荷，不属于键作用域，因此同源同键换节点必定409，不能与普通 create 共用结果。
 
@@ -238,10 +242,49 @@ toolSearch:boolean为本轮用户意图，API省略等价false，不持久化至
 
 ## SEARCH-001｜请求级搜索意图
 
-webSearch为单次发送意图，默认false，不是Session字段，不写SQL、配置或持久偏好。搜索调用与来源引用的原始provider output item只作为该Session唯一Pi树的server_web_search custom entry保存，数据为{type:provider事件类型,item:完整原始output item}，不复制至业务表或摘要；无搜索调用不得伪造搜索成功。开关无历史迁移。
+webSearch为单次发送意图，默认false，不是Session字段，不写SQL、配置或持久偏好。搜索调用与来源引用的原始provider output item只作为该Session唯一Pi树的server_web_search custom entry保存，OpenAI数据保持{type:provider事件类型,item:完整原始output item}；Google GenerateContent/Vertex数据为{api,provider,model,data:携带groundingMetadata的完整原始chunk}，两者均只属于唯一Pi树，无新增表或历史转换；不复制至业务表或摘要；无搜索调用不得伪造搜索成功。开关无历史迁移。
 
 FILE-003：Pi在所属session-files目录生成的文件仍是普通宿主文件，不因位于项目根外而变成Project文件。会话文件读取目录由数据库nativeRef.sessionId派生，目录与当前会话精确绑定；不新增记录/目录授权，不改Pi原生历史或上传快照的不可变策略。模型生成的其他文件不自动标记为不可变上传快照。
 
 ## FILE-001 生成文件读取
 
 生成的Word、Excel、PPT、PDF及其他文件是项目目录中的普通文件，不新增附件表、下载记录或持久预览副本。FilePreview扩展由03定义的只读格式与内容块；下载每次读取当前文件原始字节，不转换、不修改源文件，不调用Pi或模型。上传快照仍按原契约独立存储。本项无SQL变更或历史迁移。
+
+## PSES-029｜Steer 模型边界
+
+纠正仍是所属 Pi Session 的 user 消息，消费时由 Pi 写入同一树；等待队列只是 Pi 进程内状态，不新增 SQL、对话副本或迁移。ProjectSessionOperationJournal 的 operation 增加 steer，证据仅含原有摘要、身份和接收结果；completed 表示已交给 Pi 队列，不表示已消费或执行完成。停止、失败或进程退出可能丢弃未消费项，同键不得自动重放。
+
+## CTX-001｜Session 持续参考文件
+
+仅参考项目文件改为Session独立持久事实，不属于Project/Workspace配置。专用类型化清单存于应用.data/session-context-files/<SHA256(业务Session ID)>.json，version=1，items按添加顺序保存：id(内容和来源的SHA256)、name、source=project、projectId、path、kind=document、content(文档完整UTF-8正文)、contentSha256。上传和粘贴继续按PSES-025处理，不进入此清单。清单中的Session ID必须匹配读取身份，writeETag为清单规范序列化摘要。关系为业务Session→0..10份参考快照；两个scope使用现有全局唯一Session ID，服务端必须先核对归属。参考项目文件在添加时形成快照，不随源文件变化；重新添加才能更新。不新增SQL表，正文不塞入sessions任意JSON；专用文件承载明确且无需SQL联查的单Session配置，原子替换清单，历史原文件/Pi记录不修改。与原附件历史无自动映射、不扫描历史生成引用，无SQL迁移。删除仅移除清单引用，用户原件、历史上传文件和Pi历史保留；发送、关闭、重启不移除引用。Session删除后清单保留为孤立历史，不再可经已删除Session读取，无自动GC。
+
+## AGENT-002｜版本化助手模型（替代§7/§12中的旧正文格式）
+
+目录索引仍使用agents表，物理kind=project仅为现有SQL兼容标记，不再代表实际适用范围；不用DDL、不改历史行。实际范围由不可变版本文件的类型化元信息决定：definition.format=3、mode=generated|custom、scope=project|workspace、systemPrompt:string、source:null|{kind:project,projectId}|{kind:workspace,workspaceId,projectIds:string[]}、projects:[{id,name,rules}]。capabilities退出新版本，不影响工具权限。选择任何工作区来源必须scope=workspace，即使只选择一个子项目；项目级助手可以用于工作区，工作区级助手不能用于独立项目，且其项目规则仅用于来源工作区。每个选定项目拥有独立非空规则正文，缺少规则不得冒充已完成生成。generated的systemPrompt固定空，必须有来源和所选项目的完整规则；custom只有非空系统提示词及作用范围，projects=[]；source可为null、独立项目或工作区项目集合，scope由source派生，选择工作区时为workspace且仅用于该工作区。范围不生成项目规则，不改变系统提示词原文，不授予文件系统权限。新模型没有instructions字段，也不存在补充指令。草稿允许系统提示词暂空，但不能保存空自定义助手。
+
+每个新版本在应用启动目录的agents/<id>/<revision>/保存AGENTS.md和definition.json。AI_WORKSPACE_AGENT_DIR显式设置时仍覆盖默认目录。默认读取先查agents中的对应版本，仅当该版本不存在时只读回退.data/agents；发现版本损坏不得回退掩盖。历史文件不自动搬迁、改写或删除，版本身份及摘要不变；同一版本已在旧目录存在时禁止在新目录重写。项目根目录的开发契约AGENTS.md及参考项目原文件不属于此目录调整。前者仅含非空原始Markdown正文，为自定义系统提示词或各项目规则，均保留全部空白及正文中的原有字符，不作XML转义、不添加组织标签、frontmatter、应用标题或占位说明；仅不同非空部分之间用双换行连接。项目身份和各段归属只由后者记录。后者只含存储format、身份/name/description、mode/scope/source和正文范围偏移、项目id/name等解析元信息，不复制正文。新存储format=4对应领域definition.format=3，不保存补充指令或其位置；旧存储format=2的XML布局及format=3原文布局只读兼容，验证原摘要与原布局后恢复正文，不自动改写历史文件。摘要SHA256覆盖元信息与AGENTS.md两者，文件均不可变。正文合计上限256KiB；服务端验证正文布局、偏移及摘要，损坏拒绝；XML仅属于运行时组装。旧<revision>.md继续只读使用旧parser及原摘要，编辑保存产生新格式版本而非重写旧文件。仅状态变化不新建版本。既有快照引用保持原值。
+
+Session显式助手选择用独立类型化文件.data/session-assistants/<SHA256(scope,ownerId,sessionId)>.json保存{version:1,scope,ownerId,sessionId,selection:null|AgentSnapshotRef}，原子替换，writeETag覆盖整份记录。无文件时Project沿用原SQL agent引用、Workspace默认null；写null明确移除且不回退SQL。新建/更换/移除不更改原SQL约束与历史绑定，工作区文件引用参与助手删除的in-use检查；Session删除保留孤立文件，API不可访问。每轮按精确版本读取，不随助手新版本自动升级；运行中固定本轮，不更换Pi身份。元数据关系仍显式，不借任意JSON隐藏关系。不新增SQL表，不需要历史迁移；任何未来SQL迁移另行授权。
+
+
+AGENT-003：生成技能是仓库文件资源skills/<id>/SKILL.md，不新增SQL表、助手版本字段或Session绑定。id为目录名（小写字母、数字、连字符），正文为原始UTF-8；列表派生{id,name,description,sha256}，摘要覆盖完整文件字节。选择仅为本次生成请求参数，不持久化进AGENTS.md。缺少或损坏的技能拒绝加载，不回退成无技能生成。
+
+
+工作区助手的项目独立文件、工作区自身AGENTS.md、自定义单选及存储format=5由06 WAGENT-010统一定义，取代本文先前的工作区合并正文与自定义多选描述；通用独立项目行为不变。
+
+修复要求 WAGENT-010：项目生成在目标cwd使用完整读取工具执行技能，按项目串行并反馈进度；generated不含工作区自身规则，custom工作区仅自身一份文件。最新模型/API/验收统一见06 WAGENT-010，替代此前工作区生成入口及预采集规则。
+
+
+ASSIST-013：直接输入/粘贴的润色材料、候选和原始错误原因属于本次prepare调用/浏览器草稿，不新增持久模型、SQL字段或附件快照；失败不创建助手版本、不迁移或改写已有数据。
+
+## ASSIST-011｜统一助手与项目规则
+当前目标替代AGENT-002～009、WAGENT-010中的助手正文与规则归属。新助手definition.format=4，仅含scope:global|project|workspace、source、systemPromptMode:inherit|replace、systemPrompt。scope=global时source必须为null，表示通用型，可用于任意会话，不拥有或隐含项目范围；其他scope的source必选独立项目或工作区；工作区projectIds=null表示整个工作区，非空唯一数组表示指定项目。inherit正文为空，replace非空且UTF-8≤256KiB。不再有generated/custom、projects正文、workspaceRules或助手AGENTS.md。版本仍由agents索引关联，agents/<id>/<revision>/definition.json以存储format=6保存完整定义并计算摘要；不增加SQL表或列，不迁移旧版本，旧格式只读兼容，编辑后显式保存新版本。
+项目规则是独立持久事实，归属于独立项目ID或工作区ID+成员项目ID，不属于助手。存储于agents/project-rules/<归属键SHA256>/<revision>/AGENTS.md；state.json记录format、identity、revision、contentSha256、enabled，原子切换，正文版本不可变。缺失状态为revision=0、enabled=false；首次生成仍默认关闭，生成成功保持原开关；只允许已有正文时开启。不改源项目AGENTS.md，不复制历史助手规则。开关与版本进入writeETag及运行时配置指纹。没有SQL迁移，state损坏拒绝读写，不自动重置。
+
+
+RULEGEN-001：项目规则生成任务是独立于正式规则版本的持久事实，归属沿用ProjectRuleIdentity。存于agents/project-rules/<归属键SHA256>/generations/<UUID>.json；每个文件记录format=1、identity、任务id、requestKey、baseETag、inputRevision、mode(generate|revise，历史缺省按generate读取且不重写历史)、requirements（生成要求或润色意见）、skillId(null或有效技能ID)、status(queued/running/cancelling/publishing/succeeded/failed/cancelled/interrupted)、createdAt/updatedAt/startedAt/completedAt、progress(phase及工具名)、resultRevision/resultSha256、error(code/message)。任务id与请求参数不可变，文件原子替换，按创建时间取最新任务；旧任务保留用于幂等。没有SQL表、数据库迁移或自动修改旧规则。任务是短暂生成Pi会话的执行记录，不拥有业务Session transcript。发布前保存目标正文摘要；中断后若publishing且正式版本已推进并匹配摘要则确认成功，否则标记interrupted。不会自动重放模型请求。
+
+
+## RUN-001｜单轮运行统计
+
+统计是一次根messages请求的临时派生结果，不是持久模型。Session累计Token是另一派生值，按Pi getSessionStats全树口径，读取已有全部原生entries（包含非活动分支及压缩前历史），汇总assistant、带usage的toolResult、usage、带usage的compaction/branch_summary中的input/output/cacheRead/cacheWrite，不额外累计reasoning，也不把summary中的tokensBefore视作用量。累计不改变历史轮次展示；无记录为0，缺失/非法助手用量标不完整，无可用记录时为null。不另存累计值或创建摘要。来源为该次Runtime.send期间的Pi assistant message_end.usage；仅累加本次调用，不扫描或差减历史。工具循环与steer消费属于原轮次，thinking已计入output不重复累加。缺失/非法用量或无有效响应标记不完整；费用不在本次范围。服务端以单调时钟从接受根请求至结束计算durationMs。运行统计不写SQL、配置文件、journal或Pi transcript，不更改Session/nativeRef归属；原生消息usage照常保留。

@@ -1,12 +1,16 @@
+import {projectAssistantContext} from './assistant-context';
+import { createSessionRunMetrics, sessionTokenUsage } from './session-run-metrics';
 import { SessionEvents } from "./session-events";
+import { changeSessionContextFiles } from "./session-context-files-service";
+import type { SessionContextFilesStore } from "./ports/session-context-files";
 import {boundRole, isRoleSnapshot} from "@/domain/agent-definition";
-import { DomainError } from "@/domain/errors";
+import { DomainError, isKnownMessageFailure } from "@/domain/errors";
 import type { AgentEvent, Session } from "@/domain/models";
 import type { SessionCatalogPort, SessionRepositoryPort } from "@/application/ports/core";
 import type { ProjectRepositoryPort } from "@/application/ports/catalog";
 import type { PiRuntimePort, SessionRuntimeInput } from "@/application/ports/pi-runtime";
 
-import { sessionLocks as locks, acquireSession,acquireProjectWrite,projectWriteRoots } from "./session-lock";
+import { releaseSession, assertSessionAvailable, isSessionDeleting, runSessionDeletion, waitForSessionUnlock, sessionLocks as locks, acquireSession,acquireProjectWrite,projectWriteRoots } from "./session-lock";
 import { createProjectMessageTiming } from "./project-message-timing";
 import { parseMessageReferences, type ProjectMessageReference, type ProjectReferenceTarget } from "@/domain/message-references";
 
@@ -35,6 +39,11 @@ class EventQueue {
 }
 
 export function createSessionExecutionService(dependencies: {
+  projectRules?:import('./ports/project-rules').ProjectRulesStore;
+  assistants?:import("./ports/session-assistant").SessionAssistantAccess;
+  contextFiles?: SessionContextFilesStore;
+  readContextFile?: Parameters<SessionContextFilesStore["add"]>[3];
+  assertContextWritable?: (projectId:string,id:string)=>void;
   sessions: SessionRepositoryPort;
   catalog: SessionCatalogPort;
   projects: ProjectRepositoryPort;
@@ -51,7 +60,8 @@ export function createSessionExecutionService(dependencies: {
     complete: () => void;
   }>();
 
-  const deleting = new Set<string>(),closing=new Set<string>();
+  const steering = new Map<string,Set<Promise<void>>>();
+  const closing=new Set<string>();
   const openings = new Map<string, Promise<object | null>>();
   const leases = new Map<string, { sessionId: string; expires: number }>();
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -66,6 +76,7 @@ export function createSessionExecutionService(dependencies: {
   function clearTimer(id: string) { const timer = timers.get(id); if (timer) clearTimeout(timer); timers.delete(id); }
   function schedule(id: string) {
     clearTimer(id);
+    if(isSessionDeleting(id))return;
     if (hasLease(id)) {
       const expiry = Math.min(...[...leases.values()].filter(l => l.sessionId === id).map(l => l.expires));
       const timer = setTimeout(() => schedule(id), Math.max(1, expiry - Date.now())); timer.unref?.(); timers.set(id, timer); return;
@@ -86,6 +97,7 @@ export function createSessionExecutionService(dependencies: {
     const handle = runtime.getHandle(id); if (handle) { observed.get(id)?.unsubscribe(); observed.delete(id); void runtime.close(handle); }
   }
   function assertLease(id: string, leaseId: string | null) {
+    assertSessionAvailable(id);
     const lease = leaseId ? leases.get(leaseId) : undefined;
     if (!lease || lease.sessionId !== id || lease.expires <= Date.now()) throw new DomainError("RUNTIME_NOT_OPEN", "请先打开项目会话", 409, true);
   }
@@ -93,7 +105,7 @@ export function createSessionExecutionService(dependencies: {
   const observed = new Map<string, { handle: object; unsubscribe: () => void }>();
   const events = new SessionEvents({ assertLease, renew: (id, leaseId) => {
     assertLease(id, leaseId); leases.get(leaseId)!.expires = Date.now() + 120_000; schedule(id);
-  }, release: (id, leaseId) => { if (leases.get(leaseId)?.sessionId === id) { leases.delete(leaseId); schedule(id); } } },undefined,id=>({running:controls.has(id),compacting:!controls.has(id)&&locks.has(id)}));
+  }, release: (id, leaseId) => { if (leases.get(leaseId)?.sessionId === id) { leases.delete(leaseId); schedule(id); } } },undefined,id=>({running:controls.has(id),compacting:!controls.has(id)&&locks.has(id),steering:runtime.getHandle(id)?runtime.steeringQueue?.(runtime.getHandle(id)!)??[]:[]}));
   function observe(id: string, handle: object) {
     if (observed.get(id)?.handle === handle) return;
     observed.get(id)?.unsubscribe();
@@ -121,7 +133,7 @@ export function createSessionExecutionService(dependencies: {
     if (!project || project.status !== "active") {
       throw new DomainError("PROJECT_UNAVAILABLE", "项目不存在或当前不可用", 409, true);
     }
-    const role = projectRole(value);
+    const role = dependencies.assistants?.resolve({scope:"project",ownerId:value.projectId,sessionId:value.id},projectRole(value)) ?? (dependencies.assistants?null:projectRole(value));
     for (const id of value.mcpIds) {
       if (catalog.getMcp(id)?.status !== "active") {
         throw new DomainError("MCP_UNAVAILABLE", `MCP ${id} 已不可用`, 409, true);
@@ -132,6 +144,8 @@ export function createSessionExecutionService(dependencies: {
     }
     return {
       session: { ...value, agentSnapshot: role },
+      projectName: project.name,
+      assistantContext:dependencies.projectRules?projectAssistantContext(role,project,dependencies.projectRules):undefined,
       allowProjectRead: true,
       nativeCodingTools: true,
       workingDirectory: project.rootPath,
@@ -141,9 +155,35 @@ export function createSessionExecutionService(dependencies: {
 
   return {
     referenceContractVersion: 6,
+    assistant(sessionId:string){const value=session(sessionId);if(!dependencies.assistants)throw new DomainError('SERVICE_RESTART_REQUIRED','助手服务需要重新加载',503,true);return dependencies.assistants.read({scope:'project',ownerId:value.projectId,sessionId},projectRole(value));},
+    changeAssistant(sessionId:string,body:Record<string,unknown>,etag:string,lease:string|null){
+      const value=session(sessionId);assertLease(sessionId,lease);
+      if(projects.get(value.projectId)?.status!=='active')throw new DomainError('PROJECT_UNAVAILABLE','项目不可用',409,true);
+      dependencies.assertContextWritable?.(value.projectId,sessionId);
+      if(controls.has(sessionId)||openings.has(sessionId)||closing.has(sessionId))throw new DomainError('SESSION_BUSY','会话正在运行或切换',409,true);
+      if(!dependencies.assistants)throw new DomainError('SERVICE_RESTART_REQUIRED','助手服务需要重新加载',503,true);
+      acquireSession(sessionId);try{const result=dependencies.assistants.write({scope:'project',ownerId:value.projectId,sessionId},body,etag,projectRole(value));events.agent(sessionId,{type:'context_changed'});return result;}finally{releaseSession(sessionId);}
+    },
+    contextFiles(sessionId:string) {
+      session(sessionId);
+      if(!dependencies.contextFiles)throw new DomainError('SERVICE_RESTART_REQUIRED','参考文件服务需要重新加载',503,true);
+      return dependencies.contextFiles.read(sessionId);
+    },
+    changeContextFiles(sessionId:string,method:'POST'|'DELETE',body:Record<string,unknown>,etag:string,lease:string|null) {
+      const value=session(sessionId);assertLease(sessionId,lease);runtimeInput(value);
+      dependencies.assertContextWritable?.(value.projectId,sessionId);
+      if(controls.has(sessionId)||openings.has(sessionId)||closing.has(sessionId))throw new DomainError('SESSION_BUSY','会话正在运行或切换',409,true);
+      if(!dependencies.contextFiles||!dependencies.readContextFile)throw new DomainError('SERVICE_RESTART_REQUIRED','参考文件服务需要重新加载',503,true);
+      acquireSession(sessionId);
+      try{const result=changeSessionContextFiles(dependencies.contextFiles,sessionId,method,body,etag,reference=>{
+        if(reference.projectId!==value.projectId)throw new DomainError('REFERENCE_OUTSIDE_SCOPE','参考文件不属于当前会话',403,true);
+        return dependencies.readContextFile!(reference);
+      });events.agent(sessionId,{type:"context_changed"});return result;}finally{releaseSession(sessionId);}
+    },
     hasLease,
     async open(sessionId: string, key: string, readOnly = false) {
-      if (deleting.has(sessionId)||closing.has(sessionId)) throw new DomainError('SESSION_BUSY', '会话正在关闭或删除', 409, true);
+      assertSessionAvailable(sessionId);
+      if (closing.has(sessionId)) throw new DomainError('SESSION_BUSY', '会话正在关闭或删除', 409, true);
       session(sessionId);
       const now = Date.now();
       for (const [storedKey, record] of idempotency) if (record.expires <= now) idempotency.delete(storedKey);
@@ -166,13 +206,13 @@ export function createSessionExecutionService(dependencies: {
             if (live) {
               if(controls.has(sessionId)||locks.has(sessionId)||runtime.isBusy?.(live))return live;
               acquireSession(sessionId);
-              try {await runtime.refreshModel?.(live);sessions.updateRuntime(sessionId,{state:'idle'});return live;}
+              try {await runtime.refreshModel?.(live,true);sessions.updateRuntime(sessionId,{state:'idle'});return live;}
               catch(error){if(error instanceof DomainError&&['MODEL_NOT_FOUND','MODEL_UNAVAILABLE'].includes(error.code)){sessions.updateRuntime(sessionId,{state:'unavailable'});return null;}throw error;}
-              finally{locks.delete(sessionId);}
+              finally{releaseSession(sessionId);}
             }
             acquireSession(sessionId);
             try{
-            const input = { ...runtimeInput(value, true), projectSession: true };
+            const input = { ...runtimeInput(value, true), projectSession: true, useDefaultModel: true };
             if (value.nativeRef) {
               try { return await runtime.restore(input); }
               catch(error) { if(error instanceof DomainError && ["MODEL_NOT_FOUND","MODEL_UNAVAILABLE"].includes(error.code)) { sessions.updateRuntime(sessionId,{state:"unavailable"}); return null; } throw error; }
@@ -183,11 +223,12 @@ export function createSessionExecutionService(dependencies: {
               if (!updated?.nativeRef) throw new DomainError("NO_NATIVE_REF", "无法保存原生 Session 身份", 409, true);
               return updated.nativeRef;
             });
-            }finally{locks.delete(sessionId);}
+            }finally{releaseSession(sessionId);}
           })().finally(() => openings.delete(sessionId));
           openings.set(sessionId, opening);
         }
         const handle = await opening;
+        assertSessionAvailable(sessionId);
         if (handle) observe(sessionId, handle);
         const openedSession=session(sessionId);dependencies.openHistory?.record({scope:'project',ownerId:openedSession.projectId,sessionId});
         const leaseId = crypto.randomUUID(); leases.set(leaseId, { sessionId, expires: Date.now() + 120_000 }); schedule(sessionId);
@@ -198,11 +239,11 @@ export function createSessionExecutionService(dependencies: {
     },
     events,
     accept(sessionId: string, instruction: string, references?: unknown, onSettled?: (error?: unknown) => void, webSearch = false, toolSearch = false) {
-      const source = this.send(sessionId, instruction, undefined, references, webSearch, toolSearch);
+      let failure:unknown;
+      const source = this.send(sessionId, instruction, undefined, references, webSearch, toolSearch, error=>{failure=error;});
       void (async () => {
-        let failure:unknown;
         for await (const event of source) {
-          if(event.type === "error") failure = new DomainError(event.code,event.message,409,true);
+          if(event.type === "error"&&!failure) failure = new DomainError(event.code,event.message,409,true);
           if (!["pi_event","entry_link","complete","error"].includes(event.type)) events.agent(sessionId, event);
         }
         onSettled?.(failure);
@@ -217,7 +258,8 @@ export function createSessionExecutionService(dependencies: {
     },
     closeLease(sessionId: string, leaseId: string) { if (leases.get(leaseId)?.sessionId === sessionId) { leases.delete(leaseId); schedule(sessionId); } },
     assertLease,
-    send(sessionId: string, instruction: string, operation?: "read" | "project_write" | "external_write", references?: unknown, webSearch = false, toolSearch = false): AsyncGenerator<AgentEvent> {
+    send(sessionId: string, instruction: string, operation?: "read" | "project_write" | "external_write", references?: unknown, webSearch = false, toolSearch = false, onFailure?: (error:unknown)=>void): AsyncGenerator<AgentEvent> {
+      assertSessionAvailable(sessionId);
       const value = session(sessionId);
       operation ??= 'project_write';
       if (locks.has(sessionId) || ["starting", "running", "interrupting"].includes(value.state)) {
@@ -231,6 +273,8 @@ export function createSessionExecutionService(dependencies: {
       lastTimeouts.delete(sessionId);
       const timing = createProjectMessageTiming(sessionId);
       timing("accepted");
+      const metrics = createSessionRunMetrics();
+      let metricsFailed = false;
       let complete!: () => void;
       const control = {
         cancelRequested: false,
@@ -249,11 +293,14 @@ export function createSessionExecutionService(dependencies: {
           sessions.updateRuntime(sessionId, { state: "starting" });
           runtimeStarted = true;
           yield { type: "session_state", state: "starting" };
+          yield metrics.started();
           const handle = runtime.getHandle(sessionId);
           if (!handle) throw new DomainError("RUNTIME_NOT_OPEN", "请先打开项目会话", 409, true);
+          runtime.setAssistant?.(handle,input.session.agentSnapshot,input.assistantContext);
           timing("handle_reused");
           control.handle = handle;
           if (control.cancelRequested) {
+            metricsFailed = true;
             timing("cancelled");
             sessions.updateRuntime(sessionId, { state: "idle" });
             yield { type: "session_state", state: "idle" };
@@ -268,6 +315,7 @@ export function createSessionExecutionService(dependencies: {
             .send(handle, instruction, (event) => {
               if (event.type === "message_delta" && event.text) timing("first_text");
               if (event.type === "activity" && event.kind === "tool") timing("first_tool");
+              metrics.observe(event);
               queue.push(event);
             }, () => timing("assistant_stream"), referenceContent, operation === "project_write", webSearch, toolSearch)
             .then(() => {
@@ -277,11 +325,13 @@ export function createSessionExecutionService(dependencies: {
               queue.push({ type: "complete" });
             })
             .catch((error) => {
+              metricsFailed = true;
+              onFailure?.(error);
               const cancelled = error instanceof DomainError && error.code === "REQUEST_ABORTED";
               timing(cancelled ? "cancelled" : "failed");
-              const imageRejected = error instanceof DomainError && error.code === 'MODEL_IMAGE_UNSUPPORTED';
-              sessions.updateRuntime(sessionId, { state: cancelled || imageRejected ? "idle" : "unavailable" });
-              if (cancelled || imageRejected) queue.push({ type: "session_state", state: "idle" });
+              const knownFailure = isKnownMessageFailure(error);
+              sessions.updateRuntime(sessionId, { state: cancelled || knownFailure ? "idle" : "unavailable" });
+              if (cancelled || knownFailure) queue.push({ type: "session_state", state: "idle" });
               const timeout = cancelled && timeouts.delete(sessionId);
               if (timeout) lastTimeouts.add(sessionId);
               queue.push({ type: "error", code: timeout ? "SESSION_BACKGROUND_TIMEOUT" : error instanceof DomainError ? error.code : "RUNTIME_ERROR", message: timeout ? "会话离开后运行超时并已停止" : error instanceof DomainError ? error.message : "Pi Runtime 执行失败", recoverable: true });
@@ -293,9 +343,11 @@ export function createSessionExecutionService(dependencies: {
             yield event;
           }
         } catch (error) {
+          metricsFailed = true;
+          onFailure?.(error);
           const cancelled = error instanceof DomainError && error.code === "REQUEST_ABORTED";
           timing(cancelled ? "cancelled" : "failed");
-          if (runtimeStarted) sessions.updateRuntime(sessionId, { state: cancelled || error instanceof DomainError && error.code === 'MODEL_IMAGE_UNSUPPORTED' ? "idle" : "unavailable" });
+          if (runtimeStarted) sessions.updateRuntime(sessionId, { state: cancelled || isKnownMessageFailure(error) ? "idle" : "unavailable" });
           yield {
             type: "error",
             code: error instanceof DomainError ? error.code : "RUNTIME_ERROR",
@@ -305,14 +357,16 @@ export function createSessionExecutionService(dependencies: {
         } finally {
           timeouts.delete(sessionId);
           if (controls.get(sessionId) === control) controls.delete(sessionId);
-          locks.delete(sessionId);
+          releaseSession(sessionId);
           if(writeRoot)projectWriteRoots.delete(writeRoot);
           control.complete();
           if (!hasLease(sessionId)) schedule(sessionId);
+          yield metrics.finish(metricsFailed);
         }
       })();
     },
     async interrupt(sessionId: string) {
+      assertSessionAvailable(sessionId);
       const value = session(sessionId);
       if (!["starting", "running", "interrupting"].includes(value.state)) {
         throw new DomainError("SESSION_NOT_RUNNING", "项目工作线当前没有运行任务", 409, true);
@@ -329,39 +383,63 @@ export function createSessionExecutionService(dependencies: {
       if (control.interruptPromise) await control.interruptPromise;
       await control.done;
     },
+    async steer(sessionId: string, content: string) {
+      session(sessionId);
+      assertSessionAvailable(sessionId);
+      const control=controls.get(sessionId);
+      if(!control&&locks.has(sessionId))throw new DomainError('SESSION_BUSY','会话正在执行其他操作',409,true);
+      if(!control||control.cancelRequested)throw new DomainError('SESSION_NOT_RUNNING','当前没有可纠正的运行请求',409,true);
+      const handle=control.handle??runtime.getHandle(sessionId);
+      if(!handle||!runtime.steer)throw new DomainError('SESSION_NOT_RUNNING','当前请求尚未进入可纠正阶段',409,true);
+      const work=runtime.steer(handle,content),pending=steering.get(sessionId)??new Set<Promise<void>>();
+      pending.add(work);steering.set(sessionId,pending);
+      try{await work;}finally{pending.delete(work);if(!pending.size)steering.delete(sessionId);}
+    },
     async restore(sessionId: string) {
       if(locks.has(sessionId))throw new DomainError("SESSION_BUSY","Session 正在回答或压缩",409,true);
       const value = session(sessionId);
       if (value.state !== "unavailable") throw new DomainError("SESSION_NOT_UNAVAILABLE", "只有不可用的项目工作线需要恢复", 409, true);
       if (!value.nativeRef) throw new DomainError("NO_NATIVE_REF", "项目工作线没有可恢复的 Pi Session", 409, true);
       acquireSession(sessionId);
-      try{const previous=runtime.getHandle(sessionId);if(previous)await runtime.close(previous);const handle=await runtime.restore({...runtimeInput(value,true),projectSession:true});observe(sessionId,handle);return sessions.updateRuntime(sessionId,{state:'idle'})!;}finally{locks.delete(sessionId);}
+      try{const previous=runtime.getHandle(sessionId);if(previous)await runtime.close(previous);const handle=await runtime.restore({...runtimeInput(value,true),projectSession:true});observe(sessionId,handle);return sessions.updateRuntime(sessionId,{state:'idle'})!;}finally{releaseSession(sessionId);}
     },
     async messages(sessionId: string) {
+      assertSessionAvailable(sessionId);
       const value = session(sessionId);
       const project = projects.get(value.projectId);
       if (!project) throw new DomainError("NOT_FOUND", "项目不存在", 404, true);
       if (!runtime.readTree) throw new DomainError("SESSION_TREE_READ_FAILED", "原生树读取不可用", 500, true);
-      return runtime.readTree({session:value,workingDirectory:project.rootPath,allowProjectWrite:false,projectSession:true});
+      const tree = await runtime.readTree({session:value,workingDirectory:project.rootPath,allowProjectWrite:false,projectSession:true});
+      return { ...tree, tokenUsage: sessionTokenUsage(tree.entries) };
     },
     async deleteSession(projectId: string, sessionId: string) {
       const value = session(sessionId);
       if (value.projectId !== projectId) throw new DomainError('NOT_FOUND', '项目会话不存在', 404, true);
-      if (openings.has(sessionId) || controls.has(sessionId) || ['starting','running','interrupting'].includes(value.state)) throw new DomainError('SESSION_BUSY', '请等待会话操作结束后删除', 409, true);
-      if (value.state === 'unavailable') throw new DomainError('REQUEST_UNKNOWN', '请先核对并恢复会话', 409, true);
-      acquireSession(sessionId);
-      deleting.add(sessionId);
-      try {
-        const handle = runtime.getHandle(sessionId);
-        if (handle && runtime.isBusy?.(handle)) throw new DomainError('SESSION_BUSY', '会话正在运行', 409, true);
-        if (handle) await runtime.close(handle);
+      return runSessionDeletion(sessionId,async()=>{
+        clearTimer(sessionId);
+        const control=controls.get(sessionId);
+        if(control)control.cancelRequested=true;
+        await Promise.allSettled([openings.get(sessionId)]);
+        const handle=runtime.getHandle(sessionId);
+        if(handle){
+          if(runtime.stopForDeletion)await runtime.stopForDeletion(handle);
+          else if(control||runtime.isBusy?.(handle))await runtime.interrupt(handle);
+        }
+        if(control)await control.done;
+        await waitForSessionUnlock(sessionId);
+        // Open journals finish after the execution layer finishes initialization.
+        await Promise.allSettled([...idempotency.values()].filter(record=>record.sessionId===sessionId).map(record=>record.promise));
+        await Promise.allSettled([...(steering.get(sessionId)??[])]);
+        const settledHandle=runtime.getHandle(sessionId);
+        if(settledHandle&&settledHandle!==handle&&runtime.stopForDeletion)await runtime.stopForDeletion(settledHandle);
+        if(settledHandle)await runtime.close(settledHandle);
         sessions.delete(projectId, sessionId);
         events.closeSession(sessionId);observed.get(sessionId)?.unsubscribe(); observed.delete(sessionId); clearTimer(sessionId);
         for (const [key, lease] of leases) if (lease.sessionId === sessionId) leases.delete(key);
         for (const [key, record] of idempotency) if (record.sessionId === sessionId) idempotency.delete(key);
         timeouts.delete(sessionId); lastTimeouts.delete(sessionId);
         return { deleted: true, sessionId };
-      } finally { deleting.delete(sessionId); locks.delete(sessionId); }
+      });
     },
     async close(sessionId: string) {
       if(openings.has(sessionId) || locks.has(sessionId))throw new DomainError("SESSION_BUSY","Session 正在打开、回答或压缩",409,true);
@@ -373,7 +451,7 @@ export function createSessionExecutionService(dependencies: {
         for(const [key,lease] of leases)if(lease.sessionId===sessionId)leases.delete(key);
         for(const [key,record] of idempotency)if(record.sessionId===sessionId)idempotency.delete(key);
         clearTimer(sessionId);observed.get(sessionId)?.unsubscribe();observed.delete(sessionId);
-      } finally {closing.delete(sessionId);locks.delete(sessionId);}
+      } finally {closing.delete(sessionId);releaseSession(sessionId);}
     },
   };
 }

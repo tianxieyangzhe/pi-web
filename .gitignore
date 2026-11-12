@@ -6,7 +6,10 @@ node_modules/
 release-previous-*/
 dist/
 release/
+/release-new/
 .data/
+/agents/*
+!/agents/README.md
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal

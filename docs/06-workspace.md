@@ -1,4 +1,16 @@
 # 06｜Workspace 首期：项目集合与跨项目会话
+UI-053：Workspace复用04会话树标题规则，纯工具调用assistant按toolCall名称显示，thinking等按实际内容类型显示，真正空节点才标无正文；保留全部节点及原父子关系，验收见05。
+
+UI-052：Workspace复用04的空assistant占位规则，尚无内容的实时开始事件不绘制空标头，原始事件仍保留，已结束或历史空消息保留可展开原文；不影响thinking/工具/未知块与错误，验收状态见05。
+
+UI-051：Workspace复用04的会话状态分派修复；session_state只更新运行与等待显示，不进入Pi临时内容列表，真实Pi原文保留。验收及状态见05 UI-051；无Workspace模型/API变化。
+
+UI-049：Workspace采用04连续工具组投影，复用Conversation/Disclosure及01组件评估，保留全部内容、关系和浏览选择。UI-050由RUN-001替代。
+
+## RUN-001｜Workspace单轮统计
+
+WorkspaceSession复用02 RUN-001的临时派生定义、03 RUN-001事件DTO与累加规则、04的单处投影。既有POST S/messages接受新请求后计时，幂等重放不产生新统计；GET S/events只实时发送run_started/run_metrics。沿用归属/lease/忙碌/unknown门禁及错误，统计本次Runtime.send的assistant message_end，工具循环及steer归原轮次；正常/停止/失败收尾只发送一份。GET S/messages同步增加03 RUN-001的tokenUsage累计DTO，复用本次readTree全树数据按02口径累计，包含压缩与非活动分支；空树为0，缺失用量标不完整。页面一行展示最后一轮消耗、时间与会话累计；重开恢复累计，不逐历史轮次展示。无新SQL/原生历史/journal写入或Pi调用，不补算历史单轮或迁移；验收及状态见05 RUN-001。
+
 
 FILE-003：新增GET /api/workspaces/:id/sessions/:sessionId/files/content与files/download，application先从workspace_sessions核验归属并读取nativeRef，复用03会话目录只读契约；不得将Workspace会话文件当作WorkspaceProject文件。无新模型/表/迁移，无Pi调用。点击当前会话文件链接先预览，左上角下载原件。
 
@@ -178,7 +190,7 @@ WorkspaceRequestJournal 是每个工作区 Session 的应用请求证据，不�
 | 在 Workspace 新建独立会话，可多次创建 | Workspace、默认 WorkspaceProject、工作区 Session | 创建业务记录不调用 prompt；原生初始化时机沿用通用流程并补专属契约 |
 | 打开或恢复会话 | 指定 Session 与其精确 nativeRef | 只创建或恢复该会话的唯一句柄，不派生项目 Session |
 | 发送用户消息 | Workspace 项目事实与默认目录 | 保留 Pi 默认编码提示词并补充工作区结构体，再调用该 Session 独占的 Pi prompt；不加载 Agent.md |
-| 查看、纠正、停止和恢复 | 同一 Session 的原生证据 | 复用通用 Tree、abort、检查与恢复能力；首期消息无队列，不开放 steer |
+| 查看、纠正、停止和恢复 | 同一 Session 的原生证据 | 复用通用 Tree、abort、检查与恢复能力；运行中纠正按WSP-020调用steer |
 
 | 方法/路径 | 输入与返回 | 事务、许可和副作用 |
 | --- | --- | --- |
@@ -189,7 +201,7 @@ WorkspaceRequestJournal 是每个工作区 Session 的应用请求证据，不�
 | GET/POST /workspaces/:id/sessions | POST defaultProjectId?、purpose? → WorkspaceSessionDTO | 默认选工作区默认项，同事务只创建 Session，重复创建返回同一记录；GET 返回本工作区会话 |
 | GET /workspaces/:id/sessions/:sid | WorkspaceSessionDTO（id/workspaceId/defaultProjectId/purpose/status/allowedActions） | 核验精确工作区归属，不下发 nativeRef |
 | POST S/runtime/open、pong、close；GET S/events | 沿用 `03` 租约与订阅 DTO；open 允许无正文、零字节请求流或 {}，pong/close 仍要求各自参数 | 复用 SessionPresence/SessionEvents；后台请求持有使用权，断线不重发 |
-| GET/POST S/messages | GET 完整 Tree；POST content、references? → 202 accepted | 有效 lease；正文不改写，附件格式及跨轮上下文按03 PSES-006/PSES-022，项目位置参考按PSES-024，非图片上传按PSES-025，客户端租约失效恢复按03 PSES-026，项目引用限本 Workspace；会话 busy 409，无队列 |
+| GET/POST S/messages | GET 完整 Tree；POST content、references? → 202 accepted | 有效 lease；正文不改写，附件格式及跨轮上下文按03 PSES-006/PSES-022，项目位置参考按PSES-024，非图片上传按PSES-025，客户端租约失效恢复按03 PSES-026，项目引用限本 Workspace；messages遇会话busy返回409；运行中纠正使用WSP-020的steer入口 |
 | POST S/interrupt、restore、end | 无业务正文（无正文、零字节请求流或 {}）→ SessionDTO | interrupt 调用 abort 并等待；restore 只恢复可确定失败状态，unknown 先核对；end 仅空闲，保留历史 |
 | GET S/context；POST S/compact、compact/cancel | 通用 NativeContextInspection | 此API为手动入口，压缩与消息互斥；自动压缩按03 PSES-021由唯一Pi会话执行 |
 | POST S/recover | action=inspect/acknowledge-unknown | 检查请求 journal 及只读旧证据；用户承认未知时写 journal 回执，再解除本会话门禁，不重发旧输入 |
@@ -204,7 +216,9 @@ S=/workspaces/:id/sessions/:sid。配置 JSON ≤64KiB，目录元数据 ≤2000
 
 ## 7. 页面投影与代码职责
 
-共享同步：PSES-021自动压缩和UI-045会话滚动按01～05实施与验收，Workspace无关闭自动压缩的独立配置。历史Bot Runtime也采用Pi默认压缩参数，不扩展旧Bot产品范围。
+共享同步：UI-048工具结果折叠与跨实时/历史同步的浏览状态沿用04，复用同一Conversation，无新增Workspace模型或API，验收状态见05。UI-047 thinking空正文提示和完整原始块展开沿用04及05，复用同一Conversation，不新增API。UI-046方向键用户输入回填复用04的交互及05的验收要求，数据仅来自当前Workspace Session已有GET messages全树快照，浏览位置与草稿不跨会话混用，不新增Workspace API或持久模型；状态随05记录。PSES-021自动压缩和UI-045会话滚动按01～05实施与验收，Workspace无关闭自动压缩的独立配置。历史Bot Runtime也采用Pi默认压缩参数，不扩展旧Bot产品范围。
+
+PSES-010共享粘贴行为同步：工作区Composer无文件项的粘贴文字超过10行显示可展开/移除的“已粘贴 N 行”正文块，10行及以内直接显示；均随完整content发送，复制保留原文，不转附件或占附件额度；图片/真实文件仍按既有上传附件处理。通用入参映射见03、投影见04，不新增Workspace模型或API，不改写历史附件。
 
 首期 UI 同步范围明确包括左侧导航的列表展示、选择与切换，以及中间会话区域。Workspace 与 Project 在这些通用部分复用组件、布局、样式及交互；后续通用 UI 调整须同步适用于两种会话入口。Workspace 的新增页面及创建业务流程独立定义，不属于与现有 Project 新增页面同步的范围。
 
@@ -221,9 +235,9 @@ Workspace 的新增页面按 Workspace 自身的模型和 API 定义，不以现
 
 工作区新建会话时，预选项目列表中指定的默认项目，目录选择仍限于其 WorkspaceProject 集合；首期不提供 Agent.md、说明版本或生效方式选择。通用展示组件可复用，创建入参、许可、事务和返回值必须由 Workspace API 自身定义。
 
-Workspace 导航允许列出并选择多个独立 Session；当前选中 Session 展示一个会话画布及其唯一 Pi Tree，切换会话时展示对应的独立历史。所有左侧按钮和实际会话身份变化按 `04` 先关闭现有弹窗；文件与会话检查使用04定义的等高非模态浮窗，保持Composer和左侧可交互，左侧任意单击关闭浮窗，不为主会话保留辅助右侧列。跨项目操作展示目标项目，不生成项目会话标签或子会话。首期不新增Agent.md 管理入口，页面只能投影已定义 API 的真实结果。
+Workspace 导航允许列出并选择多个独立 Session；当前选中 Session 展示一个会话画布及其唯一 Pi Tree，切换会话时展示对应的独立历史。所有左侧按钮和实际会话身份变化按 `04` 先关闭现有弹窗；文件与会话检查使用04定义的等高非模态浮窗，标题栏支持指针拖动及键盘移动，复用AuxiliaryDialog的位置边界和生命周期；保持Composer和左侧可交互，左侧任意单击关闭浮窗，不为主会话保留辅助右侧列。跨项目操作展示目标项目，不生成项目会话标签或子会话。首期不新增Agent.md 管理入口，页面只能投影已定义 API 的真实结果。
 
-会话树复用04的Pi TUI样式投影（分叉连线、平齐单链、选中游标与活动路径），不改变工作区API或Pi分支。会话区移除打开/关闭文字和开闭按钮；会话检查入口、设置容器、Session信息、模型/上下文及核对分区样式统一复用04的投影，不增加工作区专属能力。
+会话树复用04的Pi TUI样式投影（分叉连线、平齐单链、选中游标与活动路径），不改变工作区API或Pi分支。会话区移除打开/关闭文字和开闭按钮；会话检查入口、设置容器、Session信息和模型/上下文统一复用04的投影；“会话树”和“Session 设置”为选项卡，不呈现操作按钮外观。Session设置移除助手分区，名称与更换仅投影Composer引用入口；模型运行忙碌原因按04显示自然语言而非SESSION_BUSY。Session设置不展示“待核对操作”及核对/承认未知入口，不删除既有recover API、journal或unknown门禁，不自动重放或解除阻塞。
 
 共享组件通过 DTO 和 API 适配接入两种会话，不在组件中推导归属、目录权限或第二份运行状态。服务端差异包括会话归属、默认 cwd、Pi 原生工具 cwd，以及系统提示词中的 Workspace 结构体。
 
@@ -267,9 +281,15 @@ Next 工作区 catch-all 路由显式导出 DELETE；tests/session-deletion.test
 
 每个工作区会话行提供相邻的删除按钮；确认提示会话移除，磁盘 Pi 历史保留。DELETE /api/workspaces/:id/sessions/:sid 无正文或幂等键，调用方为导航，服务端校验同 Workspace，成功 {data:{deleted:true,sessionId}}，不存在或跨工作区 NOT_FOUND/404，重复删除 404。
 
-会话级删除门禁在首次 await 前取得；运行、打开、压缩或配置更新返回 SESSION_BUSY/409，journal 未决或不可读为 REQUEST_UNKNOWN/409。与发送、打开、恢复、压缩及配置更新互斥。释放空闲 Pi 句柄后在单个 SQL 事务只删除 workspace_sessions 指定 id/workspace_id 行；外键 RESTRICT 失败为 SESSION_REFERENCED/409，该删除回滚。禁止修改 Workspace、WorkspaceProject、其他会话、归属和 nativeRef。成功清理租约与临时状态；失败保留持久记录。只 dispose 空闲句柄，不 prompt、abort、compact 或删除/改写 Pi transcript、journal 和项目文件。不新增表、字段或迁移。显式删除是用户操作例外，不允许后台清理历史。
+DEL-001：用户确认删除会话拥有最高操作优先级。已校验归属后在首次await前建立删除门禁；打开、运行、压缩、模型不可用或journal未知/损坏均不作为拒绝删除条件。不新增持久状态或表。先阻止目标会话的新操作，终止prompt/工具循环及自动或手动压缩，等待正在初始化、配置修改和其他已接受操作收尾，再释放句柄并在短事务中删除本会话行。DELETE保持请求等待，完成前不返回202或成功；并发同会话DELETE共用同一结果，完成后再次DELETE为404。停止/释放或SQL失败如实报错并保留会话记录，解除删除门禁，不伪造成功；不强行丢弃运行句柄、不伪造未知操作成功，不改写/删除原生历史、journal、附件或项目文件。目标会话其余新操作在删除期间返回SESSION_BUSY/409；页面确认后全局阻止点击、输入和导航直到请求结束，成功后移除记录并退出已删会话，失败解除屏障并显示错误。 Workspace使用相同DEL-001验收：只DELETE workspace_sessions指定id/workspace_id行，禁止修改Workspace、WorkspaceProject、其他会话或nativeRef；实际FK错误SESSION_REFERENCED并回滚。成功清理租约和临时状态，配置保存必须在提交前复核删除门禁，删除不等待用户核对journal。
 
-页面成功后移除条目，删除当前会话时回到所属工作区；失败保留条目和当前选择并显示 API 错误。按钮复用现有原生按钮及 lucide Trash2，不新增组件。状态：以下为既有删除能力的历史验证，不证明本轮解除绑定、单行删除或旧库门禁完成；新事务与退役边界须按 WSP-018 重新验收。tests/session-deletion.test.cjs 覆盖 HTTP 归属/未知字段、空与 ended 删除、运行/unknown/压缩拒绝、并发打开拦截、释放失败与 FK 事务回滚、租约清理及 Pi/journal/项目文件保留；结合 tests/workspace-session-api.test.cjs、tests/project-session-lifecycle.test.cjs、tests/session-presence.test.cjs 共 12 项通过，类型检查和差异检查通过。只使用临时数据库/目录和受控 Runtime，未操作用户库或服务；浏览器未验收。
+页面成功后移除条目，删除当前会话时回到所属工作区；失败保留条目和当前选择并显示 API 错误。按钮复用现有原生按钮及 lucide Trash2，不新增组件。DEL-001当前验证：tests/session-deletion.test.cjs共12项通过，覆盖本节优先删除、取消等待、并发复用、失败与数据保留；详情见05 DEL-001。浏览器进度屏障待实机验收。状态：以下为既有删除能力的历史验证，不证明本轮解除绑定、单行删除或旧库门禁完成；新事务与退役边界须按 WSP-018 重新验收。tests/session-deletion.test.cjs 覆盖 HTTP 归属/未知字段、空与 ended 删除、运行/unknown/压缩拒绝、并发打开拦截、释放失败与 FK 事务回滚、租约清理及 Pi/journal/项目文件保留；结合 tests/workspace-session-api.test.cjs、tests/project-session-lifecycle.test.cjs、tests/session-presence.test.cjs 共 12 项通过，类型检查和差异检查通过。只使用临时数据库/目录和受控 Runtime，未操作用户库或服务；浏览器未验收。
+
+## WFILE-001｜工作区文件检查
+
+会话工具栏在“会话检查”左侧增加“文件检查”，使用既有非模态AuxiliaryDialog，与会话检查和回复文件预览互斥，左侧任意单击、关闭、Esc或切换会话关闭。按当前Workspace.projects顺序在浮窗顶部展示横向项目选项卡，复用共享tab样式；默认选中会话defaultProjectId（不存在则首项），始终只选中一个项目，不使用可折叠分类按钮。下方tabpanel复用FileBrowser逐级浏览，仅挂载当前项目，不请求其他项目、不合并相同目录。选项卡保留tablist/tab/tabpanel关联、单一键盘焦点及左右方向键/Home/End切换；长项目名截断并提供完整提示，项目较多时选项卡栏可横向滚动，预览打开时栏仍可见。项目选择仅为页面状态，不改变默认项目、助手范围或会话cwd。点击文件复用FilePreviewPane预览与原件下载，下载按钮后增加“设置参考文件”，复用当前会话tree.addContextFiles与既有POST S/context-files，提交所选WorkspaceProject的{projectId,path}并同步Composer参考清单；不上传预览正文，不改变默认项目。无许可、运行/压缩/停止/未就绪、重复引用时禁用，格式/容量与错误沿用通用参考文件API，失败保留原清单，切换文件丢弃晚反馈。窄屏预览时可关闭预览返回分类；关闭/切换丢弃晚响应。列表、正文、下载分别调用既有GET /api/workspaces/:id/projects/:projectId/files、files/content、files/download，服务端核验成员归属及真实路径边界，不新增API、持久模型、SQL或Pi调用。无工作区Git变更API时不调用独立项目changes接口。组件只注入所属范围API适配，不按路径推导归属。
+
+复用既有FileBrowser、FilePreviewPane、Button和AuxiliaryDialog，不新增组件体系；官方File Tree/Code Block评估与替代沿用01组件治理及本节已有File Tree评估。验收：工具栏顺序、项目选项卡与键盘切换、按需读取、工作区API定位、预览/下载、切换晚响应隔离、浮窗互斥及背景可交互。状态：代码投影及预览“设置参考文件”入口已接入；复用FileBrowser的可选API适配，项目默认行为不变，工作区只调用成员文件API。参考设置复用既有会话hook和API，设置期间防重复，已有引用同步显示；文件预览、项目装配与工作区装配3个改动TSX、类型及差异检查通过，未运行API测试（接口契约未变）。类型、3个改动TSX语法及差异检查通过；未运行浏览器验收。没有API契约变化，不新增测试文件，也未运行非API测试。
 
 ## WSP-016｜回复文件链接预览
 
@@ -293,7 +313,7 @@ GET /api/workspaces/:id/projects/:projectId/files/content?path=项目相对路�
 
 ### 型号失效恢复修复（WSP-017 模型子项）
 
-历史会话的供应商或型号不再注册时，open 先只读核验完整原生历史；按通用MCFG-002先自动回退settings默认模型并追加原生model_change；默认也不可用才返回status=unavailable的本会话租约，禁止发送。模型列表及切换同样按enabledModels过滤。GET models 仍返回当前原生选择、可用列表与来源；canSwitch 仅在有精确nativeRef、有效租约、无配置写入/打开/主请求/压缩/切换及未决journal时允许。没有原生身份的新会话仍需先成功初始化，不以模型恢复入口创建替代树。
+MCFG-003（已实现，定向API验收通过；tests/session-open-default-model-api.test.cjs的Workspace application接口场景通过，临时内存库和Pi文件，无真实模型请求；类型检查通过）：所有Workspace会话open先核验完整原生历史；冷恢复与复用空闲句柄均按通用MCFG-003检查默认provider/model，不同则切换并追加原生model_change，相同不重复追加；默认不可用即返回status=unavailable的本会话租约，禁止发送。运行/压缩中打开保留本轮快照，下次空闲打开对齐；打开后手动模型仍用于后续发送。身份、cwd、历史前缀、三张Workspace表及journal不因对齐而改写，无迁移。验收覆盖冷/热打开、默认失败、重复打开和忙碌快照。MODEL-FAIL-001：共享Pi在可靠终结并落盘后报告已知模型请求失败，Workspace按既有journal failed收尾，不自动重发，不改变默认cwd/nativeRef/模型配置；真实unknown仍阻止配置写入。独立项目模型设置的针对性recover入口由04定义，不额外恢复Workspace的待核对分区。模型列表及切换同样按enabledModels过滤。GET models 仍返回当前原生选择、可用列表与来源；canSwitch 仅在有精确nativeRef、有效租约、无配置写入/打开/主请求/压缩/切换及未决journal时允许。没有原生身份的新会话仍需先成功初始化，不以模型恢复入口创建替代树。
 
 PUT model 的正文和输入校验引用03，使用 Idempotency-Key 和 x-session-lease-id；校验归属后在会话互斥内重新读取记录、journal与配置。沿用 WorkspaceRequestJournal 的准备/结果证据，data 可选 operation='switch-model' 区分消息键空间，hash包含本次操作和目标型号；同键异目标409，已完成键不再切换，prepared但没有结果时REQUEST_UNKNOWN，不能重放。冷恢复准备记录通过精确nativeRef写sidecar，不需先创建AgentSession。Pi确认setModel及原生文件持久化后追加settled结果，已确认无副作用的配置/认证错误追加failed；不能确认时保留未决证据。写SQL、改默认设置、自动重试旧消息和改变原生身份均禁止。
 
@@ -312,7 +332,7 @@ S=/api/workspaces/:id/sessions/:sid。每个入口先校验真实调用方许可
 | POST S/fork | entryId 与 Idempotency-Key 沿用通用契约，源节点属于本树；本会话无运行/压缩/unknown，且 Workspace 无配置写入；事务按本节的工作区会话表完成，返回 201 安全 WorkspaceSessionDTO |
 | GET S/export?format=…&scope=… | 同本工作区会话读取许可，参数、下载与范围沿用通用契约；只读原生快照，不包含独立请求 journal 作为对话，不调用模型 |
 
-许可与恢复检查由服务端执行，归属不符 NOT_FOUND/404，修改操作忙碌 SESSION_BUSY/409，未决/不可读 journal 为 REQUEST_UNKNOWN/409；只读树和导出不因 journal 未决或不可读自动拒绝，仍须验证原生历史与一致快照；其他错误沿用 03。WorkspaceSessionDTO.allowedActions 按 02 的共享动作定义扩展，许可由本范围记录与 journal 派生。模型切换、派生和导出不能读取其他工作区或独立项目的 Session。工作区配置更新、删除、发送、打开与派生/模型切换沿用同一互斥协调器，不能用界面禁用代替服务端门禁。
+许可与恢复检查由服务端执行，归属不符 NOT_FOUND/404；删除按DEL-001优先执行，不因忙碌或journal拒绝。其余修改操作忙碌 SESSION_BUSY/409，未决/不可读 journal 为 REQUEST_UNKNOWN/409；只读树和导出不因 journal 未决或不可读自动拒绝，仍须验证原生历史与一致快照；其他错误沿用 03。WorkspaceSessionDTO.allowedActions 按 02 的共享动作定义扩展，许可由本范围记录与 journal 派生。模型切换、派生和导出不能读取其他工作区或独立项目的 Session。工作区配置更新、删除、发送、打开与派生/模型切换沿用同一互斥协调器，不能用界面禁用代替服务端门禁。
 
 ### 验收
 
@@ -328,4 +348,66 @@ S=/api/workspaces/:id/sessions/:sid。每个入口先校验真实调用方许可
 
 ## SEARCH-001｜工作区服务端搜索
 
-工作区POST S/messages同步接受webSearch:boolean（默认false），共享03 SEARCH-001的协议校验、错误、请求扩展、Pi证据及输入框投影。校验在workspace_request准备前完成；true进入原body摘要，false/省略沿用旧摘要。工作区归属、默认cwd、项目集合、原生身份与既有journal不变。不新增Bot或搜索服务表。状态：已实现，定向验证与实际限制见05 SEARCH-001；真实模型和浏览器待验。
+工作区POST S/messages同步接受webSearch:boolean（默认false），共享03 SEARCH-001的协议校验、错误、请求扩展、Pi证据及输入框投影；支持OpenAI Responses和Google GenerateContent/Vertex，Workspace不另建协议适配器。校验在workspace_request准备前完成；true进入原body摘要，false/省略沿用旧摘要。工作区归属、默认cwd、项目集合、原生身份与既有journal不变。不新增Bot或搜索服务表。状态：已实现，定向验证与实际限制见05 SEARCH-001；真实模型和浏览器待验。
+
+## WSP-020｜运行中纠正
+
+同步PSES-029文字输入、Pi队列时序、终态清除与共享Composer投影；POST S/steer，输入{content}，返回202 {data:{accepted:true,sessionId,delivery:"steer"}}，要求所属Workspace/Session、有效lease及Idempotency-Key。不接受附件/搜索，不调用prompt，不新建身份或写SQL。活动主请求允许纠正，配置中/压缩/删除SESSION_BUSY，空闲/停止中SESSION_NOT_RUNNING，不绕过其他未知请求。
+
+WorkspaceRequestJournal的operation增加steer，按operation+key隔离；workspace_request准备，成功以workspace_request_result(outcome=queued)确认接收，只存摘要。并发同键共用结果、异载荷冲突；未决非活动证据为unknown，不自动重发。queued仅证明接收，未消费内容可随停止/失败/退出丢弃，不构造持久队列。验收同PSES-029并增加跨Workspace归属；代码已接入，tests/session-steer-api.test.cjs的HTTP归属/租约、并发幂等、unknown、删除等待及SSE重连队列验证通过，联合回归及限制见05 PSES-029。浏览器与真实Pi队列消费/清除待验证，不标记整体验收完成。不新增SQL或迁移。
+
+## CTX-001｜Session持续参考文件
+
+Workspace采用02/03/04/05的CTX-001模型/API/投影，归属WorkspaceSession。按当前WorkspaceProject核验来源后保存快照；替代新选择仅传路径，保留旧历史。显式context files，不隐式加载；写入受运行/打开/关闭/配置/unknown门禁保护。
+
+WAGENT-010中的双模式助手与规则归属已由ASSIST-011取代；逐项目Pi读取技能能力由项目规则生成API复用。
+
+## AGENT-002｜工作区助手（替代首期不接入Agent的规则）
+
+工作区默认无助手时仍使用Pi默认及固定workspace XML。来源及逐项目生成流程见WAGENT-010。generated每个项目拥有独立AGENTS.md，运行时按项目ID填入对应project/rules；没有生成规则的项目省略规则节点，不能把工作区自身作为项目生成来源。custom工作区仅有工作区自身一份AGENTS.md，完整替换默认系统提示词，仍保留应用的固定工作区定位结构。版本文件保存在agents目录，不覆盖各项目仓库的AGENTS.md。工作区级助手不能用于独立项目，项目级助手可供工作区引用；工作区项目被移除后拒绝采用相关助手并要求显式更新。历史workspaceRules只读兼容，不允许新建或继续生成。
+
+S/assistant使用类型化文件保存精确版本引用，不修改workspace_sessions SQL。配置受本服务运行/打开/关闭/unknown/删除门禁保护；事件通知刷新，下一轮使用、运行中固定。删除会话后原生历史/助手版本及选择文件保留。验收与状态统一按05 AGENT-002；共享02 AGENT-004的agents保存目录及旧目录读取兼容，无历史迁移授权。
+
+
+AGENT-003：工作区来源生成复用通用03的生成技能API与04的选择投影，技能可选，不选时模型直接调查项目；所选技能指导各项目独立规则整理；自动修订可按意见同时调整多段，未涉及项目规则保持原文，服务端拒绝越界项目，不扩大projectIds分析范围，不改变固定workspace XML、会话技能、Pi权限或版本模型。
+
+
+## REF-ASSIST-001｜消息引用助手与Skill
+
+会话输入工具栏按“引用助手 → 引用 Skill → 上传文件”排列，独立项目与工作区复用。助手从候选API及GET /api/agents/:id读取正式精确版本，选择后通过既有GET/PUT S/assistant写入会话助手选择（精确agentId/revision/contentSha256、If-Match和当前lease），下一轮按ASSIST-011装配系统提示词。只允许active正式版本；继承默认提示词的助手同样可选。助手不转换为附件、不写messages.references、不占附件额度、不在输入框或对话中显示合成文件。选择持续生效至显式更换或移除，在Composer引用入口查看名称与更换；会话检查不再展示助手分区，既有移除API保留但不新增移除入口；不隐藏既有Pi历史或用户上传文件。Skill列表复用GET /api/agents/skills，新增GET /api/agents/skills/:skillId返回{id,name,description,sha256,content}完整技能文本，受控技能目录读取与错误沿用AGENT-003，无Pi调用、数据库写入或新增持久模型。技能只作为本次消息材料，不自动安装或授予能力。客户端不提供路径，响应不含绝对路径。
+
+选择器复用现有弹窗；助手使用既有会话选择模型，失败保留旧选择，运行/压缩/停止/提交或无有效lease时禁用选择；读取失败可重试，切换会话取消本地请求，不自动重放PUT。Skill继续使用上传附件模型，原子加入，遵循总计10项及附件字节限制，重复选择按所引用文件处理；可在输入内删除，发送成功清空，失败保留。加载/读取失败可重试，关闭或切换会话取消未完成选择；运行/停止/阻塞及提交中禁用，避免转成steer附件。API验收完整Skill正文/摘要及不存在与非法ID错误，页面检查按钮顺序和共用附件发送逻辑。
+
+REF-ASSIST-001验证：tests/agent-preparation-api.test.cjs四项通过，含Skill正文/摘要、无绝对路径、404及非法ID；类型检查、输入组件JSX和差异检查通过。浏览器交互未实测。
+
+
+PSES-011接口核对：tests/session-entry-link-api.test.cjs的Workspace application/SSE场景通过，受控模型流执行临时文件write/edit，流式assistant和工具结果均唯一关联最终原生树；具体共享验收记录见05 PSES-011。未复现终态残留，生成中的未确认标记不表示项目文件保存失败；真实浏览器未验。
+
+## ASSIST-011｜工作区当前目标
+本节替代WAGENT-010与AGENT-002中助手种类、文件归属、范围与装配规则。统一助手不持有项目规则，工作区source.projectIds=null表示全部当前成员，非空数组表示显式子集；自定义/项目生成入口取消。项目AGENTS.md由工作区成员项目设置单独生成/启停，存储键包含workspaceId+projectId，模型/存储通用契约见02 ASSIST-011，API见03 ASSIST-011。助手采用后固定XML仅列其范围项目并填入启用规则；无助手仍保留原全部工作区成员逻辑。会话nativeRef.cwd不改变，不能用XML范围冒充OS沙箱。仅配置指纹变化才更新装配，不随每轮重复填充；活动轮次固定配置。无SQL变化或历史迁移。
+
+ASSIST-011验证：tests/unified-assistant-api.test.cjs与tests/agent-preparation-api.test.cjs共9项通过；覆盖统一助手版本无AGENTS.md、继承/替换、子集/全工作区、两范围规则开关与版本、并发生成冲突/取消、无助手不加载、真实Pi连续两轮不新增系统配置以及变化时复用句柄更新。类型检查、改动JSX语法与差异检查通过；无历史迁移、生产构建、服务启停或真实模型调用。
+
+
+ASSIST-012：通用型助手的通用定义见02，工作区会话可采用，保留既有工作区定位，不加载project-rules。工作区引用列表以当前Session.defaultProjectId和workspaceId调用03的候选查询，先返回覆盖该成员的本工作区助手和匹配成员的独立项目助手，再列通用型；其他工作区及不覆盖该成员的助手不展示。Tailwind编辑与公共列表投影见04。无新增SQL、迁移或Pi历史改写。
+
+ASSIST-012验证：tests/unified-assistant-api.test.cjs共7项通过，新增覆盖通用型创建/修改/润色、非法归属组合、项目优先及通用型排序、工作区成员过滤、越界和缺失项目错误，以及两类会话采用通用型助手后不加载项目规则；沿用受控Pi验证跨轮次不重复装配。类型检查、变更JSX语法、Tailwind样式及使用的工具类编译、git diff --check通过。未执行浏览器、真实模型或生产构建。
+
+
+RULEGEN-001：工作区成员的规则生成与进度采用通用02/03模型和API，任务身份同时含workspaceId与projectId，与同目录独立项目隔离。生成开始及发布前均核验成员仍存在；移出工作区后不能发布。成员设置复用04的规则控件与可选技能，生成按钮与技能同行，补充要求通过润色修改该成员已保存规则；任务mode、输入校验、幂等与发布沿用02/03，不能修改其他成员规则。两列顺序和单项目选择按WSET-002；离开工作区页面不取消生成。此目标取代以前必须选技能和POST断开即取消的规则，不修改任何工作区业务Session或既有规则版本。
+
+RULEGEN-001验证：tests/project-rule-generations-api.test.cjs、tests/unified-assistant-api.test.cjs、tests/agent-preparation-api.test.cjs共18项通过；另定向运行tests/assistant-api.test.cjs中的generation skill list and prepare APIs用例1项通过。覆盖202异步接受、HTTP断开后继续、持久进度查询、同键幂等、单项目并发、取消/失败保留旧版、目录及规则变更冲突、项目/成员任务隔离、服务重建中断及发布结果核对，以及有/无技能的真实Pi读取工具循环（受控模型）。类型、改动JSX与Tailwind编译、差异检查通过。未执行浏览器、真实模型、生产构建、服务启停或数据迁移。
+
+
+BUTTON-001：工作区导航、会话操作、项目成员设置及目录弹窗统一采用04 BUTTON-001共用按钮，不新增工作区变体，不改变当前模型、API或运行许可。
+
+
+## WSET-002｜工作区设置单项目规则投影
+
+工作区新增与设置铺满导航右侧剩余画布，不设最大宽度。项目列表操作列并排放置“AGENTS.md 设置”和移除按钮；已保存成员可选择规则设置，未保存的新成员禁用设置并提示先保存工作区。当前规则选择只保存于页面，不改变默认项目、工作区配置或Session。
+
+下方仅装配当前选择的一个已保存且仍在编辑列表内的项目规则区，初始选已保存默认项目，否则首个已保存成员；移除当前项后回退首个可用成员，没有可用成员时不装配。点击设置切换所属项目，旧读取及轮询随组件卸载停止，旧响应不得写入新项目；已接受后台生成继续运行，重新进入从原API恢复状态。未提交生成要求属于页面草稿，切换时丢弃。
+
+整个设置主体宽屏采用两列：左侧从上至下为工作区信息、项目列表、保存操作和所选项目的生成配置，右侧仅所选项目的只读AGENTS.md预览；不再将工作区信息放在两列上方。窄屏信息和配置在上，预览在下；无已保存项目时右侧显示保存后可预览的占位。独立项目原有左右顺序不变。仍调用所属成员agent-rules既有GET/PUT/POST/PATCH，无模型/API/SQL/Pi变化，无历史迁移。
+
+验收：全宽、操作列入口、单成员切换、未保存成员禁用、移除选择回退、右预览和侧栏NAV-002同步。状态：实现完成；类型检查、变更组件JSX解析、布局Tailwind类编译与git diff --check通过；整体左信息与规则/右预览布局已同步核对。未新增或运行测试；浏览器视觉及实际切换交互待验收。

@@ -7,7 +7,7 @@ import type {PiRuntimePort,PiSessionHandle} from './ports/pi-runtime';
 import type {PiContextPort} from './ports/pi-context';
 import type {ProjectOperationStore,OperationRecord} from './ports/project-operations';
 import type {SessionToolsRuntimePort} from './ports/session-tools';
-import {acquireSession,sessionLocks} from './session-lock';
+import { releaseSession, assertSessionAvailable,acquireSession,sessionLocks} from './session-lock';
 
 type CompactionOperation={running:boolean;cancelRequested:boolean;cancelled:boolean;error:string|null;handle?:PiSessionHandle;record?:OperationRecord;cancelRecord?:OperationRecord};
 export function createNativeContextService(deps:{sessions:SessionRepositoryPort;projects:ProjectRepositoryPort;runtime:PiRuntimePort & PiContextPort & Partial<SessionToolsRuntimePort>;assertWritable:()=>void;operations?:ProjectOperationStore;changed?:(id:string)=>void;assertLease?:(id:string,lease:string|null)=>void;assertKnown?:(projectId:string,id:string)=>void}) {
@@ -15,6 +15,7 @@ export function createNativeContextService(deps:{sessions:SessionRepositoryPort;
   function scope(projectId:string,sessionId:string){
     const session=deps.sessions.get(sessionId),project=deps.projects.get(projectId);
     if(!session||!project||session.projectId!==projectId)throw new DomainError('NOT_FOUND','Session 不存在',404,true);
+    assertSessionAvailable(sessionId);
     return {session,project,input:{session,workingDirectory:project.rootPath,allowProjectWrite:false,projectSession:true}};
   }
   async function inspect(projectId:string,sessionId:string):Promise<NativeContextInspection>{
@@ -44,6 +45,7 @@ export function createNativeContextService(deps:{sessions:SessionRepositoryPort;
       try{
         const handle=deps.runtime.getHandle(sessionId);if(!handle)throw new DomainError('RUNTIME_NOT_OPEN','请先打开项目会话',409,true);
         const preflight=await deps.runtime.inspect(value.input);if(!preflight.canCompact)throw new DomainError('NOTHING_TO_COMPACT',preflight.unavailableReason??'原生会话无需压缩',409,true);
+        assertSessionAvailable(sessionId);
         operation.handle=handle;
         operation.record=deps.operations?.prepare(projectId,sessionId,'compact',key,{}, {baseline:deps.runtime.operationEvidence?.(value.input)??{}});
         if(operation.record&&operation.record.phase!=='prepared')throw new DomainError('REQUEST_UNKNOWN','此前压缩结果待核对，不能重放',409,true);
@@ -53,8 +55,8 @@ export function createNativeContextService(deps:{sessions:SessionRepositoryPort;
         }).catch(error=>{
           if(operation.cancelRequested&&error instanceof DomainError&&error.code==='REQUEST_ABORTED'){operation.cancelled=true;if(operation.record&&deps.operations){try{operation.record=deps.operations.append(operation.record,'observed',{after:deps.runtime.operationEvidence?.(value.input)??{},settled:true,cancelled:true});deps.operations.append(operation.record,'completed',{cancelled:true});if(operation.cancelRecord)deps.operations.append(operation.cancelRecord,'completed',{parentOperationId:operation.record.operationId});}catch{operation.error='REQUEST_UNKNOWN';}}}
           else operation.error=error instanceof DomainError?error.message:'原生压缩失败，请核对恢复状态后重试';
-        }).finally(()=>{operation.running=false;sessionLocks.delete(sessionId);deps.changed?.(sessionId);});
-      }catch(error){operation.running=false;sessionLocks.delete(sessionId);throw error;}
+        }).finally(()=>{operation.running=false;releaseSession(sessionId);deps.changed?.(sessionId);});
+      }catch(error){operation.running=false;releaseSession(sessionId);throw error;}
       return {operationId:operation.record?.operationId??'',inspection:await inspect(projectId,sessionId)};
     },
     async cancel(projectId:string,sessionId:string,key:string){

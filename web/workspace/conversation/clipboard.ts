@@ -1,6 +1,5 @@
 export const attachmentOnlyMessage = "请查看本次附带的图片或文本。";
 import { MAX_REFERENCE_FILE_BYTES, MAX_REFERENCE_TOTAL_BYTES, REFERENCE_SIZE_MESSAGE } from "../../../src/domain/message-reference-limits";
-export function pastedLineCount(text: string) { return text.split(/\r\n|\r|\n/).length; }
 export function clipboardFiles(clipboard: Pick<DataTransfer, "items" | "getData"> & Partial<Pick<DataTransfer, "files">>): File[] | null {
   const items = Array.from(clipboard.items).filter(item => item.kind === "file");
   const files = items.length ? items.map(item => {
@@ -16,8 +15,8 @@ export function clipboardFiles(clipboard: Pick<DataTransfer, "items" | "getData"
     }
     return files;
   }
-  const text = clipboard.getData("text/plain"), lines = pastedLineCount(text);
-  return lines > 10 || text.length > 1000 ? [new File([text], `已粘贴 ${lines} 行.txt`, {type:"text/plain;charset=utf-8"})] : null;
+  // Text-only pastes stay editable in the composer, regardless of their size.
+  return null;
 }
 export function validateAttachments(files: readonly File[], projectCount: number) {
   if (files.length + projectCount > 10) throw new Error("最多选择 10 个参考文件");

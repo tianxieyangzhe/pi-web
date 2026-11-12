@@ -1,3 +1,4 @@
+import { xmlText } from "@/domain/assistant-document";
 import { createToolSearchScope, toolSearchNames } from "./tool-search-scope";
 import { toolSearchConfiguration, type ToolSearchDependencies } from "./tool-search-client";
 import { createServerWebSearchScope, assertServerWebSearch } from "./server-web-search";
@@ -6,6 +7,8 @@ import { createPersistentAgentSession } from "./create-session.server";
 import { subscribeNativeSession } from "./native-session-events.server";
 import {requestScopeInstructions} from "@/domain/execution-operation";
 import { appendMessageReferences } from "./message-references.server";
+import { sessionContextFiles } from "@/infrastructure/references/session-context-files.server";
+type ContextSnapshot = { documents:Array<{path:string;content:string}> };
 import { createMessageReferenceScope } from "./message-reference-scope.server";
 import {sameRuntimeConfiguration} from "@/domain/runtime-configuration";
 import {isRoleSnapshot} from "@/domain/agent-definition";
@@ -43,6 +46,10 @@ import { emptyInspection, type NativeContextInspection } from "@/domain/native-c
 import {projectTranscriptEntries} from "./transcript-projection";
 
 type Handle = {
+  deleting?: boolean;
+  acceptingSteer?: boolean;
+  discardedSteering?: number;
+  steeringWrites?: Set<Promise<unknown>>;
   session: PiAgentSession;
   referenceScope: ReturnType<typeof createMessageReferenceScope>;
   searchScope: ReturnType<typeof createServerWebSearchScope>;
@@ -51,6 +58,9 @@ type Handle = {
   cwd: string;
   isProjectSession: boolean;
   input: SessionRuntimeInput;
+  refreshContext:()=>ContextSnapshot;
+  promptDirty?:boolean;
+  contextFingerprint?:string;
   useConfiguration:(configuration:Awaited<ReturnType<typeof loadModelConfiguration>>)=>void;
 };
 
@@ -142,21 +152,15 @@ export function extractPublicSummary(value: string): { summary?: string; text: s
 }
 
 function loaderFor(input: SessionRuntimeInput, referenceScope: ReturnType<typeof createMessageReferenceScope>, searchScope: ReturnType<typeof createServerWebSearchScope>, toolSearchScope: ReturnType<typeof createToolSearchScope>): DefaultResourceLoader {
-  const agent = input.session.agentSnapshot;
-  const loader = new DefaultResourceLoader({
-    noExtensions: true,
-    extensionFactories: [referenceScope.extension, searchScope.extension, toolSearchScope.extension],
-    noSkills:true,noContextFiles:true,noPromptTemplates:true,
-    cwd: input.workingDirectory,
-    agentDir: getAgentDir(),
-    additionalSkillPaths: [],
-    appendSystemPrompt: [
-      requestScopeInstructions,
-      ...(input.workspace ? [input.workspace.prompt] : input.nativeCodingTools ? ['本会话使用Pi原生read、bash、edit、write工具；以本轮实际声明的工具为准；可通过bash调用部署已有的Python环境，不擅自安装依赖。项目目录为cwd，不是文件系统沙箱；上传附件原件保持只读，编辑结果另存。'] : []),
-      ...(isRoleSnapshot(agent)?[agent.definition.instructions]:[]),
-      
-    ],
-  });
+  const loader = new DefaultResourceLoader({noExtensions:true,extensionFactories:[referenceScope.extension,searchScope.extension,toolSearchScope.extension],noSkills:true,noContextFiles:true,noPromptTemplates:true,cwd:input.workingDirectory,agentDir:getAgentDir(),additionalSkillPaths:[],systemPromptOverride:()=>undefined,appendSystemPrompt:[]});
+  // Explicit selection is authoritative; do not discover project/global SYSTEM.md.
+  loader.getSystemPrompt=()=>{const agent=input.session.agentSnapshot;return isRoleSnapshot(agent)?agent.definition.systemPrompt||undefined:undefined;};
+  loader.getAppendSystemPrompt=()=>{
+    const agent=input.session.agentSnapshot,definition=isRoleSnapshot(agent)?agent.definition:null;
+    const rule=definition?.projects?.[0];
+    const projectContext=!input.workspace&&input.assistantContext?input.assistantContext.prompt:!input.workspace&&rule?`<project id="${xmlText(input.session.projectId)}" name="${xmlText(input.projectName??rule.name)}">\n<cwd>${xmlText(input.workingDirectory)}</cwd>\n<rules>${xmlText(rule.rules)}</rules>\n</project>`:'';
+    return [requestScopeInstructions,...(input.workspace?[input.workspace.prompt]:input.nativeCodingTools?['本会话使用Pi原生read、bash、edit、write工具；以本轮实际声明的工具为准；可通过bash调用部署已有的Python环境，不擅自安装依赖。项目目录为cwd，不是文件系统沙箱；上传附件原件保持只读，编辑结果另存。']:[]),...(definition?.instructions?[definition.instructions]:[]),...(projectContext?[projectContext]:[])];
+  };
   return loader;
 }
 
@@ -234,8 +238,10 @@ export function createPiEventMapper(showActionSummary: boolean, workingDirectory
 }
 
 export class PiSessionRuntime implements PiRuntimePort, PiContextPort {
-  constructor(private readonly modelSource: () => Promise<Awaited<ReturnType<typeof loadModelConfiguration>> & { model?: import("@earendil-works/pi-ai").Model<import("@earendil-works/pi-ai").Api> }> = loadModelConfiguration, private readonly toolSearchDependencies: ToolSearchDependencies = {}) {}
+  constructor(private readonly modelSource: () => Promise<Awaited<ReturnType<typeof loadModelConfiguration>> & { model?: import("@earendil-works/pi-ai").Model<import("@earendil-works/pi-ai").Api> }> = loadModelConfiguration, private readonly toolSearchDependencies: ToolSearchDependencies = {}, private readonly contextFilesSource:(id:string)=>ContextSnapshot = ()=>({documents:[]})) {}
   private readonly handles = new Map<string, Handle>();
+
+  setAssistant(handle:object,assistant:SessionRuntimeInput["session"]["agentSnapshot"],context?:SessionRuntimeInput['assistantContext']){const h=handle as Handle;if(JSON.stringify(h.input.session.agentSnapshot)!==JSON.stringify(assistant)||h.input.assistantContext?.key!==context?.key){h.input.session.agentSnapshot=assistant;h.input.assistantContext=context;h.promptDirty=true;}}
 
   private configuredModel() { return this.modelSource(); }
 
@@ -244,10 +250,12 @@ export class PiSessionRuntime implements PiRuntimePort, PiContextPort {
     const searchScope = createServerWebSearchScope();
     const toolSearchScope = createToolSearchScope(this.toolSearchDependencies);
     const loader = loaderFor(input, referenceScope, searchScope, toolSearchScope);
+    let context = this.contextFilesSource(input.session.id);
+    loader.getAgentsFiles = () => ({agentsFiles:context.documents});
     await loader.reload();
     const configuration = await this.configuredModel();
     const selected = input.selectedModel ?? manager.getBranch().findLast(entry => entry.type === "model_change");
-    const model = input.selectedModel ? await resolveConfiguredModel(configuration,input.selectedModel) : await resolveSessionModel(configuration,selected&&'provider' in selected?{provider:selected.provider,modelId:selected.modelId}:configuration.model?{provider:configuration.model.provider,modelId:configuration.model.id}:undefined);
+    const model = input.selectedModel ? await resolveConfiguredModel(configuration,input.selectedModel) : await resolveSessionModel(configuration,input.useDefaultModel?undefined:selected&&'provider' in selected?{provider:selected.provider,modelId:selected.modelId}:configuration.model?{provider:configuration.model.provider,modelId:configuration.model.id}:undefined);
     let currentConfiguration=configuration;
     const modelRuntime=new Proxy(configuration.runtime,{get(_target,property){const value=Reflect.get(currentConfiguration.runtime,property,currentConfiguration.runtime);return typeof value==='function'?value.bind(currentConfiguration.runtime):value;}});
     const result = await createPersistentAgentSession({
@@ -272,21 +280,23 @@ export class PiSessionRuntime implements PiRuntimePort, PiContextPort {
       cwd: input.workingDirectory,
       isProjectSession: input.projectSession !== false,
       input,
+      contextFingerprint:JSON.stringify(context),
+      refreshContext:()=>{context=this.contextFilesSource(input.session.id);return context;},
       useConfiguration:configuration=>{currentConfiguration=configuration;},
     };
   }
 
-  private async refreshHandle(handle:Handle,selected?:{provider:string;modelId:string}){
+  private async refreshHandle(handle:Handle,selected?:{provider:string;modelId:string},useDefaultModel=false){
     const configuration=await this.configuredModel();
     const branchModel=handle.manager.getBranch().findLast(entry=>entry.type==='model_change');
-    const model=selected?await resolveConfiguredModel(configuration,selected):await resolveSessionModel(configuration,branchModel?{provider:branchModel.provider,modelId:branchModel.modelId}:undefined);
+    const model=selected?await resolveConfiguredModel(configuration,selected):await resolveSessionModel(configuration,!useDefaultModel&&branchModel?{provider:branchModel.provider,modelId:branchModel.modelId}:undefined);
     handle.useConfiguration(configuration);
     const previous=handle.session.model;
     if(previous?.provider===model.provider&&previous.id===model.id){if(JSON.stringify(previous)!==JSON.stringify(model))handle.session.agent.state.model=model;}
     else{await handle.session.setModel(model);persistManager(handle.manager);}
   }
 
-  async refreshModel(handle:object) {await this.refreshHandle(handle as Handle);}
+  async refreshModel(handle:object,useDefaultModel=false) {await this.refreshHandle(handle as Handle,undefined,useDefaultModel);}
 
   async open(input: SessionRuntimeInput) {
     const manager = SessionManager.create(input.workingDirectory);
@@ -331,6 +341,10 @@ export class PiSessionRuntime implements PiRuntimePort, PiContextPort {
   async send(handle: object, message: string, emit: (event: AgentEvent) => void, onAssistantStream?: () => void, references?: import("@/domain/message-references").ReferenceContent, allowProjectWrite = false, webSearch = false, toolSearch = false) {
     const piHandle = handle as Handle;
     await this.refreshHandle(piHandle);
+    const previousContext=piHandle.contextFingerprint;
+    const context=piHandle.refreshContext();piHandle.contextFingerprint=JSON.stringify(context);
+    if(piHandle.promptDirty||previousContext!==piHandle.contextFingerprint){piHandle.session.setActiveToolsByName(piHandle.session.getActiveToolNames());piHandle.promptDirty=false;}
+    if(piHandle.deleting)throw new DomainError("REQUEST_ABORTED","会话正在删除",409,true);
     if(webSearch)this.validateWebSearch(handle);
     if(toolSearch)this.validateToolSearch();
     const originalTools = piHandle.input.nativeCodingTools && !piHandle.input.workspace && !allowProjectWrite
@@ -340,6 +354,7 @@ export class PiSessionRuntime implements PiRuntimePort, PiContextPort {
       toolDetails: new Map(),
     };
     let assistantStreamSeen = false,settled=false,settledAborted=false,promptStarted=false;
+    let requestFailure: unknown;
     const temporary = new WeakMap<object, string>();
     let currentTemporary: string | null = null;
     const pendingLinks: Promise<void>[] = [];
@@ -369,15 +384,25 @@ export class PiSessionRuntime implements PiRuntimePort, PiContextPort {
       piHandle.toolSearchScope.begin(toolSearch, piHandle.session);
       const referenceTurnId = piHandle.referenceScope.begin();
       await appendMessageReferences(piHandle.session, references, referenceTurnId);
+      if(piHandle.deleting)throw new DomainError("REQUEST_ABORTED","会话正在删除",409,true);
       promptStarted=true;
+      piHandle.acceptingSteer=true;
       await piHandle.session.prompt(message, { expandPromptTemplates: false });
       await piHandle.session.waitForIdle();
       if(!settled||!piHandle.session.isIdle)throw new DomainError('REQUEST_UNKNOWN','模型或工具循环终结尚未确认',409,true);
       if(settledAborted)throw new DomainError('REQUEST_ABORTED','请求已停止',409,true);
       const last=piHandle.session.messages.filter(item=>item.role==="assistant").at(-1) as {stopReason?:string;errorMessage?:string} | undefined;
-      if(last?.stopReason==="error") { if(/(?:does not|doesn't|do not|not|unsupported|cannot|can't).{0,60}(?:support|accept|process).{0,40}(?:image|vision)|(?:image|vision).{0,60}(?:not supported|unsupported|not allowed)|unsupported.{0,30}(?:image|vision)/i.test(last.errorMessage??""))throw new DomainError('MODEL_IMAGE_UNSUPPORTED','当前模型不支持此图片输入，请切换模型后重试',422,true);if(/context|token.*limit|maximum.*length/i.test(last.errorMessage??""))throw new DomainError("CONTEXT_LIMIT_REACHED","原生上下文已满，请在检查中手动压缩后重新发送",409,true);throw new DomainError("RUNTIME_ERROR", references?.some(item => item.type === "image") ? "模型请求失败；模型或服务可能不支持图片输入" : "模型请求失败，请检查配置或恢复状态",503,true); }
+      if(last?.stopReason==="error") { if(/(?:does not|doesn't|do not|not|unsupported|cannot|can't).{0,60}(?:support|accept|process).{0,40}(?:image|vision)|(?:image|vision).{0,60}(?:not supported|unsupported|not allowed)|unsupported.{0,30}(?:image|vision)/i.test(last.errorMessage??""))throw new DomainError('MODEL_IMAGE_UNSUPPORTED','当前模型不支持此图片输入，请切换模型后重试',422,true);if(/context|token.*limit|maximum.*length/i.test(last.errorMessage??""))throw new DomainError("CONTEXT_LIMIT_REACHED","原生上下文已满，请在检查中手动压缩后重新发送",409,true);throw new DomainError("MODEL_REQUEST_FAILED", "模型请求失败，请在Session设置中切换模型或检查供应商配置后，以新请求重新发送",503,true); }
       if(last?.stopReason==="aborted")throw new DomainError("REQUEST_ABORTED","请求已停止",409,true);
+    } catch(error) {
+      requestFailure=error;
+      throw error;
     } finally {
+      piHandle.acceptingSteer=false;
+      await Promise.allSettled([...(piHandle.steeringWrites??[])]);
+      const cleared=piHandle.session.clearQueue();
+      if(cleared.steering.length||(piHandle.discardedSteering??0)>0)emit({type:'steering_cleared'});
+      piHandle.discardedSteering=0;
       if(promptStarted)await piHandle.session.waitForIdle();
       await Promise.all(pendingLinks);
       piHandle.searchScope.end();
@@ -387,6 +412,10 @@ export class PiSessionRuntime implements PiRuntimePort, PiContextPort {
         if(originalTools)piHandle.session.setActiveToolsByName(originalTools);
         unsubscribe();
         persistManager(piHandle.manager);
+        // Only certify after every cleanup step and durable transcript write succeeds.
+        if(requestFailure instanceof DomainError&&requestFailure.code!=='REQUEST_UNKNOWN'&&settled&&piHandle.session.isIdle){
+          Object.assign(requestFailure,{requestSettled:true});
+        }
       }
     }
   }
@@ -432,8 +461,37 @@ export class PiSessionRuntime implements PiRuntimePort, PiContextPort {
     return subscribeNativeSession(pi.session, pi.manager, listener);
   }
 
+  steeringQueue(handle: object) { return [...(handle as Handle).session.getSteeringMessages()]; }
+
+  async steer(handle: object, content: string) {
+    const value=handle as Handle;
+    if(value.deleting)throw new DomainError('SESSION_BUSY','会话正在删除',409,true);
+    if(value.session.isCompacting)throw new DomainError('SESSION_BUSY','会话正在压缩',409,true);
+    if(!value.acceptingSteer||value.session.isIdle)throw new DomainError('SESSION_NOT_RUNNING','当前没有可纠正的运行请求',409,true);
+    const work=value.session.steer(content);
+    (value.steeringWrites??=new Set()).add(work);
+    try {
+      await work;
+      if(!value.acceptingSteer||value.deleting||value.session.isIdle){value.discardedSteering=(value.discardedSteering??0)+value.session.clearQueue().steering.length;throw new DomainError('REQUEST_ABORTED','运行已结束，未消费的纠正已清除',409,true);}
+    } finally {value.steeringWrites.delete(work);}
+  }
+
   async interrupt(handle: object) {
-    await (handle as Handle).session.abort();
+    const value=handle as Handle;
+    value.acceptingSteer=false;
+    await value.session.abort();
+    await Promise.allSettled([...(value.steeringWrites??[])]);
+    value.discardedSteering=(value.discardedSteering??0)+value.session.clearQueue().steering.length;
+  }
+
+  async stopForDeletion(handle: object) {
+    const value=handle as Handle;
+    value.deleting=true;
+    try {
+      value.session.abortCompaction();
+      await this.interrupt(handle);
+      await value.session.waitForIdle();
+    } catch(error) { value.deleting=false;throw error; }
   }
 
   async readTree(input: SessionRuntimeInput) {
@@ -589,6 +647,7 @@ export class PiSessionRuntime implements PiRuntimePort, PiContextPort {
 
   async compact(handle: object) {
     await this.refreshHandle(handle as Handle);
+    if((handle as Handle).deleting)throw new DomainError("REQUEST_ABORTED","会话正在删除",409,true);
     const pi = (handle as Handle).session;
     if (!pi.isIdle) throw new DomainError("SESSION_BUSY","Session 正在运行",409,true);
     const manager=(handle as Handle).manager,before=new Set(manager.getEntries().filter(entry=>entry.type==='compaction').map(entry=>entry.id));
@@ -603,7 +662,11 @@ export class PiSessionRuntime implements PiRuntimePort, PiContextPort {
 
   async close(handle: object) {
     const piHandle = handle as Handle;
-    piHandle.session.dispose();
+    piHandle.acceptingSteer=false;
+    await Promise.allSettled([...(piHandle.steeringWrites??[])]);
+    piHandle.session.clearQueue();
+    try { piHandle.session.dispose(); }
+    catch(error) { piHandle.deleting=false;throw error; }
     for (const [sessionId, value] of this.handles) {
       if (value === piHandle) this.handles.delete(sessionId);
     }
@@ -612,9 +675,9 @@ export class PiSessionRuntime implements PiRuntimePort, PiContextPort {
   getHandle(sessionId: string, input?: SessionRuntimeInput) {
     const handle = this.handles.get(sessionId);
     if (!input) return handle;
-    if (
-      handle && sameRuntimeConfiguration(handle.input,input)
-    ) {
+    if(handle&&handle.input.workingDirectory===input.workingDirectory&&handle.input.nativeCodingTools===input.nativeCodingTools&&handle.input.allowProjectRead===input.allowProjectRead&&handle.input.allowProjectWrite===input.allowProjectWrite){
+      const changed=handle.input.assistantContext?.key!==input.assistantContext?.key||!sameRuntimeConfiguration(handle.input,input);
+      if(changed){if(!handle.session.isIdle)throw new DomainError('SESSION_BUSY','当前不能更新助手配置',409,true);Object.assign(handle.input,input);handle.promptDirty=true;}
       return handle;
     }
     if (handle) {
@@ -626,4 +689,4 @@ export class PiSessionRuntime implements PiRuntimePort, PiContextPort {
   }
 }
 
-export const piSessionRuntime = new PiSessionRuntime();
+export const piSessionRuntime = new PiSessionRuntime(undefined, {}, id => ({documents:sessionContextFiles.documents(id)}));

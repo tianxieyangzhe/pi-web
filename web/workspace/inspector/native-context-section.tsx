@@ -1,3 +1,4 @@
+import {Button} from '../../components/button';
 import {useCallback,useEffect,useRef,useState} from "react";
 import {api} from "../../api/client";
 import type {NativeContextInspection} from "../../domain/native-context";
@@ -43,9 +44,9 @@ export function NativeContextSection({projectId,sessionId,onBusy,onRestore,runni
     <div className="session-inspector__row"><span>压缩策略</span><b>{value ? value.autoCompactionEnabled ? "自动压缩 · Pi 默认" : "自动压缩未启用" : "读取中…"}</b></div>
     <div className="session-inspector__row"><span>最近压缩</span><b>{value?.lastCompactedAt?new Date(value.lastCompactedAt).toLocaleString("zh-CN"):"尚无记录"}</b></div>
     <div className="pi-context-section__actions">
-      <button className="session-inspector__action" disabled={!sessionId||!!pending} onClick={()=>void act("refresh")}>{pending==="refresh"?"刷新中…":"刷新"}</button>
-      {value?.compactionState==="running"?<button className="session-inspector__action" disabled={!!pending||!value.canCancelCompaction} onClick={()=>void act("cancel")}>{pending==="cancel"?"正在取消…":"取消压缩"}</button>:<button className="session-inspector__action" disabled={!!pending||!value?.canCompact} title={value?.unavailableReason??""} onClick={()=>void act("compact")}>{pending==="compact"?"准备压缩…":"压缩上下文"}</button>}
-      {value?.sessionState==="unavailable"&&<button className="session-inspector__action" disabled={!!pending} onClick={()=>void act("restore")}>{pending==="restore"?"恢复中…":"恢复会话"}</button>}
+      <Button className="session-inspector__action" disabled={!sessionId||!!pending} onClick={()=>void act("refresh")}>{pending==="refresh"?"刷新中…":"刷新"}</Button>
+      {value?.compactionState==="running"?<Button className="session-inspector__action" disabled={!!pending||!value.canCancelCompaction} onClick={()=>void act("cancel")}>{pending==="cancel"?"正在取消…":"取消压缩"}</Button>:<Button className="session-inspector__action" disabled={!!pending||!value?.canCompact} title={value?.unavailableReason??""} onClick={()=>void act("compact")}>{pending==="compact"?"准备压缩…":"压缩上下文"}</Button>}
+      {value?.sessionState==="unavailable"&&<Button className="session-inspector__action" disabled={!!pending} onClick={()=>void act("restore")}>{pending==="restore"?"恢复中…":"恢复会话"}</Button>}
     </div>
     {(!value?.canCompact||!value.runtimeReady)&&value?.compactionState!=="running"&&<p className="session-inspector__note">{value?.unavailableReason??"发送首条消息后可管理"}</p>}
     <p className="session-inspector__note">Pi 管理当前对话窗口。压缩调用模型并保留历史，自动压缩保持开启，参数使用 Pi 默认值；也可手动压缩。</p>

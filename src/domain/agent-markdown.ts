@@ -1,3 +1,4 @@
+import { assistantDocument, isAssistantDefinition, isLegacyAssistantDefinition, legacyAssistantDocument } from "./assistant-document";
 import { validateDefinition } from "./agent-definition";
 import type { AgentDefinition } from "./models";
 
@@ -11,6 +12,8 @@ export type AgentMarkdownView = {
 };
 
 export function renderAgentMarkdown(value: AgentMarkdownView): string {
+  if(isAssistantDefinition(value.definition))return assistantDocument(value.definition).markdown;
+  if(isLegacyAssistantDefinition(value.definition))return legacyAssistantDocument(value.definition).markdown;
   const definition = validateDefinition(value.definition, value.kind);
   return [
     "---",
@@ -22,7 +25,7 @@ export function renderAgentMarkdown(value: AgentMarkdownView): string {
     `capabilities: ${JSON.stringify(definition.capabilities)}`,
     "---",
     "",
-    definition.instructions.trimEnd(),
+    (definition.instructions??'').trimEnd(),
     ""
   ].join("\n");
 }

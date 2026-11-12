@@ -20,6 +20,17 @@ function mutation(method: string, body?: unknown): RequestInit {
   return { method, headers: jsonHeaders, ...(body === undefined ? {} : { body: JSON.stringify(body) }) };
 }
 
+type PreparedAgent={name:string;description:string|null;definition:import('../domain/models').AgentDefinition;warnings:string[];sources:Array<{path:string;hash:string}>};
+async function streamResult<T>(url:string,body:Record<string,unknown>,signal:AbortSignal,onProgress?: (event:import('../../src/application/agent-service').AgentPreparationProgress)=>void,etag?:string):Promise<T>{
+  const response=await fetch(url,{...mutation('POST',body),headers:{...jsonHeaders,accept:'application/x-ndjson',...(etag?{'if-match':etag}:{})},signal});
+  if(!response.ok){const payload=await response.json();throw new Error(payload.error?.message??'生成失败');}
+  if(!response.body)throw new Error('生成连接不可用');
+  const reader=response.body.getReader(),decoder=new TextDecoder();let buffer='',result:T|undefined;
+  const line=(text:string)=>{if(!text.trim())return;const event=JSON.parse(text);if(event.type==='error')throw new Error(event.error?.message??'生成失败');if(event.type==='progress')onProgress?.(event);if(event.type==='result')result=event.data;};
+  try{while(true){const {done,value}=await reader.read();buffer+=done?decoder.decode():decoder.decode(value,{stream:true});let index;while((index=buffer.indexOf('\n'))>=0){line(buffer.slice(0,index));buffer=buffer.slice(index+1);}if(done)break;}line(buffer);if(!result)throw new Error('生成连接已中断，草稿未更新');return result;}
+  finally{await reader.cancel().catch(()=>{});reader.releaseLock();}
+}
+
 const contextRequests=new Map<string,Promise<NativeContextInspection>>();
 function readNativeContext(projectId:string,sessionId:string){
   const url=`/api/projects/${projectId}/sessions/${sessionId}/context`;
@@ -29,6 +40,18 @@ function readNativeContext(projectId:string,sessionId:string){
 }
 
 export const api = {
+  getSessionAssistant: (base:string,signal:AbortSignal) => request<import('../../src/application/ports/session-assistant').AssistantSelection>(`${base}/assistant`,{cache:'no-store',signal}),
+  selectSessionAssistant: async (base:string,agentId:string,leaseId:string,signal:AbortSignal) => {
+    const [view,agent]=await Promise.all([
+      request<import('../../src/application/ports/session-assistant').AssistantSelection>(`${base}/assistant`,{cache:'no-store',signal}),
+      request<Agent>(`/api/agents/${encodeURIComponent(agentId)}`,{cache:'no-store',signal}),
+    ]);
+    if(agent.status!=='active'||!agent.contentSha256)throw new Error('助手已停用或尚无正式版本');
+    return request<import('../../src/application/ports/session-assistant').AssistantSelection>(`${base}/assistant`,{
+      ...mutation('PUT',{selection:{agentId:agent.id,revision:agent.revision,contentSha256:agent.contentSha256}}),
+      headers:{...jsonHeaders,'if-match':view.writeETag,'x-session-lease-id':leaseId},signal,
+    });
+  },
   getNativeContext: readNativeContext,
   sessionModels: (projectId:string,id:string,leaseId?:string) => request<SessionModelView>(`/api/projects/${projectId}/sessions/${id}/models`,{headers:leaseId?{"x-session-lease-id":leaseId}:{}}),
   switchSessionModel: (projectId:string,id:string,provider:string,modelId:string,leaseId:string,thinkingLevel?:import('../../src/domain/session-tools').SessionThinkingLevel) => request<SessionModelView>(`/api/projects/${projectId}/sessions/${id}/model`,{...mutation("PUT",{provider,modelId,thinkingLevel}),headers:{...jsonHeaders,"x-session-lease-id":leaseId}}),
@@ -48,9 +71,16 @@ export const api = {
   createProject: (body: Record<string, unknown>) => request<Project>("/api/projects", mutation("POST", body)),
   updateProject: (id: string, body: Record<string, unknown>,etag?:string) => request<Project>(`/api/projects/${id}`, {...mutation("PATCH", body),headers:{...jsonHeaders,"if-match":etag??""}}),
   deleteProject: (id: string,etag?:string) => request<{ deleted: boolean }>(`/api/projects/${id}`, {...mutation("DELETE"),headers:{"if-match":etag??""}}),
-  prepareAgent:(body:Record<string,unknown>,signal:AbortSignal)=>request<{suggestedStatus?:"active"|"disabled";name:string;description:string|null;definition:import("../domain/models").AgentDefinition;warnings:string[];sources:Array<{path:string;hash:string}>}>("/api/agents/prepare",{...mutation("POST",body),signal}),
-  listAgents: () => request<Agent[]>("/api/agents"),
-  getAgent: (id: string) => request<Agent>(`/api/agents/${id}`),
+  generationSkills: (signal?:AbortSignal) => request<{defaultSkillId:string;skills:import("../../src/application/ports/generation-skills").GenerationSkillView[]}>("/api/agents/skills",{signal,cache:"no-store"}),
+  prepareAgent:(body:Record<string,unknown>,signal:AbortSignal,onProgress?:(event:import('../../src/application/agent-service').AgentPreparationProgress)=>void)=>streamResult<PreparedAgent>('/api/agents/prepare',body,signal,onProgress),
+  projectRules:(url:string,signal?:AbortSignal)=>request<import('../../src/application/ports/project-rule-generations').ProjectRulesStatus>(url,{signal,cache:'no-store'}),
+  setProjectRules:(url:string,enabled:boolean,etag:string)=>request<import('../../src/application/ports/project-rule-generations').ProjectRulesStatus>(url,{...mutation('PUT',{enabled}),headers:{...jsonHeaders,'if-match':etag}}),
+  generateProjectRules:(url:string,body:Record<string,unknown>,etag:string,key:string)=>request<import('../../src/application/ports/project-rule-generations').ProjectRulesStatus>(url,{...mutation('POST',body),headers:{...jsonHeaders,'if-match':etag,'idempotency-key':key}}),
+  cancelProjectRuleGeneration:(url:string,generationId:string)=>request<import('../../src/application/ports/project-rule-generations').ProjectRulesStatus>(url,mutation('PATCH',{generationId,action:'cancel'})),
+  listReferenceAgents:(context:{projectId?:string;workspaceId?:string},signal?:AbortSignal)=>request<Agent[]>(`/api/agents?${new URLSearchParams({references:'1',...context})}`,{signal,cache:'no-store'}),
+  listAgents: (signal?:AbortSignal) => request<Agent[]>("/api/agents",{signal,cache:'no-store'}),
+  getAgent: (id: string, signal?:AbortSignal) => request<Agent>(`/api/agents/${encodeURIComponent(id)}`,{signal,cache:'no-store'}),
+  getSkill:(id:string,signal?:AbortSignal)=>request<import('../../src/application/ports/generation-skills').GenerationSkill>(`/api/agents/skills/${encodeURIComponent(id)}`,{signal,cache:'no-store'}),
   createAgent: (body: Record<string, unknown>,signal?:AbortSignal) => request<Agent>("/api/agents", {...mutation("POST", body),signal}),
   updateAgent: (id: string, body: Record<string, unknown>,signal?:AbortSignal) => request<Agent>(`/api/agents/${id}`,  {...mutation("PATCH", Object.fromEntries(Object.entries(body).filter(([key])=>key!=="writeETag"))),signal,headers:{...jsonHeaders,"if-match":String(body.writeETag??'')}}),
   deleteAgent: (id: string,etag?:string) => request<{ deleted: boolean; archived:boolean }>(`/api/agents/${id}`,{...mutation("DELETE"),headers:{"if-match":etag??""}}),

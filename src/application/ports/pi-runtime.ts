@@ -3,8 +3,11 @@ import type { ActivityEvent, AgentEvent, JsonObject, Session } from "@/domain/mo
 export type PiSessionHandle = object;
 
 export type SessionRuntimeInput = {
+  projectName?:string;
+  assistantContext?:{key:string;prompt:string};
   session: Session;
   selectedModel?: { provider: string; modelId: string };
+  useDefaultModel?: boolean;
   workingDirectory: string;
   allowProjectWrite: boolean;
   allowProjectRead?:boolean;
@@ -14,9 +17,10 @@ export type SessionRuntimeInput = {
 };
 
 export interface PiRuntimePort {
+  setAssistant?(handle:object,assistant:Session["agentSnapshot"],context?:SessionRuntimeInput["assistantContext"]):void;
   getHandle(sessionId: string, input?: SessionRuntimeInput): PiSessionHandle | undefined;
   isBusy?(handle: PiSessionHandle): boolean;
-  refreshModel?(handle: PiSessionHandle): Promise<void>;
+  refreshModel?(handle: PiSessionHandle, useDefaultModel?: boolean): Promise<void>;
   subscribe?(handle: PiSessionHandle, listener: (event: AgentEvent) => void): () => void;
   open(input: SessionRuntimeInput): Promise<{ handle: PiSessionHandle; nativeRef: JsonObject }>;
   restore(input: SessionRuntimeInput): Promise<PiSessionHandle>;
@@ -25,7 +29,10 @@ export interface PiRuntimePort {
   validateToolSearch?(): void;
   validateWebSearch?(handle: PiSessionHandle): void;
   send(handle: PiSessionHandle, message: string, emit: (event: AgentEvent) => void, onAssistantStream?: () => void, references?: import("@/domain/message-references").ReferenceContent, allowProjectWrite?: boolean, webSearch?: boolean, toolSearch?: boolean): Promise<void>;
+  steer?(handle: PiSessionHandle, content: string): Promise<void>;
+  steeringQueue?(handle: PiSessionHandle): readonly string[];
   interrupt(handle: PiSessionHandle): Promise<void>;
+  stopForDeletion?(handle: PiSessionHandle): Promise<void>;
   readMessages(input: SessionRuntimeInput): Promise<Array<{
     id: string;
     role: "user" | "assistant";

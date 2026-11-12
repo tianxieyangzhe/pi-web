@@ -17,7 +17,7 @@ function checkDestination(destination, replace) {
     throw Error('Default release destination must be a regular directory.');
   }
   const names = fs.readdirSync(destination);
-  if (names.some(name => ['.data', 'models.json', 'settings.json', 'auth.json'].includes(name) || name.startsWith('.env'))) {
+  if (names.some(name => ['.data', 'agents', 'models.json', 'settings.json', 'auth.json'].includes(name) || name.startsWith('.env'))) {
     throw Error('release/ contains runtime data or configuration; use a new explicit destination.');
   }
   for (const name of ['release.json', 'server.js']) {
@@ -59,7 +59,7 @@ function release(args = process.argv.slice(2)) {
       if (stat.isSymbolicLink() || !stat.isDirectory()) {
         throw Error('Production build path must be a regular directory: ' + build);
       }
-      if (fs.readdirSync(build).some(name => ['.data', 'models.json', 'settings.json', 'auth.json'].includes(name) || name.startsWith('.env'))) {
+      if (fs.readdirSync(build).some(name => ['.data', 'agents', 'models.json', 'settings.json', 'auth.json'].includes(name) || name.startsWith('.env'))) {
         throw Error('Production build directory contains runtime data or configuration; refusing to clean it.');
       }
       fs.rmSync(build, { recursive: true });

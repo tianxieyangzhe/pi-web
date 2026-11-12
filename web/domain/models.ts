@@ -11,7 +11,7 @@ export type Project = {
   writeETag?: string;
 };
 
-export type AgentDefinition={instructions:string;capabilities:{readFiles:boolean;writeFiles:boolean}};
+export type AgentDefinition=import("../../src/domain/models").AgentDefinition;
 export type Agent={id:string;name:string;description:string|null;kind:"project"|null;projectId:string|null;sourceTemplateId:string|null;definition:AgentDefinition|null;legacySource?:string|null;contentSha256:string|null;revision:number;status:ResourceStatus;writeETag?:string};
 export type AgentSnapshot={agentId:string;name:string;description:string|null;revision:number;kind:"project";projectId:null;contentSha256:string;definition:AgentDefinition};
 
@@ -61,7 +61,7 @@ export type ActivityEvent = {
   detail?: string;
 };
 
-export type SessionTree = { entries: Array<{ entry: Record<string, unknown> & { id: string; parentId: string | null; type: string; timestamp: string }; label: string | null; labelTimestamp: string | null }>; activeLeafId: string | null };
+export type SessionTree = { tokenUsage?: import("../../src/domain/session-run-metrics").SessionTokenUsage; entries: Array<{ entry: Record<string, unknown> & { id: string; parentId: string | null; type: string; timestamp: string }; label: string | null; labelTimestamp: string | null }>; activeLeafId: string | null };
 export type PiStreamEvent = { sessionId: string; runId: string | null; sequence: number | null; type: string; entryId: string | null; temporaryId: string | null; payload: unknown };
 
 export type AgentEvent =

@@ -18,6 +18,7 @@ export function readComposer(root: Node): string {
     if (node.nodeType === 3) return node.textContent ?? "";
     if (node.nodeType !== 1) return "";
     const element = node as HTMLElement;
+    if (element.hasAttribute('data-pasted-text')) return element.dataset.pastedText ?? '';
     if (element.dataset.attachmentId) return attachmentToken(element.dataset.attachmentId);
     if (element.hasAttribute("data-caret-slot")) return children(node).replace("\u200B", "");
     if (element.tagName === "BR") return "\n";

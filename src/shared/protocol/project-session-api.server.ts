@@ -10,6 +10,15 @@ export async function projectSessionAction(request:Request,context:ProjectSessio
     const {projectId,sessionId}=await context.params;
     services.projectSessions.get(projectId,sessionId);
     const key=request.headers.get('idempotency-key')??'',lease=request.headers.get('x-session-lease-id');
+    if(action==='assistant'){
+      if(request.method==='GET')return dataResponse(services.execution.assistant(sessionId),{headers:{'cache-control':'no-store'}});
+      if(request.method==='PUT')return dataResponse(services.execution.changeAssistant(sessionId,await jsonBody(request),request.headers.get('if-match')??'',lease));
+    }
+    if(action==='context-files'){
+      if(typeof services.execution.contextFiles!=='function'||typeof services.execution.changeContextFiles!=='function')throw new DomainError('SERVICE_RESTART_REQUIRED','参考文件服务已更新，请重新加载应用服务',503,true);
+      if(request.method==='GET')return dataResponse(services.execution.contextFiles(sessionId),{headers:{'cache-control':'no-store'}});
+      if(request.method==='POST'||request.method==='DELETE')return dataResponse(services.execution.changeContextFiles(sessionId,request.method,await jsonBody(request,MAX_MESSAGE_BODY_BYTES),request.headers.get('if-match')??'',lease));
+    }
     if(request.method==='GET'){
       if(action==='models')return dataResponse(await services.sessionTools.models(projectId,sessionId,lease),{headers:{'cache-control':'no-store'}});
       if(action==='context')return dataResponse(await services.nativeContext.inspect(projectId,sessionId),{headers:{'cache-control':'no-store'}});
@@ -25,6 +34,7 @@ export async function projectSessionAction(request:Request,context:ProjectSessio
     if(action==='model'&&request.method==='PUT')return dataResponse(await services.sessionTools.switchModel(projectId,sessionId,await jsonBody(request),key,lease));
     if(request.method==='POST'){
       if(action==='messages')return dataResponse(services.sessionTools.accept(projectId,sessionId,await jsonBody(request,MAX_MESSAGE_BODY_BYTES),key,lease),{status:202});
+      if(action==='steer')return dataResponse(await services.sessionTools.steer(projectId,sessionId,await jsonBody(request,65536),key,lease),{status:202});
       if(action==='fork')return dataResponse(await services.sessionTools.fork(projectId,sessionId,await jsonBody(request),key),{status:201});
       if(action==='role')return dataResponse(await services.sessionTools.adoptAgent(projectId,sessionId,await jsonBody(request),key,request.headers.get('if-match')));
       if(action==='recover')return dataResponse(await services.sessionTools.recover(projectId,sessionId,await jsonBody(request),key));

@@ -1,6 +1,9 @@
+import { assistantDocument, isAssistantDefinition, isLegacyAssistantDefinition, legacyAssistantDocument } from "../../src/domain/assistant-document";
 import type { AgentDefinition } from "./models";
 
 export function renderAgentMarkdown(value:{agentId?:string;revision?:number;kind:"project";name:string;description:string|null;definition:AgentDefinition}) {
+  if(isAssistantDefinition(value.definition))return assistantDocument(value.definition).markdown;
+  if(isLegacyAssistantDefinition(value.definition))return legacyAssistantDocument(value.definition).markdown;
   return [
     "---",
     `agent_id: ${JSON.stringify(value.agentId??"<保存时生成>")}`,
@@ -11,7 +14,7 @@ export function renderAgentMarkdown(value:{agentId?:string;revision?:number;kind
     `capabilities: ${JSON.stringify(value.definition.capabilities)}`,
     "---",
     "",
-    value.definition.instructions.trimEnd(),
+    (value.definition.instructions??'').trimEnd(),
     ""
   ].join("\n");
 }

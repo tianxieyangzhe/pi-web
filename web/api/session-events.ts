@@ -1,7 +1,7 @@
 import { randomUUID } from "./random-uuid";
 import type { PiStreamEvent } from "../domain/models";
 
-export type SessionLease = { leaseId: string; status: string; outcome: string | null;activity?:{running:boolean;compacting:boolean} };
+export type SessionLease = { leaseId: string; status: string; outcome: string | null;activity?:{running:boolean;compacting:boolean;steering?:string[]} };
 async function mutation(base: string, action: string, body?: unknown, keepalive = false) {
   const response = await fetch(`${base}/runtime/${action}`, { method: "POST", cache: "no-store", keepalive, headers: { "content-type": "application/json", "idempotency-key": randomUUID() }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   if (!response.ok) { const payload = await response.json(); throw new Error(payload.error?.message ?? "会话订阅失败"); }
@@ -52,6 +52,12 @@ export function subscribeSession(base: string, options: { onReady: (lease: Sessi
 
 export class SessionMessageError extends Error {
   constructor(message:string,readonly code:string|undefined,readonly status:number){super(message);this.name='SessionMessageError';}
+}
+
+export async function submitSessionSteer(base:string,leaseId:string,content:string) {
+  const response=await fetch(`${base}/steer`, {method:'POST',headers:{'content-type':'application/json',accept:'application/json','idempotency-key':randomUUID(),'x-session-lease-id':leaseId},body:JSON.stringify({content})});
+  if(!response.ok){const payload=await response.json();throw new SessionMessageError(payload.error?.message??'纠正提交失败',payload.error?.code,response.status);}
+  return (await response.json()).data;
 }
 
 export async function submitSessionMessage(base: string, leaseId: string, content: string, references?: import("../../src/domain/message-references").MessageReference[], webSearch?: boolean, toolSearch?: boolean) {

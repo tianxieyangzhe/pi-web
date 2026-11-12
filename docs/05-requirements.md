@@ -1,5 +1,27 @@
 # 05｜需求：模型与 API 的完成条件
 
+## BASELINE-001｜当前版本定版
+
+用户确认当前版本除 MCP 外可用，按此范围定版并提交源码。MCP 保留为未验收项，不宣称可用或验收完成；各需求已有的自动验证与未验证记录继续保留，不以本次定版替代测试证据。范围包含统一助手、项目规则生成、两类 Session、持续参考文件、运行中纠正、最后一轮 Token/耗时与 Session 累计及现有页面调整。参考文件作为需求主体的优先级、冲突处理与版本更新优化仅完成讨论，未作为本次新增实现。提交不包含本地运行数据、配置与 release-new 发布产物，不执行数据库迁移或服务启停。
+UI-053（本轮修复，npm run typecheck、改动TSX语法及git diff --check通过；真实浏览器待验）：会话树只提取text导致纯工具调用assistant误显示no content。验收：纯bash等toolCall标题显示工具类型/名称，thinking和其他非text内容显示对应类型，真实空节点才标无正文；中止/错误保留，混合正文优先显示text。两类会话共用，不改模型/API/历史，无新增或运行非API测试。
+
+UI-052（本轮修复，改动TSX语法及git diff --check通过；真实浏览器待验）：空assistant流式开始占位不显示；内容/工具/thinking/错误到达即展示，终态与历史实际空节点保留原文可查看。验收：仅空且未结束的assistant不产生空标头，不影响等待时间、工具调用或中途文字；不改模型/API/Pi历史，不新增或运行非API测试。
+
+UI-051（本轮修复，改动TS语法及git diff --check通过）：修复UI-050移除服务端计时后session_state启动/运行分支未返回的回归。验收：starting/running/interrupting仅更新等待显示，idle等仅清除等待；全部session_state不进入临时对话，不产生伪“未确认持久化”，真实Pi内容仍原样保留。两类页面复用同一hook，无模型/API变化，不新增测试文件或运行非API测试；真实浏览器待验。
+
+## UI-049｜连续工具调用折叠
+
+状态：代码已接入，类型/TSX语法及差异检查通过，真实浏览器待验收；纯页面分组不新增或运行非API测试。验收：两类会话连续至少两个工具调用合并默认折叠，调用次数按toolCallId去重、名称及失败/执行中可见，展开保留完整assistant/工具/思考与原始结果；用户/任何含非空正文或错误的assistant（包括中途进度且含toolCall）/其他节点/分支断开分组；中途说明和最终回复均保持可见，同消息工具仍独立折叠，实时与历史规则一致；历史同步保持手动选择，树定位可展开组内节点。仅投影已有Pi树和事件，无SQL或历史迁移。
+
+## UI-050｜等待提示独立计时
+
+UI-050最终计时由RUN-001替代，等待期间仍复用本地计时器。
+
+## RUN-001｜最近单轮Token与耗时
+
+状态：代码已接入，定向API与类型检查通过；真实浏览器/供应商待验收。验收：独立项目/Workspace累加本次根输入的所有模型调用及工具循环，steer不重置、下一根输入清空；完成/停止/失败只发一份统计，缺失用量不补0并标不完整。末尾仅一处展示最后一轮Token与耗时，以及messages API返回的Session全树累计Token；不逐历史轮次展示。累计包括缓存及有usage的压缩/分支摘要/工具结果，空树为0，缺失/非法用量标不完整，不额外增加reasoning。切换/重开/刷新恢复累计，最后一轮仍不回算。累计补充状态：已接入，两类messages接口的范围隔离、全树口径和冷恢复定向验证通过，浏览器待验。验证：tests/session-run-metrics-api.test.cjs四项通过，覆盖两类application/SSE接口的多调用/缓存累计、重复事件去重、工具结果排除、thinking不重复、steer归原轮、下一轮隔离、interrupt与失败、缺失/非法/失败零占位、重开不补发和Workspace幂等重放；tests/session-entry-link-api.test.cjs两项通过，受控模型驱动真实Pi执行write/edit并验证三次模型响应只形成一份完整统计，messages累计与Pi getSessionStats().tokens.total相同，关闭句柄后的冷读取仍一致。累计场景另覆盖非活动分支、有usage的压缩/分支摘要/原生usage/工具结果、空树、缺失及非法用量、重复读取不重复加、单次树读取及归属拒绝；两文件合计六项通过。npm run typecheck与git diff --check通过。仅临时数据库/目录与受控Runtime/模型流，不新增或运行非API测试，无迁移、模型网络、浏览器或生产构建。
+
+
 ## FILE-003 会话目录文件链接修复
 
 状态：已实现，API定向验收通过。实际Word链接指向应用.data/session-files内所属Pi会话目录，被项目路径解析误拒绝；新增两类会话文件预览/下载API，通过数据库nativeRef限定目录。点击文件链接先打开预览，下载按钮固定预览左上角；当前会话文件可读，其他会话/目录越界拒绝。
@@ -33,6 +55,8 @@
 
 SETTINGS-002（已实现，定向验证通过）：单击左侧独立项目名称或展开箭头仅切换会话列表展开状态，不改变当前选择、中间会话栏或设置页，不触发打开/关闭会话。齿轮按钮打开项目设置，单击会话条目才进入对应会话。左侧单击关闭辅助浮窗仍沿用04规则。不新增模型或API；此前名称点击打开设置的投影被本规则替代。tests/settings-layout-behavior.test.cjs和tests/session-auxiliary-dialog.test.cjs合计3项通过，覆盖名称连续点击只触发展开、箭头/齿轮/会话动作分离及浮窗关闭和设置回归；npm run typecheck、git diff --check通过。只用受控API及DOM，不启停用户服务或写用户数据库，真实浏览器待验。
 
+MODEL-FAIL-001（已修复，API定向验证通过；浏览器待验）：已确认终结并持久化的模型请求失败或明确调用前模型校验拒绝，不应伪装为未决操作，保留同一会话与lease供显式切型号；错误、原生历史及failed journal保留，不重发失败键。未证明终结、持久化/回执失败仍unknown。历史prepared只通过现有recover显式承认未知，模型设置提供核对入口与再次确认，不自动改历史或解除门禁。验收：消息/模型/恢复application接口用临时库与受控Pi覆盖供应商拒绝→failed/idle→原lease切换、旧键不重发、调用前模型拒绝、真实未知继续阻塞和历史recover许可/确认。不新增SQL或迁移。实际验证：tests/model-request-failure-api.test.cjs共4项通过（临时SQLite/真实Pi SDK受控流，含供应商404、调用前模型拒绝与restore失败、缺失回执、历史显式ack及原lease切型号）；tests/project-operation-recovery.test.cjs仅运行image rejection/message retries两项API回归，均通过。类型和差异检查通过。用户报告会话的供应商404与prepared记录已只读核对，原生文件复核未变；未调用真实供应商、未修改用户数据库/journal、未构建或重启服务，不宣称浏览器流程已验收。
+
 IMG-FAIL-001（已实现，消息application接口定向验证通过；真实供应商拒图待验）：图片能力拒绝为已知失败，已确认终结的请求不进入unknown或导致连接不可用；保留具体提示和原生历史，不自动重试，不隐去真实未决操作。验收：独立项目消息API记录failed且新键可继续、旧键返回原错误；其他异常仍unknown，Workspace沿用已知失败收尾。无SQL迁移，不自动解除旧unknown。实际验证：tests/project-operation-recovery.test.cjs共9项通过，新增内存SQLite及受控Runtime的message接口验证，覆盖图片拒绝→observed/failed、idle、同键不重发、新键可继续及其他错误保持unknown/unavailable；git diff --check通过。未新增或运行非API测试，未运行全量测试、生产构建或真实模型，未操作用户数据库或历史。
 
 OPS-007（已实现，自动清理、真实生产构建与已有包替换通过；失败恢复分支待验）：修复重复发布仍保留旧包的问题。验收：npm run release 使用独立 .next-release 构建，构建及暂存打包全部成功后才更新默认 release；每次取得锁后先校验并清空旧 .next-release（含缓存），拒绝符号链接、非目录及含运行数据/配置的构建目录。原纯发布包只在切换时临时保留，新包成功后自动删除，失败恢复原包；清理失败报告残留路径，不扫描删除其他历史备份。开发目录 .next 不参与发布或清理。已有自定义目标、包含运行数据/配置的默认目录、符号链接及并发发布须拒绝；成功明确输出路径和 Build ID，包内保留生成时间。无模型/API/SQL/Pi 变化，不启停用户服务、不迁移历史库。底层直接打包仍不编译、不覆盖。实际检查：node --check scripts/release.cjs、node --check scripts/package-release.cjs、git diff --check 通过。用户明确要求删除旧产物并重新生成后，确认无Next运行进程及发布目录无运行数据/配置，删除.next、.next-validation、release，执行npm run release -- --without-node-modules成功（含Next TypeScript检查）。新包Build ID为vpKOE8Wh70YBZmQBqPusq；生产目录、发布目录、release.json三者一致，59个入口/静态资源/锁文件/SQL文件逐一SHA-256一致，无node_modules或用户数据/配置，发布锁已释放。Next自动增加tsconfig.json的.next-release类型目录并更新next-env.d.ts引用。无API契约变化，未新增或运行测试，未启动产物服务、未启停用户服务或改写数据库；首次从空发布目录生成。随后按用户要求加入自动清理并再次执行同一release命令：日志确认自动删除旧.next-release及替换后临时旧包，新Build ID为Mz3RUQ_UlKhpHbopZ0XWS，与前次不同；三处Build ID一致，59文件SHA-256一致，无临时发布目录、旧包或锁残留。Next TypeScript、脚本语法及git diff --check通过；未新增或运行测试，未启停用户服务或修改数据库。失败恢复及清理失败分支未做运行验收。
@@ -62,6 +86,8 @@ SETTINGS-001（已实现，定向验收通过）：项目新建/设置与工作�
 SLIST-001（已实现，定向验收通过）：用户消息（原生/待确认/实时）右对齐，正文保持正常左对齐；两类左侧会话显示最新原生用户输入预览，单行省略；当前时间与空历史规则按SLIST-002，读取失败明确标记。派生值来自所属Pi树，不写SQL或替代摘要；测试覆盖整树追加顺序、消息时间、无消息和读取失败。实际验证：tests/session-list-preview.test.cjs（2项，纯派生、两类DTO、purpose/ETag保持）、tests/pi-session-fork-export.test.cjs（5项，扩充真实临时原生历史预览及身份读取失败）、tests/session-tree-presentation.test.cjs（2项，新增原生/待确认/实时用户右对齐）、tests/project-session-model-contract.test.cjs（4项）、tests/session-auxiliary-dialog.test.cjs（1项），五文件14项通过；npm run typecheck、git diff --check通过。无真实模型请求、用户库写入或服务启停。
 
 PSES-019（已实现，定向验收通过）：两类Session设置提供模型对应的Pi思考等级，允许仅改等级；PUT model可选thinkingLevel、严格支持校验、耐久幂等与互斥、同一原生身份持久化，不改默认配置/SQL。验收覆盖只读DTO、支持等级、相同值去重、冷恢复、同键异等级、忙碌/unknown和页面显式应用。实际验证tests/pi-session-fork-export.test.cjs（5项，新增实际Pi思考等级持久化/恢复/不支持值拒绝）、tests/project-operation-recovery.test.cjs（5项，新增项目等级幂等与门禁）、tests/workspace-model-recovery.test.cjs（5项，新增HTTP等级透传与冲突）、tests/session-model-settings.test.cjs（1项，扩充同排控件/等级草稿与显式应用）、tests/session-auxiliary-dialog.test.cjs（1项）；五文件17项通过。npm run typecheck、git diff --check通过；仅临时文件和受控Runtime，无真实模型请求、用户数据库/配置写入或服务启停。
+
+MCFG-003（已实现，定向API验收通过）：所有独立项目与Workspace会话每次空闲打开，对比provider/model并采用当前配置默认型号，包括冷恢复与活动句柄复用；默认不可用返回unavailable，历史型号仍可用也不绕过；相同型号不重复追加model_change，不改Pi身份、历史前缀、SQL或配置文件。运行/压缩中保留本轮模型，下次空闲打开对齐；打开后显式切换可用于后续发送，GET models与历史读取不触发切换。不新增表或历史迁移。实际验证：tests/session-open-default-model-api.test.cjs两项application接口测试通过，覆盖两类会话的冷/热打开、重复打开不追加、默认不可用的冷/热拒绝、恢复默认后重开、只读模型列表、忙碌保护及原生历史前缀/身份保真；npm run typecheck通过。使用临时内存库、配置和Pi文件，无真实模型请求、用户数据改写、服务启停或生产构建。
 
 MCFG-002（已实现，定向验收通过）：读取settings.enabledModels并按Pi scope语法过滤模型列表与执行选择；当前型号不存在/被过滤/无认证时在同一Session自动采用配置默认型号，默认也不可用才提示。空闲刷新同规则，显式切换不回退，不重发请求；验收覆盖配置来源、范围匹配、默认失败、历史保真和原生model_change持久化。实际验证tests/model-settings-fallback.test.cjs（4项）、tests/pi-session-fork-export.test.cjs（4项）、tests/workspace-model-recovery.test.cjs（4项）、tests/project-session-lifecycle.test.cjs（1项），四文件13项通过；npm run typecheck和git diff --check通过。仅临时配置/文件、受控Runtime和离线流，无真实模型请求、用户库/配置/原生历史写入或服务启停。
 
@@ -103,11 +129,13 @@ Session 独占 Pi 原生树，Project、Agent、模型配置、消息、工具�
 | PSES-023 | 已实现；定向验证通过，真实供应商待验 | 参考文件容量 | 上传/粘贴快照单个<50,000,000字节、合计≤50,000,000字节；前后端共享额度，项目引用按PSES-024改为位置不计字节，消息JSON容纳base64与正文元数据；超限413且不调用Pi，预览额度不变；大于旧2MiB/8MiB的有效材料可通过，精确边界和混合来源合计纳入验证。OpenAI依据及实际上下文限制见03 §5。 |
 | PSES-022 | 已实现；定向验证通过，真实模型待验 | 附件跨轮追问 | 同一 Session 活动分支内的图片、上传文件和长文本快照，以及PSES-024项目位置，在第二轮未附材料时仍进入模型请求；精确恢复后继续可用，不混入其他分支；压缩由 Pi 原生处理，不额外过滤附件，不保证压缩后原图细节；不新增 SQL、摘要或附件存储。 |
 | PSES-011 | 正式版功能完整；定向验证通过 | 本轮附件归组与原生关联 | 参考 custom_message 可可靠关联原生 entry，不残留重复临时块；唯一后继链（允许首轮 system 消息）通向用户消息时附件显示于该用户正文后，只投影一次，完整内容可查看；分叉、无用户子节点或无法确认关联时不猜测、不丢失节点。 |
-| PSES-010 | 文件粘贴修复及定向验证通过；真实浏览器与供应商识别待验 | 图片、文件与大段文本粘贴 | 项目输入框支持粘贴 PNG/JPEG/GIF/WebP，缩略图可移除；剪贴板普通文件、混合图片/文件及仅 files 可读时均保留全部材料、文件名和字节，读取失败明确报错，不忽略文件或发送文件名代替内容；实际供应商请求包含本轮文本和原生图片内容；实际模型仅支持文本时，所有图片来源统一明确报告 MODEL_IMAGE_UNSUPPORTED，不追加参考节点、不调用 prompt，不以图片占位文字继续回答；上传/项目文件及粘贴材料均在输入区光标处内联插入，不在工具栏下方显示；选择/键盘删除同步移除发送材料，弹窗返回恢复插入位置；超过 10 行或 1000 字符仅显示粘贴行数，原文不丢失；短文本原生粘贴，支持附件单独发送；遵守 references 混合限额，校验失败不丢输入、接受前失败保留材料，不污染切换后的草稿。 |
+| PSES-010 | 文件粘贴修复及定向验证通过；真实浏览器与供应商识别待验 | 图片、文件与大段文本粘贴 | 项目输入框支持粘贴 PNG/JPEG/GIF/WebP，缩略图可移除；剪贴板普通文件、混合图片/文件及仅 files 可读时均保留全部材料、文件名和字节，读取失败明确报错，不忽略文件或发送文件名代替内容；实际供应商请求包含本轮文本和原生图片内容；实际模型仅支持文本时，所有图片来源统一明确报告 MODEL_IMAGE_UNSUPPORTED，不追加参考节点、不调用 prompt，不以图片占位文字继续回答；上传/项目文件及粘贴材料均在输入区光标处内联插入，不在工具栏下方显示；选择/键盘删除同步移除发送材料，弹窗返回恢复插入位置；无文件项时粘贴文字随content发送，超过10行显示“已粘贴 N 行”折叠正文块，支持展开编辑、移除、完整原文复制与发送；10行及以内直接显示，字符数量不触发折叠。不转附件、不占附件额度，保留换行；历史长文本附件不改写。支持真实附件单独发送；遵守 references 混合限额，校验失败不丢输入、接受前失败保留材料，不污染切换后的草稿。 |
 | PSES-009 | 正式版功能完整；定向验收通过 | 恢复会话不重复记录相同配置 | 项目 Runtime 使用初始化适配；仅配置节点的空会话重复恢复不增加相同 model_change/thinking_level_change，不改变叶子或历史字节；实际变化及缺失配置仍记录，按当前分支比较，其他分支不干扰；失败恢复原方法，旧重复节点保留。使用临时目录和受控 SDK 初始化验证，不访问真实模型或用户历史。 |
 | UI-041 | 正式版功能完整；验证范围见记录 | 紧凑 Tailwind Pi 对话流 | 项目会话使用全树对话流；正文安全 Markdown、thinking 和完整工具内容可查看，原始节点可展开；分支与活动路径不丢失。采用 `04` 紧凑 Tailwind 间距，无多层大 padding、固定消息高度或内容截断。定向投影测试覆盖消息、分支、未知块及敏感原文；真实浏览器外观仍需单独验收。 |
 
 BOT-REMOVE-001验收：最新一轮12个目标文件41项全部通过：tests/retired-model-boundaries.test.cjs、tests/current-schema.test.cjs、tests/agent-definition.test.cjs、tests/agent-storage.test.cjs、tests/catalog-contract.test.cjs、tests/project-session-model-contract.test.cjs、tests/session-execution-optional-role.test.cjs、tests/session-deletion.test.cjs验证模型/协议、旧调度配置不访问、MCP仅查询Session、7表目标、旧库只读且字节不变、Agent版本与删除事务；tests/project-native-tools.test.cjs、tests/workspace-runtime.test.cjs、tests/project-session-tree.test.cjs、tests/session-file-storage.test.cjs验证原生工具/Python、附件、精确身份恢复与历史全树。此前本项另有tests/standalone-release.test.cjs、tests/project-session-optional-role.test.cjs、tests/session-memory-retirement.test.cjs、tests/session-files-pi.test.cjs、tests/message-references.test.cjs、tests/project-operation-recovery.test.cjs、tests/session-connection-contract.test.cjs、tests/browser-random-uuid.test.cjs、tests/session-execution-cancel.test.cjs、tests/transcript-projection.test.cjs定向通过。npm run typecheck和git diff --check通过。旧协调/Task/Bot源码、SQL查询/表、工具/入口、旧迁移脚本和参考快照已清理；文档改为06-workspace.md，旧模型仅保留本项退役边界说明。未运行全量测试、生产构建或真实模型/浏览器，未操作用户服务、数据库或Pi历史。
+
+PSES-011 本轮接口核对：tests/session-entry-link-api.test.cjs两项application/SSE接口测试通过，使用临时内存数据库、临时Pi历史及受控模型流，实际调用原生write/edit后核验两类会话的三条流式assistant消息、两条工具结果均获得同runId/temporaryId的唯一entry_link，且目标存在于最终原生树，文件内容为修改后结果。未复现运行结束后消息无法关联；生成中尚无entryId时显示“未确认持久化”是既有投影，不代表项目文件保存失败。未运行真实模型或浏览器，未改写用户项目、数据库或历史。
 
 PSES-011 验证记录：`tests/native-session-subscription.test.cjs` 验证 custom 原生对象关联、通知前已追加时同步发送 entry_link、真实 Pi sendCustomMessage 及普通消息/工具关联；`tests/reference-tree-projection.test.cjs` 验证完整原文保留、唯一归组、不跨分支及无法归组时保留；`tests/session-tree-projection.test.cjs` 复验原始内容；`tests/pi-reference-integration.test.cjs` 使用 Pi 内存 Session 和受控模型流，验证首次 system 节点及恢复后多轮附件归组，当时验证模型请求的本轮材料隔离；该隔离规则已由 PSES-022 替代。共 10 项通过，类型检查与 diff 检查通过。未调用真实模型、改写用户历史或操作服务，浏览器体验待验收。
 
@@ -168,8 +196,17 @@ PSES-005 代码验证：`tests/project-message-timing.test.cjs` 覆盖阶段顺�
 | UI-018 | 待设计 | 项目资源页面 | 项目实例在所属 Project 下管理和调试；项目为空的模板在模板库展示；详细交互随资源基础模型确定 |
 | UI-019 | 代码已实现；上下文API定向通过，真实浏览器待验 | 原生上下文检查与压缩入口 | 会话检查的设置页显示已用/容量/剩余 Token、占比、测量口径与时间、Pi默认自动压缩开启状态、最近压缩时间和手动按钮；未知指标不伪造，繁忙禁用，完成刷新，失败可手动重试 |
 | UI-039 | 代码已接入；针对性测试及类型检查通过，真实浏览器待验证 | 提交后的输入框 | 项目会话提交时立即清空输入框并在对话中回显，不等待长流结束；发送失败仅在原会话草稿未修改时恢复，不能覆盖其他会话或新输入，也不自动重发。 |
+| DEL-001 | 已实现；删除接口12项通过，真实浏览器待验 | 删除最高优先级与同步屏障 | 两类会话在打开、运行、压缩、模型不可用及unknown时均可删除；先阻止新操作、取消并等待旧操作终结，再释放句柄和删除目标行。并发删除复用结果，完成后重复404；DELETE成功前不提前返回，页面全局屏障直到结束。停止/SQL失败保留记录并明确报错；原生历史及项目文件不删除。API验收覆盖抢占、并发、新操作阻断、失败释放和数据保留。 |
+| UI-047 | 修复已接入；真实浏览器待验 | thinking空正文投影 | 有思考正文时完整显示；无可读正文时明确提示，支持展开完整原始thinking块，不丢签名及未知字段，不伪造或解密正文。历史/实时与两类会话共用，API及原生历史不变。 |
+| UI-046 | 已接入共享输入框；类型检查通过，真实浏览器待验 | 方向键切换用户输入 | 复用当前会话messages全树快照，仅按追加顺序回填用户文本；↑向前、↓向后并恢复原草稿及附件，保留重复输入，不重发历史附件。首次仅第一逻辑行的折叠光标↑进入；浏览期间连续切换，边界不循环。输入法、修饰键、选区及忙碌/阻塞时不拦截；编辑、提交和切换会话退出浏览。两类会话同步，不新增API或持久历史。 |
 | UI-038 | 代码已接入；键盘回归与 TypeScript 检查通过，真实浏览器输入法验收待做 | 输入法安全的对话发送快捷键 | 项目 Composer；Enter 发送、Shift+Enter 换行，点击发送按钮行为不变。IME 候选组合期间 Enter 只确认候选且不调用发送，需兼容 composition 状态、`isComposing` 和旧浏览器 `keyCode=229`。 |
 | UI-026 | 修订中 | 对话无额外读写勾选 | 项目会话 Composer 不显示读写模式。独立项目工具权限由项目执行策略确定而非角色，实际操作遵循用户请求。 |
+
+DEL-001 验证：`tests/session-deletion.test.cjs` 12项通过，使用临时SQLite与受控Runtime验证两类DELETE的归属及DTO、运行中止、压缩与初始化等待、损坏journal及unavailable删除、并发删除复用、新操作阻断、等待期间句柄替换、停止/释放失败后的记录及重试、外键回滚和原生/项目文件保留。`npm run typecheck`、`git diff --check`通过。未启动或停止用户服务，未改用户数据库/历史，未执行生产构建；页面inert及进度屏障待真实浏览器验收。
+
+UI-047 核查：只读检查本地项目/Workspace Pi历史，发现10个thinking空正文块，均保留含encrypted_content的签名且无summary条目；仅统计结构与数量，不改历史或输出原文。修复共享渲染空面板与完整原始块查看入口，`git diff --check`通过。无API或类型边界变化，未新增/运行非API测试、生产构建或浏览器验收。
+
+UI-046 验证：`npm run typecheck` 和 `git diff --check` 通过。复用已有全树快照及共享输入框，没有API契约变化；按项目规则未新增或运行组件、函数及其他非API测试，未启动服务或执行浏览器验收。真实键盘、输入法、附件恢复与多行光标行为待现场验证。
 
 UI-039 验证：`tests/prompt-input-submit.test.cjs` 覆盖流进行时清空与失败草稿保护，`tests/project-message-stream-acceptance.test.cjs` 覆盖流接受和拒绝边界，`tests/prompt-input-ime.test.cjs` 覆盖输入法回归；8 项通过，类型检查通过。未进行真实浏览器或模型验收。
 
@@ -228,7 +265,7 @@ UI-039 验证：`tests/prompt-input-submit.test.cjs` 覆盖流进行时清空与
 
 ## PSES-012｜删除会话
 
-目标：独立项目每个可见会话都有删除按钮，确认后调用 03 的 DELETE；成功移除条目，删除当前会话时回到所属项目；失败保留条目并显示 API 错误。空会话、空闲及 ended 可删除；运行、压缩、unknown 和被引用者拒绝。事务只删除会话，Pi 文件及项目文件保留。工作区对应要求由 06 WSP-015 定义。状态：既有删除能力由 tests/session-deletion.test.cjs 等临时库定向测试验证；本轮解除绑定、单行删除与旧库门禁已重新定向验证，证据见 §16，不沿用历史结果宣称当前通过。
+目标：独立项目每个可见会话都有删除按钮，确认后调用 03 的 DELETE；成功移除条目，删除当前会话时回到所属项目；失败保留条目并显示 API 错误。按DEL-001，空会话、空闲、ended、运行、压缩及unknown均可删除；实际外键引用导致的SQL失败仍回滚并报错。事务只删除会话，Pi 文件及项目文件保留。工作区对应要求由 06 WSP-015 定义。状态：既有删除能力由 tests/session-deletion.test.cjs 等临时库定向测试验证；本轮解除绑定、单行删除与旧库门禁已重新定向验证，证据见 §16，不沿用历史结果宣称当前通过。
 
 ## PSES-013｜回复文件链接
 
@@ -245,7 +282,7 @@ UI-039 验证：`tests/prompt-input-submit.test.cjs` 覆盖流进行时清空与
 | UI-044 | 代码已实现；最小DOM通过，真实浏览器待验 | 全树标题与正文定位 | 全部分支节点标题可见，不展示正文或原始详情；点击按 entryId 展开必要容器并滚动高亮，树选择与活动叶子区分，不调用 Pi 分支切换；空树、未知类型、附件归组及异常节点仍可定位或明确报错 |
 | PCFG-001 | 代码已实现；临时配置与受控Pi定向通过 | npm 启动目录整份优先 | 对 models.json/settings.json 分别验证本地存在只读本地、本地缺失才读对应全局、两个文件来源可不同；不合并字段、不从业务 cwd 查找；损坏、空白、权限和无效配置均报错；删除固定环境模型及备用来源规则 |
 | PCFG-002 | 代码已实现；受控Pi定向通过，真实认证待验 | Pi 参数完整支持 | 使用原生解析器，协议、认证引用、headers、compat、reasoning、input、cost 等完整进入 Pi；显式 contextWindow/maxTokens 在新建、恢复、切换、请求和压缩中生效，不受应用写死数值覆盖；验证不同容量/输出上限、缺省及非法参数，未知容量如实呈现；不暴露配置凭据 |
-| PCFG-003 | 代码已实现；受控Pi定向通过 | 默认设置与精确恢复 | 采用选中settings文件的defaultProvider/defaultModel/enabledModels，不读另一文件补值；新会话/无原生选择用默认，已有会话优先恢复原生选择；型号不可用按MCFG-002自动回退默认，默认也不可用才提示；默认设置与会话 cwd、工具边界、自动压缩互不混淆 |
+| PCFG-003 | 代码已实现；受控Pi定向通过 | 默认设置与精确恢复 | 采用选中settings文件的defaultProvider/defaultModel/enabledModels，不读另一文件补值；新会话及已有会话每次空闲打开按MCFG-003对齐默认模型；打开后空闲操作按MCFG-002校验手动选择，默认不可用的打开返回unavailable；默认设置与会话 cwd、工具边界、自动压缩互不混淆 |
 | PSES-014 | 代码已实现；受控Pi与API定向通过 | 会话模型切换 | API 核验归属、可用性、空闲和租约；调用 Pi setModel 并原生保存，刷新容量和树；同值不重复追加，跨会话不变，不写配置或 SQL 模型副本；忙碌/unknown/认证失败/持久化不明按契约处理 |
 | PSES-015 | 代码已实现；隔离派生与恢复定向通过 | 从节点创建独立会话 | 包含选中节点的祖先路径进入新 Pi 身份，事务只创建新 Session，归属及角色引用合法；不复制旁支，不改源树/叶子；覆盖非用户节点、跨树拒绝、幂等重试、SQL 回滚及原生候选文件的 unknown 恢复 |
 | PSES-016 | 代码已实现；导出范围/原文/清理定向通过 | 明确范围导出 | HTML/JSONL 都支持全树或当前分支，完整保留所有选定节点及原文，不把原生 branch 导出标成 tree；不调用模型、不写业务记录或源文件；覆盖分叉、压缩、内部敏感节点、读取失败、断开清理和 ended 只读导出 |
@@ -345,6 +382,91 @@ SEARCH-002本轮验收：tests/tool-search.test.cjs（5项）、tests/server-web
 
 ## SEARCH-001｜输入框服务端联网搜索
 
-状态：已实现，定向验证通过；真实OpenAI与浏览器待验。项目/工作区输入框增加默认开启且标明服务端搜索的按钮，真实透传OpenAI Responses内置web_search；保留编程工具、仅本轮生效，非法参数和不支持协议拒绝，幂等区分搜索意图，失败无静默降级。搜索调用和来源原文保留所属Pi树，未执行不得声称已搜索。验收覆盖请求payload/隔离/清理、两类消息API、按钮及参数传递；不调用真实模型或迁移用户库。
+状态：OpenAI原适配定向验证通过；本次Google GenerateContent/Vertex协议适配已接入；tests/google-web-search-api.test.cjs共3项通过，使用临时内存数据库和受控Runtime，经Workspace消息/中止API验证OpenAI与两类Google的请求分派、SDK参数保留、不重复注入、grounding原始证据、幂等、成功/上游失败/停止后清理，以及不支持协议在journal前拒绝。该测试不调用真实Google SDK网络或模型，不证明网关支持、来源质量或Search Suggestions展示合规。类型及差异检查通过；真实供应商与浏览器待验。项目/工作区输入框增加默认开启且标明服务端搜索的按钮，按当前Pi model.api透传OpenAI Responses web_search或Google GenerateContent/Vertex googleSearch；Google SDK config及原编程工具不变，携带groundingMetadata的原始流证据完整保存，其他协议明确拒绝，不按模型名改协议；保留编程工具、仅本轮生效，非法参数和不支持协议拒绝，幂等区分搜索意图，失败无静默降级。搜索调用和来源原文保留所属Pi树，未执行不得声称已搜索。验收覆盖请求payload/隔离/清理、两类消息API、按钮及参数传递；不调用真实模型或迁移用户库。
 
 SEARCH-001验证：tests/server-web-search.test.cjs、tests/prompt-input-submit.test.cjs共9项；tests/project-operation-recovery.test.cjs、tests/workspace-web-search.test.cjs、tests/message-references-composer.test.cjs共15项，合计24项通过。覆盖按钮默认/关闭/切换重置、HTTP透传、项目/工作区参数和幂等/预检拒绝、实际Pi Runtime扩展装配、工具循环、原生搜索证据落盘与成功/失败清理；npm run typecheck及git diff --check通过。使用临时目录/内存库/受控Pi流，无真实模型、服务启停、用户库改写、迁移或生产构建。仅协议预检，不保证所有Responses型号或中转支持搜索；上游失败按现有错误返回。
+
+## UI-048｜工具结果展示稳定
+
+工具结果的实时事件、实时消息与持久节点统一使用04定义的折叠投影；默认不闪现正文，用户展开/收起跨结果更新及历史同步保持，同名不同调用独立，切换会话重置。复用已有API及原生toolCallId，不改变模型或调用能力。状态：代码已接入，npm run typecheck及git diff --check通过；本次为页面投影修复，不新增或运行非API测试，浏览器视觉待验收。
+
+## PSES-029｜接入Pi steer
+
+目标：独立项目运行中使用同一Composer向原Pi Session发送文字纠正，Workspace同步见06 WSP-020。验收：有效lease与归属、空内容/容量/未知字段校验、空闲/停止/删除/压缩拒绝、同键并发复用及异载荷冲突、原请求保持运行且调用steer而非prompt、停止/终态清空队列、错误不自动重放、正文及Pi树归属不变。模型02、API03、装配01、投影04。状态：代码已接入，API定向验证通过；浏览器与真实Pi运行时队列消费/清除仍待验证，不标记整体验收完成。tests/session-steer-api.test.cjs共8项通过，覆盖两类HTTP校验、并发幂等、未知结果不重放、删除等待与SSE重连队列；联合tests/session-deletion.test.cjs、tests/project-operation-recovery.test.cjs、tests/workspace-session-api.test.cjs共33项通过。npm run typecheck与git diff --check通过，仅使用临时数据库/目录及受控Runtime，未启动服务或改写用户数据。
+
+## CTX-001｜Session持续参考文件
+
+状态：代码已接入；tests/session-context-files-api.test.cjs的5项API测试通过，类型检查与git diff --check通过，浏览器/真实模型待验。仅参考项目文件：两类Session添加/读取/显式删除、归属/lease/ETag/忙碌门禁、快照重读；列表在按钮下方，不进正文；发送及历史输入不清除；每轮Pi完整正文；隔离会话；不删原件/历史；拒绝不可读/超限/上传输入。实际API验证含连续Pi请求、冷恢复、移除后不再注入及原生图片上传通道，使用临时库/目录与受控模型，无网络调用。上传和粘贴保持原内联、随消息发送及发送成功后清空；UI行为未做浏览器验收。不迁移旧历史，不启动用户服务。
+
+## AGENT-002｜助手完整规则落地
+
+状态：模型/API及页面已接入，定向API验证通过；浏览器操作和真实模型生成质量待验收，不标记整体验收完成。替代AGFILE旧frontmatter/能力、强制Markdown转换及仅项目可用条目。验收：两个创建入口、三种明确分析范围；项目为基本单元、固定XML复用；从项目生成保留Pi默认且规则仅注入固定XML、自定义系统提示词完整替换；未显式修订的原文和空白完全保留，无额外标题/frontmatter/空占位；生成可对话修订，保存不可变AGENTS.md；整页目录和编辑；Session精确选择/切换/移除；workspace级拒绝项目使用、项目级可被workspace使用；作用范围服务端校验、旧版本兼容、并发与失败保留。用临时库/文件和受控LLM/Pi验证API；不运行真实模型、浏览器或构建，未验证项明确记录。
+
+AGENT-002验证记录：tests/assistant-api.test.cjs与tests/catalog-contract.test.cjs共9项API测试通过，覆盖原文空白保存、无应用包装、不可变版本与旧格式读取、严格输入、来源子集、指定正文修订、两类Session的范围/lease/ETag/运行门禁、精确版本与移除、真实Pi适配器的受控主提示词替换/默认恢复/禁用隐式SYSTEM.md，以及工作区XML单份和项目规则注入。tests/session-context-files-api.test.cjs、tests/session-steer-api.test.cjs、tests/session-deletion.test.cjs、tests/workspace-session-api.test.cjs共29项共享API回归通过。类型检查与git diff --check通过。全部仅使用临时库/目录和受控生成/模型流，无网络模型调用、不执行生产构建、不启停用户服务、不迁移历史库。项目材料采集为有界范围，返回来源及未覆盖项；不是自主全仓代码探索。
+
+
+## ASSIST-013｜直接粘贴润色与原始生成错误
+
+状态：代码已接入，定向API验证通过；真实模型与浏览器待验。统一助手无需上传文件，直接输入/粘贴完整材料并点击润色即可生成；沿用prepare generate的inputText和revise的feedback、原有额度，成功才替换草稿与提示词模式。提交即清空输入框，该内容进入对话并滚到最底部；失败/取消不把输入填回输入框，保留消息列表中的该条内容、旧草稿与作用范围。模型在JSON前后附加说明、使用代码块，或在提示词正文中包含示例花括号时，服务端选择唯一合格JSON对象；没有合格对象、多个合格对象或字段非法仍返回ROLE_GENERATION_INVALID且不改变草稿；message逐字符返回模型原始回复，不改写为“未找到JSON对象”“模型未返回有效草稿”或其他说明。Pi提供的assistant.errorMessage或SDK抛出的Error.message逐字符作为生成错误原因返回，保留换行/JSON，不改写为“模型未生成有效助手内容”、不截断或添加请求地址；无原始原因才使用兜底文案。成功但文字为空或仅含空白时返回该助手消息的原始text，完全没有text才使用“模型返回空内容”。错误显示为纯文本且可滚动，不执行HTML；仍不返回模型配置、请求头、句柄或新增日志。验收：prepare HTTP/NDJSON接口验证无上传材料传递、无工具、范围及失败草稿不变，原始模型/SDK错误完整返回，取消及缺失原因兜底。无模型或SQL变更，不自动重试或更换默认模型。实际验证：tests/assistant-polish-api.test.cjs共3项通过，覆盖直接粘贴大于4000字符的初次材料、三类范围/继承转replace、HTTP/NDJSON与客户端原始错误完整传递、SDK/模型失败草稿保持、取消/缺失原因/空文字兜底；tests/agent-preparation-api.test.cjs仅定向运行prepare API uses real Pi一项，验证共享生成器项目读取流程未回归。类型、两份改动TS/TSX语法及差异检查通过。使用临时内存库和受控Pi流，未调用真实模型、未启停服务、未生产构建或修改用户数据。
+
+## AGENT-009｜自定义输入统一润色
+
+状态：代码与定向API验证完成，浏览器和真实模型润色质量待验收。首次对话输入及文件上传均经prepare调用LLM润色，成功才替换草稿；原文只作为材料，失败/取消保留输入及旧草稿，系统提示词仍完整替换，作用范围不变，无补充指令。tests/assistant-api.test.cjs与tests/catalog-contract.test.cjs共16项通过，验证完整材料传递、范围保持、失败与取消不产生正式结果；类型检查及差异检查通过。
+
+## AGENT-008｜自定义助手作用范围
+
+状态：代码及定向API验证完成，浏览器未验收。自定义保留项目/工作区范围选择与工作区项目子集，系统提示词仍只有上传/对话原文；不恢复补充指令，不读取范围项目材料用于修订。保存和选择核验范围，工作区范围限制到来源工作区，项目移出后拒绝采用。tests/assistant-api.test.cjs与tests/catalog-contract.test.cjs共15项通过，使用临时库及受控生成器验证范围持久化、修订原文、资料零采集、作用域拒绝。类型检查及差异检查通过；无历史数据迁移。
+
+## AGENT-007｜两种互斥助手正文
+
+状态：实现与定向API验证完成，浏览器与真实模型效果待验收；替代此前补充指令及主提示词称谓。自定义助手只保存完整系统提示词，通过Pi systemPrompt替换；从项目生成只保存所选项目规则，运行时只能填入固定XML，保留Pi默认。没有补充指令字段、按钮、生成目标或新存储位置。新definition.format=3/存储format=4，旧版本只读兼容；编辑旧版本时有附加正文的内容合并为完整自定义系统提示词，需显式保存新版本，不迁移数据库或旧文件。tests/assistant-api.test.cjs与tests/catalog-contract.test.cjs共14项通过，覆盖字段/目标拒绝、两种正文互斥、空正文拒绝、原文保存、自动修订以及受控Pi请求的替换/XML装配，旧两种布局和原始版本读取/更新不改原件。npm run typecheck及git diff --check通过；无数据库或旧文件迁移。
+
+## AGENT-006｜技能独立行与自动修订
+
+状态：代码接入及定向API验证完成；浏览器和真实模型效果待验收。生成技能在来源表单内独占一整行，编辑页保持两列，移除修改内容选择；对话省略target时依据实际草稿和意见自动调整一段或多段，未涉及内容原样保留。类型化changes经过服务端字段、项目ID、范围及generated主提示词约束校验，不修改持久模型及权限。tests/assistant-api.test.cjs与tests/catalog-contract.test.cjs共14项通过，受控生成API覆盖多段修订、局部保留、自定义无项目正文及非法结果拒绝；npm run typecheck、git diff --check通过。
+
+## AGENT-005｜Markdown正文与运行时组织分离
+
+状态：实现及定向API验证完成。生成返回、保存文件及预览不添加XML组织标签、不转义正文字符；项目身份及正文范围记录于definition.json，运行时按项目关系装配固定XML。领域format不变，新文件元信息存储format=3，旧XML布局format=2只读兼容且保留原文件/摘要。tests/assistant-api.test.cjs共9项通过，使用临时目录和受控生成/Pi流验证项目、工作区原文及分段往返、旧文件兼容和运行时XML。npm run typecheck及git diff --check通过；未运行浏览器、真实模型或历史迁移。
+
+## AGENT-004｜统一助手目录
+
+状态：实现及定向API验证完成。新助手版本默认写入agents/<id>/<revision>/AGENTS.md及definition.json，默认读取逐版本兼容.data/agents，损坏不得被旧版本覆盖；显式AI_WORKSPACE_AGENT_DIR继续生效。同一历史版本不得在新目录重写。旧版本、数据库、Session引用及开发契约AGENTS.md保持原位。tests/assistant-api.test.cjs共7项通过，使用临时库和临时目录验证默认保存、旧两种格式读取、跨目录更新、摘要及损坏拒绝，不迁移用户历史文件。发布目录/构建目录清理遇到agents时拒绝删除；脚本语法检查与git diff --check通过。
+
+## AGENT-003｜项目生成默认技能
+
+状态：代码接入与定向API验证完成，浏览器操作和真实模型生成质量待验收。验收：项目内skills目录保留上游create-agentsmd/SKILL.md原文与来源；后续相同结构技能可被发现；编辑页默认选中create-agentsmd；服务端省略参数同样默认加载全文并返回摘要；显式null不加载；无效/丢失/损坏技能在模型调用前报错；技能不增加工具、不执行命令、不将模板占位或无依据内容写入助手；独立项目与工作区共用流程，不迁移历史数据。使用受控生成器和临时目录验证技能列表及prepare API。
+
+验证记录：tests/assistant-api.test.cjs、tests/catalog-contract.test.cjs共10项通过，覆盖技能列表不泄露正文/路径、后续技能发现、默认技能全文和摘要、工作区生成、显式切换/停用、自定义主提示词修订不加载技能，以及非法路径、缺失、格式损坏、符号链接、超限均不调用模型。npm run typecheck、git diff --check通过。上游文件按b13e55f85ffdf451d40d09839cb1e337bf3eda98固定版本下载并逐字节核对；未运行浏览器或真实模型。
+
+
+工作区助手的项目独立文件、工作区自身AGENTS.md、自定义单选及存储format=5由06 WAGENT-010统一定义，取代本文先前的工作区合并正文与自定义多选描述；通用独立项目行为不变。
+
+修复要求 WAGENT-010：项目生成在目标cwd使用完整读取工具执行技能，按项目串行并反馈进度；generated不含工作区自身规则，custom工作区仅自身一份文件。最新模型/API/验收统一见06 WAGENT-010，替代此前工作区生成入口及预采集规则。
+
+
+## REF-ASSIST-001｜消息引用助手与Skill
+
+会话输入工具栏按“引用助手 → 引用 Skill → 上传文件”排列，独立项目与工作区复用。助手从候选API及GET /api/agents/:id读取正式精确版本，选择后通过既有GET/PUT S/assistant写入会话助手选择（精确agentId/revision/contentSha256、If-Match和当前lease），下一轮按ASSIST-011装配系统提示词。只允许active正式版本；继承默认提示词的助手同样可选。助手不转换为附件、不写messages.references、不占附件额度、不在输入框或对话中显示合成文件。选择持续生效至显式更换或移除，在Composer引用入口查看名称与更换；会话检查不再展示助手分区，既有移除API保留但不新增移除入口；不隐藏既有Pi历史或用户上传文件。Skill列表复用GET /api/agents/skills，新增GET /api/agents/skills/:skillId返回{id,name,description,sha256,content}完整技能文本，受控技能目录读取与错误沿用AGENT-003，无Pi调用、数据库写入或新增持久模型。技能只作为本次消息材料，不自动安装或授予能力。客户端不提供路径，响应不含绝对路径。
+
+选择器复用现有弹窗；助手使用既有会话选择模型，失败保留旧选择，运行/压缩/停止/提交或无有效lease时禁用选择；读取失败可重试，切换会话取消本地请求，不自动重放PUT。Skill继续使用上传附件模型，原子加入，遵循总计10项及附件字节限制，重复选择按所引用文件处理；可在输入内删除，发送成功清空，失败保留。加载/读取失败可重试，关闭或切换会话取消未完成选择；运行/停止/阻塞及提交中禁用，避免转成steer附件。API验收完整Skill正文/摘要及不存在与非法ID错误，页面检查按钮顺序和共用附件发送逻辑。
+
+REF-ASSIST-001验证：此前tests/agent-preparation-api.test.cjs四项通过，含Skill正文/摘要、无绝对路径、404及非法ID。助手入口现已改为GET/PUT会话助手配置，不生成File或调用附件加入；应用期间阻止发送，支持继承默认提示词的助手。此次定向运行tests/unified-assistant-api.test.cjs中的“session APIs use scoped project rules only with assistants and reuse prompt configuration across turns”1项通过，验证两类会话精确助手选择与系统提示词装配、跨轮复用；使用临时数据及受控Pi。类型、4个变更TS/TSX语法及差异检查通过。未执行浏览器交互或真实模型验收。
+
+
+## ASSIST-011｜统一助手和项目AGENTS.md
+状态：代码及定向API验证完成，浏览器与真实模型未验收。验收：唯一助手模式，继承默认或替换提示词；四种范围；新增助手不生成AGENTS.md；独立及工作区成员项目设置生成/开关；agents内按项目存放；仅明确选助手装配范围和启用规则；无助手逻辑不变；同配置跨轮次不重复填充；切换/移除/规则版本变化后更新；历史兼容不迁移；API测试临时目录与受控Pi验证，真实模型与浏览器未验收。
+
+ASSIST-011验证记录见06末尾；实际运行tests/unified-assistant-api.test.cjs和tests/agent-preparation-api.test.cjs，共9项通过。
+
+
+ASSIST-012｜通用型助手与引用优先级。状态：代码及定向API验证完成，浏览器未验收。验收：Tailwind重构新增页；没有项目/工作区也能创建、润色、保存通用型助手；两类会话均可采用，无额外项目规则；引用API验证当前范围并按项目适用→通用型返回，不混入其他项目；无query目录兼容；旧版本不改写；定向API验证创建/更新/生成/选择/候选排序及错误边界。
+
+
+RULEGEN-001｜项目规则异步生成与预览。状态：代码及定向API验证完成，浏览器与真实模型未验收。本次润色与按钮布局调整验证：tests/project-rule-generations-api.test.cjs共10项通过，新增3项API用例覆盖无正文/空意见/非法mode拒绝、两类项目服务端完整旧正文修订与不可变发布、mode幂等冲突、取消/失败/并发修改保留旧版；并验证历史无mode任务按generate读取与幂等返回、不改写旧文件。使用临时目录及受控模型；类型、设置组件JSX和差异检查通过，未运行浏览器、真实模型或生产构建。验收：项目设置右侧常驻正文；支持选技能及不选技能生成，生成按钮与技能同行；补充要求通过“润色”修改服务端已有完整AGENTS.md，缺正文/空意见拒绝，mode参与幂等，原版本与开关在失败/取消时保留；POST立即返回202，断开请求/切换页面不取消；状态查询和重新进入可恢复；同项目并发拒绝、同键幂等；成功才发布，失败/取消/并发修改保留旧版；服务重启未完成任务明确中断不自动重放；两类项目归属隔离，API验证使用临时文件和受控Runtime。
+
+
+BUTTON-001｜全应用按钮统一。状态：实现完成，浏览器视觉待验收。验收：所有React按钮迁入共享入口，contentEditable内原生附件删除按钮复用buttonStyles，上传入口使用共享Button；12px字体、32px标准高度、统一普通/主操作/危险/透明及选中/禁用/焦点状态；导航与文件行保留布局和可访问名称；移除局部按钮外观定义和旧覆盖，表单type、事件、许可与模型/API保持原契约。验证：97处React Button及1处原生DOM按钮接入，清理186组旧按钮选择器的外观声明；JSX解析与71项共享Tailwind工具类、应用CSS编译通过，类型检查与git diff --check通过。未新增或运行API/非API测试，未执行浏览器验收或生产构建。
+
+
+NAV-002｜侧栏会话宽度和底部入口对齐。验收：Project/Workspace会话选择列在固定删除按钮旁正常收缩，长标题不撑宽；双行会话项固定32px高，标题11px、时间10px，移除多余行间距，删除使用灰色ghost图标；助手和MCP图标文字靠左；所有按钮继续复用BUTTON-001。状态：实现完成；类型、变更JSX、布局Tailwind类编译与git diff --check通过。未新增或运行测试；浏览器待验收。

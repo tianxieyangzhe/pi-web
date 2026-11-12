@@ -1,4 +1,4 @@
-import { DomainError } from '@/domain/errors';
+import { DomainError, isKnownMessageFailure } from '@/domain/errors';
 import {requireRole} from '@/domain/agent-definition';
 import type {SessionCatalogPort} from './ports/core';
 import type { JsonObject, Session } from '@/domain/models';
@@ -9,10 +9,10 @@ import type { ProjectOperationStore, OperationRecord } from './ports/project-ope
 import type { PiRuntimePort, SessionRuntimeInput } from './ports/pi-runtime';
 import type { SessionToolsRuntimePort } from './ports/session-tools';
 import { createdSessionId, canonical, hash, operationIdentity } from '@/domain/project-operations';
-import { acquireSession, sessionLocks } from './session-lock';
+import { releaseSession, assertSessionAvailable, acquireSession, sessionLocks } from './session-lock';
 import { exactFields } from './project-session-service';
 
-type Execution = { assertLease:(id:string,lease:string|null)=>void; hasLease:(id:string)=>boolean; open:(id:string,key:string,readOnly?:boolean)=>Promise<unknown>; interrupt:(id:string)=>Promise<void>; restore:(id:string)=>Promise<Session>; deleteSession?:(projectId:string,id:string)=>Promise<unknown>; accept:(id:string,content:string,references?:unknown,onSettled?:(error?:unknown)=>void,webSearch?:boolean,toolSearch?:boolean)=>{accepted:boolean;sessionId:string}; };
+type Execution = { steer?:(id:string,content:string)=>Promise<void>; assertLease:(id:string,lease:string|null)=>void; hasLease:(id:string)=>boolean; open:(id:string,key:string,readOnly?:boolean)=>Promise<unknown>; interrupt:(id:string)=>Promise<void>; restore:(id:string)=>Promise<Session>; deleteSession?:(projectId:string,id:string)=>Promise<unknown>; accept:(id:string,content:string,references?:unknown,onSettled?:(error?:unknown)=>void,webSearch?:boolean,toolSearch?:boolean)=>{accepted:boolean;sessionId:string}; };
 export function createSessionToolsService(d: {
   sessions:SessionRepositoryPort; projects:ProjectRepositoryPort; runtime:PiRuntimePort & SessionToolsRuntimePort;
   operations:ProjectOperationStore; execution:Execution; assertWritable:()=>void;
@@ -20,9 +20,10 @@ export function createSessionToolsService(d: {
 }) {
   const active = new Map<string,Promise<unknown>>();
   const isRunning=(id:string)=>active.has(id)||!!d.externalRunning?.(id);
-  function scope(projectId:string,id:string):SessionRuntimeInput {
+  function scope(projectId:string,id:string,allowDeleting=false):SessionRuntimeInput {
     const session=d.sessions.get(id),project=d.projects.get(projectId);
     if(!session||!project||session.projectId!==projectId)throw new DomainError('NOT_FOUND','会话不存在',404,true);
+    if(!allowDeleting)assertSessionAvailable(id);
     return {session,workingDirectory:project.rootPath,allowProjectRead:true,allowProjectWrite:true,nativeCodingTools:true,projectSession:true};
   }
   function persistentETag(value:Session){return String((d.present(value) as {writeETag?:string}).writeETag??hash(canonical({id:value.id,projectId:value.projectId,purpose:value.purpose,agentId:value.agentId,endedAt:value.endedAt??null,updatedAt:value.updatedAt??null})));}
@@ -47,8 +48,8 @@ export function createSessionToolsService(d: {
         const result=await work(input,evidence=>{record=d.operations.append(record!,'observed',evidence);},record);
         record=d.operations.append(record,'completed',{resultSessionId:record.evidence.resultSessionId??id});
         return result;
-      }catch(error){if(error instanceof DomainError&&record){if(record.phase==='prepared'&&((error as DomainError&{noSideEffects?:boolean}).noSideEffects===true||['NOT_FOUND','NO_NATIVE_REF','FORK_NODE_UNSUPPORTED','INVALID_INPUT','WRITE_CONFLICT','PRECONDITION_REQUIRED','PROJECT_UNAVAILABLE','SESSION_ENDED','RUNTIME_NOT_OPEN','NOTHING_TO_COMPACT','ROLE_BINDING_INVALID','ROLE_UNAVAILABLE','SESSION_BUSY','SESSION_NOT_RUNNING'].includes(error.code))){try{d.operations.append(record,'failed',{errorCode:error.code});}catch{}}Object.assign(error,{operationId:record.operationId});}if(record&&!(error instanceof DomainError))throw Object.assign(new DomainError('REQUEST_UNKNOWN','操作结果待核对，未自动重放',409,true),{operationId:record.operationId});throw error;}
-      finally{if(!control)sessionLocks.delete(id);active.delete(operationId);}
+      }catch(error){if(error instanceof DomainError&&record){if(record.phase==='prepared'&&((error as DomainError&{noSideEffects?:boolean}).noSideEffects===true||['NOT_FOUND','NO_NATIVE_REF','FORK_NODE_UNSUPPORTED','INVALID_INPUT','WRITE_CONFLICT','PRECONDITION_REQUIRED','PROJECT_UNAVAILABLE','SESSION_ENDED','RUNTIME_NOT_OPEN','NOTHING_TO_COMPACT','ROLE_BINDING_INVALID','ROLE_UNAVAILABLE','SESSION_BUSY','SESSION_NOT_RUNNING','SESSION_NOT_UNAVAILABLE'].includes(error.code))){try{d.operations.append(record,'failed',{errorCode:error.code});}catch{}}Object.assign(error,{operationId:record.operationId});}if(record&&!(error instanceof DomainError))throw Object.assign(new DomainError('REQUEST_UNKNOWN','操作结果待核对，未自动重放',409,true),{operationId:record.operationId});throw error;}
+      finally{if(!control)releaseSession(id);active.delete(operationId);}
     })();
     active.set(operationId,promise);return promise;
   }
@@ -126,8 +127,8 @@ export function createSessionToolsService(d: {
             if(!error||error instanceof DomainError&&error.code==='REQUEST_ABORTED'){
               record=d.operations.append(record,'observed',{after:d.runtime.operationEvidence({...input,session:d.sessions.get(id)!}),settled:true,...(error instanceof DomainError?{errorCode:error.code}:{})});
               d.operations.append(record,'completed',{resultSessionId:id});
-            }else if(error instanceof DomainError&&error.code==='MODEL_IMAGE_UNSUPPORTED'){
-              record=d.operations.append(record,'observed',{after:d.runtime.operationEvidence({...input,session:d.sessions.get(id)!}),settled:true,errorCode:error.code});
+            }else if(isKnownMessageFailure(error)){
+              record=d.operations.append(record,'observed',{after:d.runtime.operationEvidence({...input,session:d.sessions.get(id)!}),...(error.noSideEffects?{notStarted:true}:{settled:true}),errorCode:error.code});
               d.operations.append(record,'failed',{errorCode:error.code});
             }
           }catch{/* A missing receipt remains unknown; never replay it. */}finally{active.delete(operationId);finish();}
@@ -135,7 +136,20 @@ export function createSessionToolsService(d: {
       }catch(error){active.delete(operationId);finish();throw error;}
       return {accepted:true,sessionId:id,operationId};
     },
-    async delete(projectId:string,id:string){scope(projectId,id);d.assertWritable();assertKnown(projectId,id);if(!d.execution.deleteSession)throw new DomainError('SCHEMA_INCOMPATIBLE','删除能力不可用',409,true);return d.execution.deleteSession(projectId,id);},
+    steer(projectId:string,id:string,body:Record<string,unknown>,key:string,lease:string|null) {
+      exactFields(body,['content']);
+      if(typeof body.content!=='string'||!body.content.trim())throw new DomainError('INVALID_INPUT','纠正内容不能为空',400,true);
+      if(Buffer.byteLength(body.content)>32768)throw new DomainError('REQUEST_TOO_LARGE','纠正内容不得超过32KiB',413,true);
+      const input=scope(projectId,id);d.execution.assertLease(id,lease);editable(input);
+      const content=body.content,operationId=operationIdentity(projectId,id,'steer',key);
+      const result=()=>({accepted:true,sessionId:id,operationId,delivery:'steer' as const});
+      return run(projectId,id,'steer',key,{content},async(_input,observe)=>{
+        if(!d.execution.steer)throw new DomainError('SESSION_NOT_RUNNING','当前运行时不支持纠正',409,true);
+        await d.execution.steer(id,content);
+        observe({queued:true});return result();
+      },result,true);
+    },
+    async delete(projectId:string,id:string){scope(projectId,id,true);d.assertWritable();if(!d.execution.deleteSession)throw new DomainError('SCHEMA_INCOMPATIBLE','删除能力不可用',409,true);return d.execution.deleteSession(projectId,id);},
     interrupt(projectId:string,id:string,key:string) {
       return run(projectId,id,'interrupt',key,{},async(input,observe)=>{const parent=pending(projectId,id).find(record=>record.operation==='message'&&active.has(record.operationId));if(!parent)throw new DomainError('SESSION_NOT_RUNNING','没有可确认的主请求',409,true);observe({parentOperationId:parent.operationId});await d.execution.interrupt(id);observe({parentOperationId:parent.operationId,settled:true,after:d.runtime.operationEvidence({...input,session:d.sessions.get(id)!})});return d.present(d.sessions.get(id)!);},()=>d.present(d.sessions.get(id)!),true);
     },
@@ -192,7 +206,7 @@ export function createSessionToolsService(d: {
               if(!terminal)d.operations.append(record,'completed',{resultSessionId:resultId});status='completed';
             }else{if(!canAcknowledge)throw new DomainError('REQUEST_UNKNOWN','当前不能解除未知结果门禁',409,true);d.operations.append(record,'acknowledged',{acknowledgementOperationId:recovery.operationId});status='acknowledged';}
             d.operations.append(recovery,'completed',{resultSessionId:resultId??id});
-          }finally{sessionLocks.delete(id);}
+          }finally{releaseSession(id);}
         } else status=body.action==='finalize-fork'?'completed':'acknowledged';
       }
       return {operationId:record.operationId,operation:record.operation,status,resultSessionId:resultId,errorCode:status==='unknown'?'REQUEST_UNKNOWN':null,allowedRecovery:{acknowledgeUnknown:canAcknowledge,finalizeFork:!!candidateValid&&!isActive&&!terminal}};

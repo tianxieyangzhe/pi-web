@@ -10,7 +10,7 @@ export type SessionModelView = {
   canSwitch: boolean;
   unavailableReason: string | null;
 };
-export type SessionOperation = 'create'|'open'|'restore'|'message'|'switch-model'|'compact'|'compact-cancel'|'interrupt'|'end'|'adopt-agent'|'fork'|'recover';
+export type SessionOperation = 'create'|'open'|'restore'|'message'|'steer'|'switch-model'|'compact'|'compact-cancel'|'interrupt'|'end'|'adopt-agent'|'fork'|'recover';
 export type RecoveryView = { operationId: string; operation: SessionOperation; status: 'running'|'completed'|'failed'|'unknown'|'acknowledged'; resultSessionId: string|null; errorCode: string|null; allowedRecovery: { acknowledgeUnknown: boolean; finalizeFork: boolean } };
-export type ActionName = 'send'|'interrupt'|'end'|'restore'|'delete'|'compact'|'cancelCompaction'|'switchModel'|'fork'|'export'|'adoptAgent';
+export type ActionName = 'send'|'steer'|'interrupt'|'end'|'restore'|'delete'|'compact'|'cancelCompaction'|'switchModel'|'fork'|'export'|'adoptAgent';
 export type SessionActions = Record<ActionName, { allowed: boolean; reason: string|null }>;

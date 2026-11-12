@@ -58,17 +58,17 @@ export async function resolveConfiguredModel(configuration: Awaited<ReturnType<t
   const identity = selected ?? configuration.defaults;
   if (!identity) configurationError();
   const model = configuration.runtime.getModel(identity.provider, identity.modelId);
-  if (!model||(configuration.models&&!configuration.models.some(item=>item.provider===model.provider&&item.id===model.id))) throw new DomainError('MODEL_NOT_FOUND', '所选模型不存在或未在 enabledModels 中启用', 422, true);
+  if (!model||(configuration.models&&!configuration.models.some(item=>item.provider===model.provider&&item.id===model.id))) throw Object.assign(new DomainError('MODEL_NOT_FOUND', '所选模型不存在或未在 enabledModels 中启用', 422, true),{noSideEffects:true});
   try {
     const auth = await configuration.runtime.getAuth(model);
     if (!auth || ('ok' in auth && !auth.ok)) throw new Error();
-  } catch { throw new DomainError('MODEL_UNAVAILABLE', '所选模型的认证不可用', 409, true); }
+  } catch { throw Object.assign(new DomainError('MODEL_UNAVAILABLE', '所选模型的认证不可用', 409, true),{noSideEffects:true}); }
   return model;
 }
 export async function resolveSessionModel(configuration:Awaited<ReturnType<typeof loadModelConfiguration>>,selected?:{provider:string;modelId:string}|null) {
   if(selected){try{return await resolveConfiguredModel(configuration,selected);}catch(error){if(!(error instanceof DomainError)||!['MODEL_NOT_FOUND','MODEL_UNAVAILABLE'].includes(error.code))throw error;}}
   if(configuration.defaults){try{return await resolveConfiguredModel(configuration);}catch(error){if(!(error instanceof DomainError)||!['MODEL_NOT_FOUND','MODEL_UNAVAILABLE'].includes(error.code))throw error;}}
-  throw new DomainError('MODEL_UNAVAILABLE','会话模型及默认模型不可用，请检查默认模型、enabledModels 和认证配置',409,true);
+  throw Object.assign(new DomainError('MODEL_UNAVAILABLE','会话模型及默认模型不可用，请检查默认模型、enabledModels 和认证配置，或在Session设置中选择可用模型',409,true),{noSideEffects:true});
 }
 export async function createConfiguredModelRuntime() {
   const configuration = await loadModelConfiguration();

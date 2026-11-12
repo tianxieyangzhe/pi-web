@@ -20,7 +20,7 @@ export function createProjectOperationStore(root = path.join(process.cwd(),'.dat
         return text.slice(0,-1).split('\n').map(line=>{
           const record=JSON.parse(line) as OperationRecord;const {recordHash,...unsigned}=record;
           if(record.version!==1||record.operationId!==id||record.projectId!==projectId||record.sequence!==(previous?.sequence??0)+1||record.previousHash!==(previous?.recordHash??null)||recordHash!==hash(canonical(unsigned))||!['prepared','observed','completed','failed','acknowledged'].includes(record.phase)||!record.sessionId||!record.evidence||typeof record.evidence!=='object')throw unknownOperation();
-          if(!/^[a-f0-9]{64}$/.test(record.keyHash)||!/^[a-f0-9]{64}$/.test(record.payloadSha256)||Array.isArray(record.evidence)||!['create','open','message','interrupt','end','restore','switch-model','compact','compact-cancel','fork','adopt-agent','recover'].includes(record.operation)||!previous&&record.phase!=='prepared'||previous&&['completed','failed','acknowledged'].includes(previous.phase))throw unknownOperation();
+          if(!/^[a-f0-9]{64}$/.test(record.keyHash)||!/^[a-f0-9]{64}$/.test(record.payloadSha256)||Array.isArray(record.evidence)||!['create','open','message','steer','interrupt','end','restore','switch-model','compact','compact-cancel','fork','adopt-agent','recover'].includes(record.operation)||!previous&&record.phase!=='prepared'||previous&&['completed','failed','acknowledged'].includes(previous.phase))throw unknownOperation();
           if(previous&&(previous.payloadSha256!==record.payloadSha256||previous.keyHash!==record.keyHash||previous.sessionId!==record.sessionId||previous.operation!==record.operation))throw unknownOperation();
           previous=record;return record;
         });

@@ -1,21 +1,28 @@
 import { useEffect, useImperativeHandle, useRef, type Ref, type ClipboardEvent, type KeyboardEvent } from "react";
+import {buttonStyles} from "../../components/button";
 import { readComposer, splitComposer, type InlineAttachment } from "./inline-composer-document";
 
-export type InlineEditorHandle = { insert: (items: InlineAttachment[]) => void; focus: () => void };
+const atomicSelector='[data-attachment-id], [data-pasted-text]';
+export type InlineEditorHandle = {
+  insert: (items: InlineAttachment[]) => void;
+  focus: () => void;
+  focusEnd: () => void;
+  canRecallHistory: (browsing: boolean) => boolean;
+};
 export function InlineComposerEditor({ value, attachments, onChange, onPaste, onKeyDown, onCompositionStart, onCompositionEnd, placeholder, disabled, editorRef }: {
   value: string; attachments: InlineAttachment[]; onChange: (event: {target: {value: string}}) => void;
   onPaste: (event: ClipboardEvent<HTMLDivElement>) => void; onKeyDown: (event: KeyboardEvent<HTMLDivElement>) => void;
   onCompositionStart: () => void; onCompositionEnd: () => void; placeholder: string; disabled: boolean; editorRef: Ref<InlineEditorHandle>;
 }) {
   const root = useRef<HTMLDivElement>(null), saved = useRef<Range | null>(null);
-  const urls = useRef(new Map<string, string>()), composing = useRef(false);
+  const urls = useRef(new Map<string, string>()), composing = useRef(false), focusEnd = useRef(false);
   const latest = useRef({onChange, disabled}); latest.current = {onChange, disabled};
   function save() {
     const selection = window.getSelection();
     if (selection?.rangeCount && root.current?.contains(selection.anchorNode) && root.current.contains(selection.focusNode)) saved.current = selection.getRangeAt(0).cloneRange();
   }
   function isSlot(node: Node | null): node is HTMLElement { return node?.nodeType === 1 && (node as HTMLElement).hasAttribute("data-caret-slot"); }
-  function isChip(node: Node | null): node is HTMLElement { return node?.nodeType === 1 && !!(node as HTMLElement).dataset.attachmentId; }
+  function isChip(node: Node | null): node is HTMLElement { return node?.nodeType === 1 && ((node as HTMLElement).matches(atomicSelector)); }
   function slot() {
     const element=document.createElement("span");element.dataset.caretSlot="";
     element.append(document.createTextNode("\u200B"));return element;
@@ -23,17 +30,17 @@ export function InlineComposerEditor({ value, attachments, onChange, onPaste, on
   function ensureSlots() {
     // Inserting at a caret stop must produce siblings, never nest an atomic block inside its stop.
     for (const boundary of root.current?.querySelectorAll<HTMLElement>("[data-caret-slot]") ?? []) {
-      if (!boundary.querySelector("[data-attachment-id]")) continue;
+      if (!boundary.querySelector(atomicSelector)) continue;
       for (const child of Array.from(boundary.childNodes)) {
         if (child.nodeType===3 && child.textContent?.includes("\u200B")) { child.textContent=child.textContent.replace("\u200B", "");break; }
       }
       boundary.replaceWith(...Array.from(boundary.childNodes));
     }
-    for (const element of root.current?.querySelectorAll<HTMLElement>("[data-attachment-id]") ?? []) {
+    for (const element of root.current?.querySelectorAll<HTMLElement>(atomicSelector) ?? []) {
       if (!isSlot(element.previousSibling)) element.before(slot());
       if (!isSlot(element.nextSibling)) element.after(slot());
     }
-    if (root.current && !root.current.querySelector("[data-attachment-id]") && !readComposer(root.current)) root.current.replaceChildren();
+    if (root.current && !root.current.querySelector(atomicSelector) && !readComposer(root.current)) root.current.replaceChildren();
   }
   function place(node: Node, atEnd = true) {
     const selected=document.createRange(); selected.selectNodeContents(node);selected.collapse(!atEnd);
@@ -46,7 +53,7 @@ export function InlineComposerEditor({ value, attachments, onChange, onPaste, on
     const selection=window.getSelection();if (!selection?.rangeCount || !selection.isCollapsed || !root.current?.contains(selection.anchorNode)) return false;
     const selected=selection.getRangeAt(0), left=event.key==="ArrowLeft" || event.key==="Backspace";
     let current=selected.startContainer, offset=selected.startOffset, adjacent:Node|null=null;
-    const inside=(current.nodeType===1?current as HTMLElement:current.parentElement)?.closest<HTMLElement>("[data-attachment-id]");
+    const inside=(current.nodeType===1?current as HTMLElement:current.parentElement)?.closest<HTMLElement>(atomicSelector);
     if (inside) { event.preventDefault(); ensureSlots(); place(left?inside.previousSibling!:inside.nextSibling!);return true; }
     if (current.nodeType===3) {
       const text=current.textContent??"";
@@ -91,10 +98,23 @@ export function InlineComposerEditor({ value, attachments, onChange, onPaste, on
     }
     const label = document.createElement("span"); label.textContent = item.label; label.className = "min-w-0 break-all"; element.append(label);
     const remove = document.createElement("button"); remove.type = "button"; remove.textContent = "×";
-    remove.setAttribute("aria-label", `移除 ${item.label}`); remove.className = "shrink-0 px-1";
+    remove.setAttribute("aria-label", `移除 ${item.label}`); remove.className = buttonStyles({variant:"ghost",size:"icon"});
+    remove.disabled = latest.current.disabled;
     remove.onmousedown = event => event.preventDefault();
     remove.onclick = () => { if (!latest.current.disabled) { element.remove(); emit(); } };
     element.append(remove); return element;
+  }
+  function foldedText(text:string) {
+    const lines=text.split(/\r\n|\r|\n/).length,label=`已粘贴 ${lines} 行`;
+    const element=chip({id:'pasted-text',label});
+    delete element.dataset.attachmentId;element.dataset.pastedText=text;
+    function expand(){if(latest.current.disabled)return;const node=document.createTextNode(text);element.replaceWith(node);place(node);emit();}
+    const open=document.createElement('button');open.type='button';open.textContent=label;
+    open.className=buttonStyles({variant:'ghost'});open.title='点击展开并编辑正文（不是附件）';open.disabled=latest.current.disabled;
+    open.onmousedown=event=>event.preventDefault();open.onclick=expand;
+    element.querySelector('span')!.replaceWith(open);
+    element.onclick=event=>{if(!(event.target as HTMLElement).closest('button'))expand();};
+    return element;
   }
   function insertNodes(nodes: Node[]) {
     if (!root.current || latest.current.disabled) return;
@@ -107,6 +127,13 @@ export function InlineComposerEditor({ value, attachments, onChange, onPaste, on
   useImperativeHandle(editorRef, () => ({insert(items) { insertNodes(items.map(chip)); }, focus() {
     if (!root.current) return; const selected=range(); root.current.focus();
     const selection=window.getSelection();selection?.removeAllRanges();selection?.addRange(selected);save();
+  }, focusEnd() { focusEnd.current=true; }, canRecallHistory(browsing) {
+    const selection=window.getSelection(), editor=root.current;
+    if (!editor || !selection?.rangeCount || !selection.isCollapsed || !editor.contains(selection.anchorNode)) return false;
+    if (browsing) return true;
+    const before=document.createRange();before.selectNodeContents(editor);
+    const caret=selection.getRangeAt(0);before.setEnd(caret.startContainer,caret.startOffset);
+    return !readComposer(before.cloneContents()).includes("\n");
   }}));
   useEffect(() => {
     const editor = root.current; if (!editor || composing.current) return;
@@ -116,12 +143,16 @@ export function InlineComposerEditor({ value, attachments, onChange, onPaste, on
       editor.replaceChildren(...splitComposer(value).flatMap<Node>(part => "text" in part ? [document.createTextNode(part.text)] : byId.has(part.id) ? [chip(byId.get(part.id)!)] : []));
     }
     ensureSlots();
+    if (focusEnd.current) { focusEnd.current=false;place(editor); }
     const alive = new Set(attachments.map(item => item.id));
     for (const [id,url] of urls.current) if (!alive.has(id)) { URL.revokeObjectURL(url); urls.current.delete(id); }
   }, [value, attachments]);
+  useEffect(() => {
+    for (const button of root.current?.querySelectorAll<HTMLButtonElement>("button") ?? []) button.disabled = disabled;
+  }, [disabled]);
   useEffect(() => () => { for (const url of urls.current.values()) URL.revokeObjectURL(url); }, []);
   return <div ref={root} role="textbox" aria-label={placeholder} aria-multiline="true" aria-disabled={disabled} data-placeholder={placeholder}
-    title="Enter 发送，Shift+Enter 换行" contentEditable={!disabled} suppressContentEditableWarning
+    title="Enter 发送，Shift+Enter 换行，↑ / ↓ 切换历史输入（首行 ↑ 开始）" contentEditable={!disabled} suppressContentEditableWarning
     className="h-28 min-h-28 max-h-[max(112px,40dvh)] w-full flex-none resize-y overflow-auto whitespace-pre-wrap break-words px-3 py-2 text-sm leading-6 outline-none empty:before:pointer-events-none empty:before:text-zinc-400 empty:before:content-[attr(data-placeholder)]"
     onInput={emit} onBlur={save} onMouseUp={save} onKeyUp={save} onKeyDown={event => {
       if ((event.target as HTMLElement).closest("button")) return;
@@ -134,12 +165,13 @@ export function InlineComposerEditor({ value, attachments, onChange, onPaste, on
     onCompositionStart={() => {composing.current=true;onCompositionStart();}} onCompositionEnd={() => {composing.current=false;emit();onCompositionEnd();}}
     onPaste={event => {
       onPaste(event); if (event.defaultPrevented) return;
-      event.preventDefault(); insertNodes([document.createTextNode(event.clipboardData.getData("text/plain"))]);
+      event.preventDefault();const text=event.clipboardData.getData('text/plain');
+      insertNodes([text.split(/\r\n|\r|\n/).length>10?foldedText(text):document.createTextNode(text)]);
     }}
     onCopy={event => {
       const selected=window.getSelection(); if (!selected?.rangeCount) return;
       const container=document.createElement("div");container.append(selected.getRangeAt(0).cloneContents());
-      if (!container.querySelector("[data-attachment-id]")) return;
+      if (!container.querySelector(atomicSelector)) return;
       event.preventDefault();
       event.clipboardData.setData("text/plain",readComposer(container).replace(/\uE000([^\uE001]+)\uE001/g, (_token,id:string)=>attachments.find(item=>item.id===id)?.label??""));
     }} />;
