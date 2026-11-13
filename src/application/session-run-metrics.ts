@@ -51,8 +51,9 @@ export function createSessionRunMetrics() {
       if (['error', 'aborted'].includes(message.stopReason ?? '') && usage.totalTokens === 0) { incomplete = true; return; }
       responses++;
       for (const key of Object.keys(totals) as Array<keyof typeof totals>) totals[key] += usage[key] as number;
+      return true;
     },
-    finish(failed = false): AgentEvent {
+    finish(failed = false): SessionRunMetrics & { type: 'run_metrics' } {
       const metrics: SessionRunMetrics = {
         requestId, startedAt, durationMs: Math.max(0, Math.round(performance.now() - since)),
         input: responses ? totals.input : null, output: responses ? totals.output : null,
@@ -62,4 +63,17 @@ export function createSessionRunMetrics() {
       return { type: 'run_metrics', ...metrics };
     },
   };
+}
+
+/** Reuse native usage and existing execution boundaries, without storing counters. */
+export function latestRunTokenUsage(entries: ReadonlyArray<{entry:unknown}>, before: unknown, after: unknown, settled: boolean): SessionTokenUsage | null {
+  if(!Array.isArray(before)||!before.every(id=>typeof id==='string'))return null;
+  if(after!==undefined&&(!Array.isArray(after)||!after.every(id=>typeof id==='string')))return null;
+  const baseline=new Set(before),end=Array.isArray(after)?new Set(after):null;
+  const ids=new Set(entries.map(({entry})=>(entry as {id:string}).id));
+  if(before.some(id=>!ids.has(id))||(Array.isArray(after)&&after.some(id=>!ids.has(id))))return null;
+  const selected=entries.filter(({entry:value})=>{const entry=value as {id:string;type:string;message?:{role:string}};return !baseline.has(entry.id)&&(!end||end.has(entry.id))&&entry.type==='message'&&entry.message?.role==='assistant';});
+  if(!selected.length)return {totalTokens:null,complete:false};
+  const usage=sessionTokenUsage(selected);
+  return {...usage,complete:usage.complete&&settled};
 }

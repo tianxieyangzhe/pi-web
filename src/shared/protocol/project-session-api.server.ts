@@ -1,3 +1,4 @@
+import {fileChangeSelection} from './file-change-selection';
 import { services } from '@/bootstrap/composition-root.server';
 import { MAX_MESSAGE_BODY_BYTES } from '@/domain/message-reference-limits';
 import { DomainError } from '@/domain/errors';
@@ -20,6 +21,10 @@ export async function projectSessionAction(request:Request,context:ProjectSessio
       if(request.method==='POST'||request.method==='DELETE')return dataResponse(services.execution.changeContextFiles(sessionId,request.method,await jsonBody(request,MAX_MESSAGE_BODY_BYTES),request.headers.get('if-match')??'',lease));
     }
     if(request.method==='GET'){
+      if(action==='changes'||action==='changes/content'){
+        if(typeof services.execution.changes!=='function')throw new DomainError('SERVICE_RESTART_REQUIRED','请重启应用服务以启用本轮文件变更记录',503,true);
+        return dataResponse(await services.execution.changes(sessionId,fileChangeSelection(request,action==='changes/content')),{headers:{'cache-control':'no-store'}});
+      }
       if(action==='models')return dataResponse(await services.sessionTools.models(projectId,sessionId,lease),{headers:{'cache-control':'no-store'}});
       if(action==='context')return dataResponse(await services.nativeContext.inspect(projectId,sessionId),{headers:{'cache-control':'no-store'}});
       if(action==='messages')return dataResponse(await services.execution.messages(sessionId),{headers:{'cache-control':'no-store'}});

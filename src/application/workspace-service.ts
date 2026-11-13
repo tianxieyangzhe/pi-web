@@ -1,5 +1,6 @@
 import {workspaceAssistantContext} from './assistant-context';
-import { createSessionRunMetrics, sessionTokenUsage } from './session-run-metrics';
+import {sessionFileChanges} from './session-file-changes';
+import { createSessionRunMetrics, sessionTokenUsage, latestRunTokenUsage } from './session-run-metrics';
 import { DomainError } from "@/domain/errors";
 import { changeSessionContextFiles } from "./session-context-files-service";
 import type { SessionContextFilesStore } from "./ports/session-context-files";
@@ -15,13 +16,13 @@ import { SessionPresence } from "./session-presence";
 import { SessionEvents } from "./session-events";
 import { parseMessageReferences, type ReferenceContent, type ProjectReferenceTarget } from "@/domain/message-references";
 
-type Runtime = PiRuntimePort & PiContextPort & Partial<Pick<SessionToolsRuntimePort,'models'|'switchModel'>> & {
+type Runtime = PiRuntimePort & PiContextPort & Partial<Pick<SessionToolsRuntimePort,'models'|'switchModel'|'operationEvidence'>> & {
   recordRequest?(input:SessionRuntimeInput,type:string,data:unknown):string;
   readRequestEntries(input: SessionRuntimeInput): Promise<Array<{type:string;data:unknown}>>;
   requestEntries(handle: object): Array<{type:string;data:unknown}>;
   requestEntry(handle: object, type: string, data: unknown): string;
 };
-type Evidence = {key:string;hash:string;outcome?:string;operation?:'switch-model'|'steer'};
+type Evidence = {key:string;hash:string;outcome?:string;operation?:'switch-model'|'steer';entryIds?:unknown};
 export function unresolvedRequests(entries: Array<{type:string;data:unknown}>) {
   const pending = new Map<string,Evidence>();
   for (const entry of entries) {
@@ -32,7 +33,7 @@ export function unresolvedRequests(entries: Array<{type:string;data:unknown}>) {
   }
   return [...pending.values()];
 }
-export function createWorkspaceService(d: { projectRules?:import('./ports/project-rules').ProjectRulesStore; findProject?:(id:string)=>import('@/domain/models').Project|null; assistants?:import("./ports/session-assistant").SessionAssistantAccess; contextFiles?:SessionContextFilesStore; readContextFile?:(workspaceId:string,reference:{projectId:string;path:string})=>{name:string;bytes:Buffer}; assertWritable?:()=>void; repository: WorkspaceRepository; directories: WorkspaceDirectories; runtime: Runtime; sessionFiles?:ReturnType<typeof import('./session-file-service').createSessionFileService>; openHistory?:import('./ports/session-open-history').SessionOpenHistory; preview?:(value:WorkspaceSession)=>import('@/domain/session-preview').SessionPreview; listFiles?: (workspaceId:string,projectId:string,path:string)=>Promise<unknown>; readFile?: (workspaceId:string,projectId:string,path:string)=>Promise<import('@/domain/file-preview').FilePreview>; downloadFile?: (workspaceId:string,projectId:string,path:string)=>Promise<import('@/domain/file-preview').FileDownload>; resolveReference?: (workspaceId:string,reference:{projectId:string;path:string})=>ProjectReferenceTarget }) {
+export function createWorkspaceService(d: { projectRules?:import('./ports/project-rules').ProjectRulesStore; findProject?:(id:string)=>import('@/domain/models').Project|null; assistants?:import("./ports/session-assistant").SessionAssistantAccess; contextFiles?:SessionContextFilesStore; readContextFile?:(workspaceId:string,reference:{projectId:string;path:string})=>{name:string;bytes:Buffer}; assertWritable?:()=>void; repository: WorkspaceRepository; directories: WorkspaceDirectories; runtime: Runtime; sessionFiles?:ReturnType<typeof import('./session-file-service').createSessionFileService>; openHistory?:import('./ports/session-open-history').SessionOpenHistory; preview?:(value:WorkspaceSession)=>import('@/domain/session-preview').SessionPreview; projectChanges?: (workspaceId:string,projectId:string)=>Promise<{isGitRepository:boolean;status:string;workingPatch:string;stagedPatch:string;truncated:boolean}>; listFiles?: (workspaceId:string,projectId:string,path:string)=>Promise<unknown>; readFile?: (workspaceId:string,projectId:string,path:string)=>Promise<import('@/domain/file-preview').FilePreview>; downloadFile?: (workspaceId:string,projectId:string,path:string)=>Promise<import('@/domain/file-preview').FileDownload>; resolveReference?: (workspaceId:string,reference:{projectId:string;path:string})=>ProjectReferenceTarget }) {
   const r=d.repository, rt=d.runtime;
   const running = new Map<string,{kind:'message'|'compact'|'model'|'context';done:Promise<void>;request?:Evidence}>();
   const states = new Map<string,SessionState>();
@@ -71,17 +72,17 @@ export function createWorkspaceService(d: { projectRules?:import('./ports/projec
   async function release(id:string) { const observer=observed.get(id);observer?.unsubscribe();observed.delete(id);const handle=rt.getHandle(id);if(handle)await rt.close(handle); }
   const presence=new SessionPresence({busy:id=>isSessionDeleting(id)||running.has(id)||opened.has(id),release,abort:async id=>{if(running.has(id)){const handle=rt.getHandle(id);if(handle)await rt.interrupt(handle);await running.get(id)?.done;}}});
   const events=new SessionEvents(presence,undefined,id=>({running:running.get(id)?.kind==='message',compacting:running.get(id)?.kind==='compact',steering:rt.getHandle(id)?rt.steeringQueue?.(rt.getHandle(id)!)??[]:[]}));
-  async function handleFor(value:WorkspaceSession,useDefaultModel=false) {
+  async function handleFor(value:WorkspaceSession) {
     assertSessionAvailable(value.id);
     if(ending.has(value.id))throw new DomainError('SESSION_BUSY','会话正在结束',409,true);
     if(configuring.has(value.workspaceId))throw new DomainError('WORKSPACE_BUSY','工作区配置正在更新',409,true);
     let opening=opened.get(value.id);
     if(!opening){
       opening=(async()=>{
-        const setup={...input(value),useDefaultModel};
+        const setup=input(value);
         for(const project of setup.workspace!.projects)await d.directories.normalize(project.rootPath);
         let handle=rt.getHandle(value.id,setup);
-        if(handle&&!running.has(value.id)&&!rt.isBusy?.(handle))await rt.refreshModel?.(handle,useDefaultModel);
+        if(handle&&!running.has(value.id)&&!rt.isBusy?.(handle))await rt.refreshModel?.(handle);
         if(!handle){if(value.nativeRef)handle=await rt.restore(setup);else {if(!rt.initializeProject)throw new DomainError('RUNTIME_ERROR','原生初始化不可用',503,true);handle=await rt.initializeProject(setup,ref=>r.bindNative(value.workspaceId,value.id,ref));}}
         if(observed.get(value.id)?.handle!==handle){observed.get(value.id)?.unsubscribe();observed.set(value.id,{handle,unsubscribe:rt.subscribe?.(handle,event=>events.agent(value.id,event))??(()=>{})});}
         return handle;
@@ -128,6 +129,12 @@ export function createWorkspaceService(d: { projectRules?:import('./ports/projec
     list:()=>r.list(),
     get:(id:string)=>{const value=r.get(id);if(!value)throw new DomainError('NOT_FOUND','工作区不存在',404,true);return value;},
     directories:(path?:string)=>d.directories.list(path),
+    async projectChanges(workspaceId:string,projectId:string) {
+      const workspace=r.get(workspaceId);
+      if(!workspace?.projects.some(p=>p.id===projectId))throw new DomainError('NOT_FOUND','工作区项目不存在',404,true);
+      if(!d.projectChanges)throw new DomainError('SERVICE_RESTART_REQUIRED','项目 Git 服务尚未加载，请重新加载应用服务',503,true);
+      return d.projectChanges(workspaceId,projectId);
+    },
     async files(workspaceId:string,projectId:string,path:string) { const workspace=r.get(workspaceId);if(!workspace?.projects.some(p=>p.id===projectId))throw new DomainError('NOT_FOUND','工作区项目不存在',404,true);return d.listFiles?.(workspaceId,projectId,path); },
     async readFile(workspaceId:string,projectId:string,path:string) { const workspace=r.get(workspaceId);if(!workspace?.projects.some(p=>p.id===projectId))throw new DomainError('NOT_FOUND','工作区项目不存在',404,true);if(!d.readFile)throw new DomainError('FILE_PREVIEW_UNAVAILABLE','文件预览尚未加载，请重启服务',503,true);return d.readFile(workspaceId,projectId,path); },
     async downloadFile(workspaceId:string,projectId:string,path:string) { const workspace=r.get(workspaceId);if(!workspace?.projects.some(p=>p.id===projectId))throw new DomainError('NOT_FOUND','工作区项目不存在',404,true);if(!path)throw new DomainError('INVALID_PATH','缺少文件相对路径',400,true);if(!d.downloadFile)throw new DomainError('FILE_DOWNLOAD_UNAVAILABLE','文件下载尚未加载，请重启服务',503,true);return d.downloadFile(workspaceId,projectId,path); },
@@ -157,7 +164,7 @@ export function createWorkspaceService(d: { projectRules?:import('./ports/projec
       const value=scope(workspaceId,id);if(configuring.has(workspaceId))throw new DomainError('WORKSPACE_BUSY','工作区配置正在更新',409,true);
       {
         if(running.get(id)?.kind==='model')throw new DomainError('SESSION_BUSY','会话正在切换模型',409,true);
-        try{await handleFor(value,true);states.set(id,'idle');}
+        try{await handleFor(value);states.set(id,'idle');}
         catch(error){if(!value.nativeRef||!(error instanceof DomainError)||!['MODEL_NOT_FOUND','MODEL_UNAVAILABLE'].includes(error.code))throw error;await rt.readTree!(input(value));states.set(id,'unavailable');}
       }
       const unknown=unresolvedRequests(await evidence(scope(workspaceId,id))).length>0;
@@ -193,10 +200,19 @@ export function createWorkspaceService(d: { projectRules?:import('./ports/projec
     },
     assertLease:(id:string,lease:string)=>{assertSessionAvailable(id);presence.assertLease(id,lease);},
     close:(id:string,lease:string)=>presence.release(id,lease),
+    async changes(workspaceId:string,id:string,selection?:{runId:string;fileId:string}) {
+      const value=scope(workspaceId,id),tree=await this.messages(workspaceId,id),records=await evidence(value);
+      const latest=records.findLast(record=>record.type==='workspace_request'&&!(record.data as Evidence).operation)?.data as Evidence|undefined;
+      const result=latest?records.findLast(record=>record.type==='workspace_request_result'&&!(record.data as Evidence).operation&&(record.data as Evidence).key===latest.key)?.data as Evidence|undefined:undefined;
+      return sessionFileChanges(tree.entries,latest?{runId:latest.key,before:latest.entryIds,after:result?.entryIds,running:running.get(id)?.kind==='message'}:null,selection,[input(value).workingDirectory,...r.get(workspaceId)!.projects.map(project=>project.rootPath)]);
+    },
     async messages(workspaceId:string,id:string){
       const value=scope(workspaceId,id);
       const tree=value.nativeRef?await rt.readTree!(input(value)):{entries:[],activeLeafId:null};
-      return {...tree,tokenUsage:sessionTokenUsage(tree.entries)};
+      const records=value.nativeRef?await evidence(value):[];
+      const latest=records.findLast(record=>record.type==='workspace_request'&&!(record.data as Evidence).operation)?.data as Evidence|undefined;
+      const result=latest?records.findLast(record=>record.type==='workspace_request_result'&&!(record.data as Evidence).operation&&(record.data as Evidence).key===latest.key)?.data as Evidence|undefined:undefined;
+      return {...tree,tokenUsage:sessionTokenUsage(tree.entries),latestRunUsage:latestRunTokenUsage(tree.entries,latest?.entryIds,result?.entryIds,result?.outcome==='settled')};
     },
     async accept(workspaceId:string,id:string,body:Record<string,unknown>,key:string,lease:string) {
       exactKeys(body,['content','references','webSearch','toolSearch']);for(const field of ['webSearch','toolSearch'])if(body[field]!==undefined&&typeof body[field]!=='boolean')throw new DomainError('INVALID_INPUT',`${field}必须为布尔值`,400,true);const value=scope(workspaceId,id);presence.assertLease(id,lease);
@@ -214,12 +230,13 @@ export function createWorkspaceService(d: { projectRules?:import('./ports/projec
         const references=parseMessageReferences(body.references,new Set(workspace.projects.map(p=>p.id)),d.resolveReference?reference=>d.resolveReference!(workspaceId,reference):undefined);
         if(body.webSearch===true){if(!rt.validateWebSearch)throw new DomainError('WEB_SEARCH_UNSUPPORTED','当前运行时不支持服务端搜索，请关闭联网搜索',422,true);rt.validateWebSearch(handle);}
         if(body.toolSearch===true){if(!rt.validateToolSearch)throw new DomainError('TOOL_SEARCH_UNAVAILABLE','当前运行时未装配工具搜索，请关闭工具搜索或重启服务',422,true);rt.validateToolSearch();}
-        rt.requestEntry(handle,'workspace_request',{key,hash});
+        rt.requestEntry(handle,'workspace_request',{key,hash,...(rt.operationEvidence?{entryIds:rt.operationEvidence(input(scope(workspaceId,id))).entryIds}:{})});
         const metrics=createSessionRunMetrics();let metricsFailed=false;
         states.set(id,'running');events.agent(id,{type:'session_state',state:'starting'});events.agent(id,metrics.started());
-        const work=rt.send(handle,body.content,event=>{metrics.observe(event);if(event.type!=='pi_event'&&event.type!=='entry_link')events.agent(id,event);},undefined,references,true,body.webSearch===true,body.toolSearch===true)
-          .then(()=>{rt.requestEntry(handle,'workspace_request_result',{key,hash,outcome:'settled'});states.set(id,'idle');events.agent(id,{type:'complete'});})
-          .catch(error=>{metricsFailed=true;const known=error instanceof DomainError&&error.code!=='REQUEST_UNKNOWN';try{if(known)rt.requestEntry(handle,'workspace_request_result',{key,hash,outcome:(error as DomainError).code==='REQUEST_ABORTED'?'aborted':'failed'});}catch{/* Keep pending evidence for recovery. */}states.set(id,known?'idle':'unavailable');events.agent(id,{type:'error',code:known?(error as DomainError).code:'REQUEST_UNKNOWN',message:known?(error as DomainError).message:'请求结果待核对，不能自动重试',recoverable:true});})
+        const content=body.content;
+        const work=rt.send(handle,content,event=>{if(metrics.observe(event))events.agent(id,{...metrics.finish(),type:'run_progress',complete:false});if(event.type!=='pi_event'&&event.type!=='entry_link')events.agent(id,event);},undefined,references,true,body.webSearch===true,body.toolSearch===true)
+          .then(()=>{rt.requestEntry(handle,'workspace_request_result',{key,hash,outcome:'settled',...(rt.operationEvidence?{entryIds:rt.operationEvidence(input(scope(workspaceId,id))).entryIds}:{})});states.set(id,'idle');events.agent(id,{type:'complete'});})
+          .catch(error=>{metricsFailed=true;const known=error instanceof DomainError&&error.code!=='REQUEST_UNKNOWN';try{if(known)rt.requestEntry(handle,'workspace_request_result',{key,hash,outcome:(error as DomainError).code==='REQUEST_ABORTED'?'aborted':'failed',...(rt.operationEvidence?{entryIds:rt.operationEvidence(input(scope(workspaceId,id))).entryIds}:{})});}catch{/* Keep pending evidence for recovery. */}states.set(id,known?'idle':'unavailable');events.agent(id,{type:'error',code:known?(error as DomainError).code:'REQUEST_UNKNOWN',message:known?(error as DomainError).message:'请求结果待核对，不能自动重试',recoverable:true});})
           .finally(()=>{running.delete(id);finish();presence.settled(id);events.agent(id,metrics.finish(metricsFailed));});
         running.set(id,{kind:'message',done:work,request:{key,hash}});
         return {accepted:true,sessionId:id};
@@ -289,7 +306,7 @@ export function createWorkspaceService(d: { projectRules?:import('./ports/projec
         await Promise.allSettled([...steering].filter(([key])=>JSON.parse(key)[0]===id).map(([,work])=>work));
         await release(id);
         r.deleteSession(workspaceId,id);
-        events.closeSession(id);presence.forget(id);states.delete(id);compactState.delete(id);
+        events.closeSession(id,true);presence.forget(id);states.delete(id);compactState.delete(id);
         return {deleted:true,sessionId:id};
       });
     },

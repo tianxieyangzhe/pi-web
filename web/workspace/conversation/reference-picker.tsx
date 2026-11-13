@@ -57,7 +57,7 @@ export function ProjectReferencePicker({ projects, selected, onChange, disabled,
       <div className="reference-picker__projects">{projects.map(project => <Button type="button" key={project.id} aria-pressed={projectId === `project:${project.id}`} onClick={() => { setProjectId(`project:${project.id}`); setPath(""); }}>{project.name}</Button>)}</div>
       <div className="reference-picker__path"><span>{path || "项目根目录"}</span>{path && <Button type="button" onClick={() => setPath(path.split(/[\\/]/).slice(0,-1).join("/"))}>上一级</Button>}</div>
       <div className="reference-picker__entries">{entries.map(entry => { const reference: DirectoryReference = {projectId:projectId.slice(8),path:entry.path}; return entry.type === "directory" ? <Button variant="ghost" size="row" type="button" key={entry.path} onClick={() => setPath(entry.path)}><Folder size={14}/> {entry.name} /</Button> : <label key={entry.path}><input type="checkbox" disabled={disabled} checked={selected.some(item => sameReference(item, reference))} onChange={() => toggle(reference)}/>{entry.name}</label>; })}{truncated && <p>仅显示前 1000 项</p>}</div>
-      {error && <p role="alert">{error}</p>}
+      <ErrorToast message={error} onDismiss={()=>setError('')}/>
       <footer><span>已选 {selected.length} 个项目文件</span><Button variant="primary" type="button" onClick={() => dialog.current?.close()}>完成</Button></footer>
     </dialog>}
   </div>;
@@ -94,7 +94,7 @@ export function ResourceReferencePicker({kind,disabled,onSelect,onSelectAssistan
     {open&&<dialog ref={dialog} className="reference-picker__dialog" aria-label={title} onClose={()=>setOpen(false)}>
       <header><b>{title}</b><Button variant="ghost" size="icon" type="button" aria-label="关闭" onClick={()=>dialog.current?.close()}><X size={16}/></Button></header>
       <div className="reference-picker__entries">{loading?<p>正在加载…</p>:items.length?items.map(item=><Button variant="ghost" size="row" type="button" key={item.id} disabled={choosing||disabled} title={item.detail} onClick={()=>void choose(item.id)}>{item.name} · {item.detail}</Button>):<p>暂无可引用的{kind==='assistant'?'助手':'Skill'}</p>}</div>
-      {error&&<p role="alert">{error} <Button type="button" onClick={()=>{setOpen(false);}}>关闭后重试</Button></p>}
+      <ErrorToast message={error} onRetry={()=>setOpen(false)} onDismiss={()=>setError('')}/>
       <footer>{kind==='assistant'?(choosing?'正在应用助手…':'选择后用于当前会话的系统提示词，再次点击可更换助手。'):(choosing?'正在读取正文…':'选择后作为本次消息的文件引用，可在输入框中移除。')}</footer>
     </dialog>}
   </div>;

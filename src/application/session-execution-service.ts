@@ -1,5 +1,6 @@
+import {sessionFileChanges} from './session-file-changes';
 import {projectAssistantContext} from './assistant-context';
-import { createSessionRunMetrics, sessionTokenUsage } from './session-run-metrics';
+import { createSessionRunMetrics, sessionTokenUsage, latestRunTokenUsage } from './session-run-metrics';
 import { SessionEvents } from "./session-events";
 import { changeSessionContextFiles } from "./session-context-files-service";
 import type { SessionContextFilesStore } from "./ports/session-context-files";
@@ -39,6 +40,7 @@ class EventQueue {
 }
 
 export function createSessionExecutionService(dependencies: {
+  operations?:import('./ports/project-operations').ProjectOperationStore;
   projectRules?:import('./ports/project-rules').ProjectRulesStore;
   assistants?:import("./ports/session-assistant").SessionAssistantAccess;
   contextFiles?: SessionContextFilesStore;
@@ -206,13 +208,13 @@ export function createSessionExecutionService(dependencies: {
             if (live) {
               if(controls.has(sessionId)||locks.has(sessionId)||runtime.isBusy?.(live))return live;
               acquireSession(sessionId);
-              try {await runtime.refreshModel?.(live,true);sessions.updateRuntime(sessionId,{state:'idle'});return live;}
+              try {await runtime.refreshModel?.(live);sessions.updateRuntime(sessionId,{state:'idle'});return live;}
               catch(error){if(error instanceof DomainError&&['MODEL_NOT_FOUND','MODEL_UNAVAILABLE'].includes(error.code)){sessions.updateRuntime(sessionId,{state:'unavailable'});return null;}throw error;}
               finally{releaseSession(sessionId);}
             }
             acquireSession(sessionId);
             try{
-            const input = { ...runtimeInput(value, true), projectSession: true, useDefaultModel: true };
+            const input = { ...runtimeInput(value, true), projectSession: true };
             if (value.nativeRef) {
               try { return await runtime.restore(input); }
               catch(error) { if(error instanceof DomainError && ["MODEL_NOT_FOUND","MODEL_UNAVAILABLE"].includes(error.code)) { sessions.updateRuntime(sessionId,{state:"unavailable"}); return null; } throw error; }
@@ -311,11 +313,10 @@ export function createSessionExecutionService(dependencies: {
           yield { type: "session_state", state: "running" };
           const queue = new EventQueue();
           timing("prompt_start");
-          void runtime
-            .send(handle, instruction, (event) => {
+          void runtime.send(handle, instruction, (event) => {
               if (event.type === "message_delta" && event.text) timing("first_text");
               if (event.type === "activity" && event.kind === "tool") timing("first_tool");
-              metrics.observe(event);
+              if(metrics.observe(event)) queue.push({...metrics.finish(),type:'run_progress',complete:false});
               queue.push(event);
             }, () => timing("assistant_stream"), referenceContent, operation === "project_write", webSearch, toolSearch)
             .then(() => {
@@ -403,6 +404,13 @@ export function createSessionExecutionService(dependencies: {
       acquireSession(sessionId);
       try{const previous=runtime.getHandle(sessionId);if(previous)await runtime.close(previous);const handle=await runtime.restore({...runtimeInput(value,true),projectSession:true});observe(sessionId,handle);return sessions.updateRuntime(sessionId,{state:'idle'})!;}finally{releaseSession(sessionId);}
     },
+    async changes(sessionId:string,selection?:{runId:string;fileId:string}) {
+      const value=session(sessionId);
+      const tree=await this.messages(sessionId);
+      const latest=dependencies.operations?.list(value.projectId,sessionId).filter(record=>record.operation==='message').sort((a,b)=>a.timestamp.localeCompare(b.timestamp)||a.sequence-b.sequence).at(-1);
+      const baseline=latest?.evidence.baseline as {entryIds?:unknown}|undefined,after=latest?.evidence.after as {entryIds?:unknown}|undefined;
+      return sessionFileChanges(tree.entries,latest?{runId:latest.operationId,before:baseline?.entryIds,after:after?.entryIds,running:controls.has(sessionId)}:null,selection,[projects.get(value.projectId)!.rootPath]);
+    },
     async messages(sessionId: string) {
       assertSessionAvailable(sessionId);
       const value = session(sessionId);
@@ -410,7 +418,9 @@ export function createSessionExecutionService(dependencies: {
       if (!project) throw new DomainError("NOT_FOUND", "项目不存在", 404, true);
       if (!runtime.readTree) throw new DomainError("SESSION_TREE_READ_FAILED", "原生树读取不可用", 500, true);
       const tree = await runtime.readTree({session:value,workingDirectory:project.rootPath,allowProjectWrite:false,projectSession:true});
-      return { ...tree, tokenUsage: sessionTokenUsage(tree.entries) };
+      const latest=dependencies.operations?.list(value.projectId,sessionId).filter(record=>record.operation==='message').sort((a,b)=>a.timestamp.localeCompare(b.timestamp)).at(-1);
+      const baseline=latest?.evidence.baseline as {entryIds?:unknown}|undefined,after=latest?.evidence.after as {entryIds?:unknown}|undefined;
+      return { ...tree, tokenUsage: sessionTokenUsage(tree.entries),latestRunUsage:latestRunTokenUsage(tree.entries,baseline?.entryIds,after?.entryIds,latest?.phase==='completed') };
     },
     async deleteSession(projectId: string, sessionId: string) {
       const value = session(sessionId);
@@ -434,7 +444,7 @@ export function createSessionExecutionService(dependencies: {
         if(settledHandle&&settledHandle!==handle&&runtime.stopForDeletion)await runtime.stopForDeletion(settledHandle);
         if(settledHandle)await runtime.close(settledHandle);
         sessions.delete(projectId, sessionId);
-        events.closeSession(sessionId);observed.get(sessionId)?.unsubscribe(); observed.delete(sessionId); clearTimer(sessionId);
+        events.closeSession(sessionId,true);observed.get(sessionId)?.unsubscribe(); observed.delete(sessionId); clearTimer(sessionId);
         for (const [key, lease] of leases) if (lease.sessionId === sessionId) leases.delete(key);
         for (const [key, record] of idempotency) if (record.sessionId === sessionId) idempotency.delete(key);
         timeouts.delete(sessionId); lastTimeouts.delete(sessionId);

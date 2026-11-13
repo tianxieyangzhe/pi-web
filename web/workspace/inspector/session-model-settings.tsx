@@ -1,3 +1,4 @@
+import { ErrorToast } from '../conversation/error-toast';
 import {Button} from '../../components/button';
 import {useEffect,useRef,useState} from 'react';
 import type {RecoveryView,SessionModelView,SessionThinkingLevel} from '../../../src/domain/session-tools';
@@ -59,6 +60,6 @@ export function SessionModelSettings({modelApi,leaseId,onApplied,onRecovered}:{m
   </div>}
   {view&&<p className="text-slate-500">配置来源：models {view.sources.models} · settings {view.sources.settings}</p>}
   {model&&<p className="text-slate-500">上下文容量 {model.contextWindow?.toLocaleString()??'未知'} · 最大输出 {model.maxTokens?.toLocaleString()??'未知'}</p>}
-  {error&&<p role="alert" className="text-red-700">{error}</p>}
+  <ErrorToast message={error} onDismiss={()=>setError('')}/>
  </section>;
 }

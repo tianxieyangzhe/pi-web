@@ -1,3 +1,4 @@
+import {fileChangeSelection} from './file-change-selection';
 import { fileDownloadResponse } from './file-download-response.server';
 import type { createWorkspaceService } from '@/application/workspace-service';
 import { MAX_MESSAGE_BODY_BYTES } from '@/domain/message-reference-limits';
@@ -13,6 +14,10 @@ async function workspaceApi(request:Request,segments:string[]=[]) {
     if(!workspaceId){if(method==='GET')return dataResponse(service.list());if(method==='POST')return dataResponse(await service.save(null,await jsonBody(request),request.headers.get('idempotency-key')??''),{status:201});}
     else if(workspaceId==='directories'&&method==='GET')return dataResponse(await service.directories(url.searchParams.get('path')??undefined));
     else if(!collection){if(method==='GET')return dataResponse(service.get(workspaceId));if(method==='PUT')return dataResponse(await service.save(workspaceId,await jsonBody(request),request.headers.get('if-match')??''));}
+    else if(collection==='projects'&&sessionId&&action==='changes'&&method==='GET'){
+      if(typeof service.projectChanges!=='function')throw new DomainError('SERVICE_RESTART_REQUIRED','项目 Git 服务尚未加载，请重新加载应用服务',503,true);
+      return dataResponse(await service.projectChanges(workspaceId,sessionId));
+    }
     else if(collection==='projects'&&sessionId&&action==='files/download'&&method==='GET')return fileDownloadResponse(await service.downloadFile(workspaceId,sessionId,url.searchParams.get('path')??''));
     else if(collection==='projects'&&sessionId&&action==='files/content'&&method==='GET')return dataResponse(await service.readFile(workspaceId,sessionId,url.searchParams.get('path')??''));
     else if(collection==='projects'&&sessionId&&action==='files'&&method==='GET')return dataResponse(await service.files(workspaceId,sessionId,url.searchParams.get('path')??''));
@@ -28,6 +33,10 @@ async function workspaceApi(request:Request,segments:string[]=[]) {
           if(typeof service.contextFiles!=='function'||typeof service.changeContextFiles!=='function')throw new DomainError('SERVICE_RESTART_REQUIRED','参考文件服务已更新，请重新加载应用服务',503,true);
           if(method==='GET')return dataResponse(service.contextFiles(workspaceId,sessionId));
           if(method==='POST'||method==='DELETE')return dataResponse(await service.changeContextFiles(workspaceId,sessionId,method,await jsonBody(request,MAX_MESSAGE_BODY_BYTES),request.headers.get('if-match')??'',request.headers.get('x-session-lease-id')??''));
+        }
+        if((action==='changes'||action==='changes/content')&&method==='GET'){
+          if(typeof service.changes!=='function')throw new DomainError('SERVICE_RESTART_REQUIRED','请重启应用服务以启用本轮文件变更记录',503,true);
+          return dataResponse(await service.changes(workspaceId,sessionId,fileChangeSelection(request,action==='changes/content')));
         }
         if(action==='files/content'&&method==='GET')return dataResponse(await service.sessionFilePreview(workspaceId,sessionId,url.searchParams.get('path')??''));
         if(action==='files/download'&&method==='GET')return fileDownloadResponse(await service.sessionFileDownload(workspaceId,sessionId,url.searchParams.get('path')??''));

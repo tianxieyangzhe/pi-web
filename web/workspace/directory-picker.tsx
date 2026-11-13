@@ -1,3 +1,4 @@
+import { ErrorToast } from './conversation/error-toast';
 import {Button} from '../components/button';
 import {useEffect,useRef,useState} from 'react';
 import {ArrowLeft,Folder,X} from 'lucide-react';
@@ -47,7 +48,7 @@ export function DirectoryPicker({ onSelect, onClose }: { onSelect: (path: string
       {loading ? <p className="p-3 text-sm" role="status">正在加载…</p> : !error && listing?.directories.map(entry =>
         <Button variant="ghost" size="row" key={entry.path} type="button"  onClick={() => navigate(entry.path)}><Folder size={15}/>{entry.name}</Button>)}
     </div>
-    {error && <p role="alert" className="mt-3 text-sm text-red-700">{error}</p>}
+    <ErrorToast message={error} onDismiss={()=>setError('')}/>
     <footer className="mt-4 flex justify-end gap-2">
       <Button type="button"  onClick={onClose}>取消</Button>
       <Button variant="primary" type="button"

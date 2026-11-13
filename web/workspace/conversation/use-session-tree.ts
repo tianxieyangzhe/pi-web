@@ -58,8 +58,8 @@ export function useSessionTree(base: string | null, read: () => Promise<SessionT
         if (event.sequence <= (seen.get(event.runId) ?? 0)) return;
         seen.set(event.runId, event.sequence);
       }
-      if(event.type==='run_started'){metricsRequest.current=(event.payload as {requestId:string}).requestId;setRunMetrics(null);return;}
-      if(event.type==='run_metrics'){const metrics=event.payload as SessionRunMetrics;if(metricsRequest.current===metrics.requestId)setRunMetrics(metrics);return;}
+      if(event.type==='run_started'){const start=event.payload as {requestId:string;startedAt:string};metricsRequest.current=start.requestId;setRunMetrics({...start,durationMs:0,input:null,output:null,cacheRead:null,cacheWrite:null,totalTokens:null,complete:false});return;}
+      if(event.type==='run_metrics'||event.type==='run_progress'){const metrics=event.payload as SessionRunMetrics;if(metricsRequest.current===metrics.requestId)setRunMetrics(metrics);return;}
       if(event.type==='queue_update'){const payload=event.payload as {steering?:string[]};setSteeringQueue(payload.steering??[]);return;}
       if(event.type==='steering_cleared'){setSteeringQueue([]);setError('运行已结束，未消费的纠正已清除；如仍需要，请重新发送。');return;}
       if(event.type==='thinking_level_changed'){setEventRevision(n=>n+1);void refresh();return;}
@@ -85,7 +85,7 @@ export function useSessionTree(base: string | null, read: () => Promise<SessionT
       });
     };
     const disconnect = subscribeSession(base, {
-      onReady: async opened => { if (disposed) return; lease.current = opened; setConnection('open');setReady(opened.status !== "unavailable"); setRunning(opened.activity?.running??opened.status === "running");setCompacting(opened.activity?.compacting??false);setSteeringQueue(opened.activity?.steering??[]);setEventRevision(n=>n+1); setError(opened.outcome === "SESSION_BACKGROUND_TIMEOUT" ? "会话离开后运行超时并已停止" : opened.outcome === "REQUEST_UNKNOWN" ? "此前请求结果待核对。请打开检查面板核对 Pi 历史；确认后可解除阻塞。" : ""); await refresh(); },
+      onReady: async opened => { if (disposed) return; lease.current = opened;metricsRequest.current=opened.runMetrics?.requestId??null;setRunMetrics(opened.runMetrics??null); setConnection('open');setReady(opened.status !== "unavailable"); setRunning(opened.activity?.running??opened.status === "running");setCompacting(opened.activity?.compacting??false);setSteeringQueue(opened.activity?.steering??[]);setEventRevision(n=>n+1); setError(opened.outcome === "SESSION_BACKGROUND_TIMEOUT" ? "会话离开后运行超时并已停止" : opened.outcome === "REQUEST_UNKNOWN" ? "此前请求结果待核对。请打开检查面板核对 Pi 历史；确认后可解除阻塞。" : ""); await refresh(); },
       onEvent: receive,
       onError: cause => { if (!disposed) setError(cause.message); },
       onDisconnect: () => { if (!disposed) { lease.current = null;setConnection('closed'); setReady(false); } },
@@ -127,5 +127,12 @@ export function useSessionTree(base: string | null, read: () => Promise<SessionT
       throw error;
     }finally{contextMutation.current=false;}
   }
-  return { tree, temporary, steeringQueue, runMetrics, contextFiles:contextFiles.files, addContextFiles:(items:import('../../../src/domain/message-references').MessageReference[])=>changeContextFiles('POST',items),removeContextFile:(id:string)=>changeContextFiles('DELETE',id),ready:ready&&contextReady,connection,compacting,eventRevision,close:()=>setClosed(true), leaseId: lease.current?.leaseId ?? null, running, setRunning, pendingText, error, setError, send, refresh: useCallback(() => refreshRef.current(), []), retryOpen: () => {setClosed(false);setRetry(n => n + 1);} };
+  const modelApplied = useCallback(async () => {
+    if (!base || currentBase.current !== base || !lease.current) return;
+    // PUT model already restored this lease; retain its subscription and refresh the projection.
+    lease.current = { ...lease.current, status: "ready", outcome: null };
+    setReady(true);setError("");setEventRevision(n => n + 1);
+    await refreshRef.current();
+  }, [base]);
+  return { modelApplied, tree, temporary, steeringQueue, runMetrics, contextFiles:contextFiles.files, addContextFiles:(items:import('../../../src/domain/message-references').MessageReference[])=>changeContextFiles('POST',items),removeContextFile:(id:string)=>changeContextFiles('DELETE',id),ready:ready&&contextReady,connection,compacting,eventRevision,close:()=>setClosed(true), leaseId: lease.current?.leaseId ?? null, running, setRunning, pendingText, error, setError, send, refresh: useCallback(() => refreshRef.current(), []), retryOpen: () => {setClosed(false);setRetry(n => n + 1);} };
 }

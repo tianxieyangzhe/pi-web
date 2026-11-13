@@ -1,3 +1,4 @@
+import { ErrorToast } from './conversation/error-toast';
 import {Button} from '../components/button';
 import {useEffect,useRef,useState,type ReactNode} from 'react';
 import {ChevronDown,FileText,LoaderCircle} from 'lucide-react';
@@ -51,7 +52,7 @@ export function ProjectRulesSettings({projectId,workspaceId,name,children,previe
      <div className="space-y-2"><div className="flex items-center justify-between gap-3"><label htmlFor={`rule-requirements-${projectId}`} className={settingsLabel}>补充要求</label><Button variant="primary" type="button" disabled={pending||working||!value?.revision||!requirements.trim()} title={!value?.revision?'请先生成 AGENTS.md':!requirements.trim()?'请输入润色意见':undefined} onClick={()=>void mutate(()=>api.generateProjectRules(url,{mode:'revise',requirements,skillId:null},value!.writeETag,randomUUID()))}>润色</Button></div><textarea id={`rule-requirements-${projectId}`} aria-label="项目规则润色要求" rows={4} maxLength={4000} value={requirements} disabled={pending||working} onChange={e=>setRequirements(e.target.value)} placeholder={value?.revision?'说明希望如何修改已有 AGENTS.md':'请先生成 AGENTS.md，再填写修改意见进行润色'} className={settingsTextarea}/></div>
      {working&&<div className="flex items-center gap-2"><Button type="button" disabled={pending||task?.status==='cancelling'||task?.status==='publishing'} onClick={()=>void mutate(()=>api.cancelProjectRuleGeneration(url,task!.id))}>取消任务</Button></div>}
      <p className="m-0 text-xs leading-5 text-slate-500">生成与润色在后台进行，切换页面不影响进度。完成后更新{previewPosition==='left'?'左':'右'}侧预览。</p>
-     {(error||readError)&&<p role="alert" className="text-sm text-red-700">{error||readError} <Button type="button"  onClick={()=>setRefresh(n=>n+1)}>刷新状态</Button></p>}
+     <ErrorToast message={error||readError} onRetry={()=>setRefresh(n=>n+1)}/>
     </section>
    </div>
    <aside className={`flex min-h-96 min-w-0 flex-col self-start overflow-hidden rounded-xl border border-slate-200 bg-slate-50 @3xl:sticky @3xl:top-0 @3xl:max-h-[calc(100dvh-12rem)] ${previewPosition==='left'?'order-1':''}`} aria-label="AGENTS.md预览">

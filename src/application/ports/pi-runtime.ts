@@ -7,7 +7,6 @@ export type SessionRuntimeInput = {
   assistantContext?:{key:string;prompt:string};
   session: Session;
   selectedModel?: { provider: string; modelId: string };
-  useDefaultModel?: boolean;
   workingDirectory: string;
   allowProjectWrite: boolean;
   allowProjectRead?:boolean;
@@ -20,7 +19,7 @@ export interface PiRuntimePort {
   setAssistant?(handle:object,assistant:Session["agentSnapshot"],context?:SessionRuntimeInput["assistantContext"]):void;
   getHandle(sessionId: string, input?: SessionRuntimeInput): PiSessionHandle | undefined;
   isBusy?(handle: PiSessionHandle): boolean;
-  refreshModel?(handle: PiSessionHandle, useDefaultModel?: boolean): Promise<void>;
+  refreshModel?(handle: PiSessionHandle): Promise<void>;
   subscribe?(handle: PiSessionHandle, listener: (event: AgentEvent) => void): () => void;
   open(input: SessionRuntimeInput): Promise<{ handle: PiSessionHandle; nativeRef: JsonObject }>;
   restore(input: SessionRuntimeInput): Promise<PiSessionHandle>;

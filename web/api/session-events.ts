@@ -1,7 +1,7 @@
 import { randomUUID } from "./random-uuid";
 import type { PiStreamEvent } from "../domain/models";
 
-export type SessionLease = { leaseId: string; status: string; outcome: string | null;activity?:{running:boolean;compacting:boolean;steering?:string[]} };
+export type SessionLease = { runMetrics?:import('../../src/domain/session-run-metrics').SessionRunMetrics|null; leaseId: string; status: string; outcome: string | null;activity?:{running:boolean;compacting:boolean;steering?:string[]} };
 async function mutation(base: string, action: string, body?: unknown, keepalive = false) {
   const response = await fetch(`${base}/runtime/${action}`, { method: "POST", cache: "no-store", keepalive, headers: { "content-type": "application/json", "idempotency-key": randomUUID() }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   if (!response.ok) { const payload = await response.json(); throw new Error(payload.error?.message ?? "会话订阅失败"); }
@@ -32,7 +32,7 @@ export function subscribeSession(base: string, options: { onReady: (lease: Sessi
       events.addEventListener("ready", message => {
         if (disposed || version !== generation) return;
         const frame=JSON.parse((message as MessageEvent|undefined)?.data??'{}');
-        void Promise.resolve(options.onReady({...opened,activity:frame.activity??undefined})).catch(error => { if (!disposed && version === generation) options.onError(error instanceof Error ? error : new Error("历史同步失败")); });
+        void Promise.resolve(options.onReady({...opened,activity:frame.activity??undefined,runMetrics:frame.runMetrics??null})).catch(error => { if (!disposed && version === generation) options.onError(error instanceof Error ? error : new Error("历史同步失败")); });
       });
       events.addEventListener("ping", message => {
         if (disposed || version !== generation) return;

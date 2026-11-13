@@ -10,6 +10,12 @@ UI-049：工具连续组仅由所属Pi树与SSE投影，折叠选择是当前Ses
 
 需要新增、合并、拆分、重命名或退役表时，先完成本节要求的事实、问题、取舍、数量、关系和历史映射。未获用户明确授权，不把映射写成可执行迁移。
 
+## CHANGE-001｜原生编辑差异投影
+
+无新增持久对象、SQL表、快照或正文文件。最新根请求身份和边界复用既有ProjectOperation message的operationId、baseline.entryIds、after.entryIds；Workspace专属映射见06。只从所属Pi Session Tree的原生toolResult读取成功edit的details.diff与firstChangedLine，并沿parentId匹配assistant toolCall的toolCallId及arguments.path。同文件多次编辑按原生顺序保留，不合并为文件净变化；还原编辑仍显示。write、bash没有原生edit差异时不推算。
+
+不读取项目文件、不依赖Git、不扫描或哈希目录、不保存额外副本、没有正文额度。旧快照及正文目录停止读写，不迁移或补回；用户本次明确要求清理，删除本地退役的.data/session-file-changes目录及其中快照/正文，不触及SQL、Pi Session或项目文件。当前轮边界不可信时明确不可确认，不以最后一条user消息冒充根请求（steer属于原轮）。运行中使用既有起始边界与当前树，终态有结束边界则限定到该集合；关闭/重开从原生记录重新投影，不更改Pi身份或历史。
+
 ## 1. 持久化边界与关系
 
 ~~~text
@@ -144,7 +150,7 @@ Session 的持久字段与运行投影只按 §3 定义。Agent 引用和快照�
 
 树标题、选中节点、弹窗开关和浏览位置属于派生或客户端临时状态。节点身份、parentId、label 和 activeLeafId 来自原生树，不建标题表。
 
-Session 安全 DTO 的 allowedActions 扩展 switchModel、fork、export 及各自不可用原因，均由服务端从归属、生命周期、执行互斥、原生证据和恢复状态派生，不新增持久状态。fork 许可表示可进入节点创建流程，具体 entryId 仍在提交时校验；export 只要求历史可读，switchModel要求有效运行租约与空闲句柄；当前型号失效先按MCFG-002回退默认，默认也不可用时的显式恢复见03 §13。
+Session 安全 DTO 的 allowedActions 扩展 switchModel、fork、export 及各自不可用原因，均由服务端从归属、生命周期、执行互斥、原生证据和恢复状态派生，不新增持久状态。fork 许可表示可进入节点创建流程，具体 entryId 仍在提交时校验；export 只要求历史可读，switchModel要求有效运行租约与空闲句柄；当前型号失效按MCFG-002保留原模型并禁止执行，显式恢复见03 §13；不回退默认，不新增默认来源标记或配置旧值副本。
 
 MODEL-FAIL-001：已确认模型请求失败的判断来自本轮Pi终结/持久化或明确未调用证据，操作journal记failed；不新增持久模型、SQL列、模型可用性副本或历史迁移。内部错误证据标记只是当前调用结果，运行阶段与许可按03派生，历史unknown不自动转换。
 
@@ -174,7 +180,7 @@ contextWindow 与 maxTokens 是 Pi 解析结果中的正整数，无法确认时
 
 ## 10. 从节点创建独立会话与导出
 
-派生会话是新的 Session，沿用来源 Project 归属及可选精确 Agent 引用；来源 Session、nativeRef、活动叶子和已有内容均不可改写。新会话拥有新 ID、新 Pi sessionId 与文件；原生历史仅继承根到选定 entryId 的完整祖先路径，包含该节点，不复制旁支或节点后的历史。节点 ID 可在两个不同 Pi Session 内保留，其身份始终以所属 Session 为边界。派生时保留继承路径的最后模型选择；首次打开按MCFG-003对齐默认模型，模型事实仍只追加到所属Pi树，不写SQL副本。工作区专属关系见 06。
+派生会话是新的 Session，沿用来源 Project 归属及可选精确 Agent 引用；来源 Session、nativeRef、活动叶子和已有内容均不可改写。新会话拥有新 ID、新 Pi sessionId 与文件；原生历史仅继承根到选定 entryId 的完整祖先路径，包含该节点，不复制旁支或节点后的历史。节点 ID 可在两个不同 Pi Session 内保留，其身份始终以所属 Session 为边界。派生时保留继承路径的最后模型选择；首次打开按MCFG-003沿用继承分支的模型及思考等级，模型事实仍只追加到所属Pi树，不写SQL副本。工作区专属关系见 06。
 
 数据库事务只插入一行 sessions，保持 Project、可选 Agent 引用及首次 nativeRef 约束；不修改源记录。Pi 文件准备与 SQL 事务不是跨存储原子提交，恢复与幂等规则在 03 定义。派生本身不新增表；全局退役导致的旧库处理见 §4，现有库不兼容时报告 SCHEMA_INCOMPATIBLE，不绕过约束。
 
@@ -220,7 +226,7 @@ SessionDTO 精确为 {id,projectId,purpose,agentId,agentSnapshot,status,createdA
 
 allowedActions 是 Record<'send'|'steer'|'interrupt'|'end'|'restore'|'delete'|'compact'|'cancelCompaction'|'switchModel'|'fork'|'export'|'adoptAgent', {allowed:boolean,reason:string|null}>；允许时 reason=null，拒绝为 03 的稳定错误码。它是读取时快照，提交必须再次核验；无调用方运行 lease 时 send/steer/switchModel=false。动作先核验归属/许可；DEL-001删除门禁期间其他动作拒绝，新删除可复用进行中的结果。删除只受结构可写及实际SQL约束限制，其余动作继续按结构兼容、unknown、忙碌、模型/原生条件计算原因。只读 export 不要求结构可写、lease、默认模型可用或请求已确定；fork允许从有历史ended_at的源派生，但所属 Project 必须 active、源历史可读且无 unknown/执行操作，entryId 提交时另验。
 
-Runtime活动派生优先级：操作证据未决/损坏、原生身份无效或配置不可用→unavailable；正在打开/初始化→starting；正在中止主回复→interrupting；正在 prompt/工具循环→running；已有合法 nativeRef→idle；其他→not_started。无句柄不代表 not_started；当前模型不存在、被enabledModels过滤或认证不可用时按01/03自动回退配置默认模型，保留Pi身份和历史，仅追加实际model_change；默认也不可用才报告模型不可用。压缩通过 compactionState 单独表达，期间 Session busy，不写运行 state 到 SQL。
+Runtime活动派生优先级：操作证据未决/损坏、原生身份无效或配置不可用→unavailable；正在打开/初始化→starting；正在中止主回复→interrupting；正在 prompt/工具循环→running；已有合法 nativeRef→idle；其他→not_started。无句柄不代表 not_started；当前模型不存在、被enabledModels过滤或认证不可用时按01/03报告MODEL_UNAVAILABLE，保留Pi身份、当前模型和历史，不回退默认或追加模型变化；通过既有恢复lease显式切型号后继续。压缩通过 compactionState 单独表达，期间 Session busy，不写运行 state 到 SQL。
 
 send：active、未结束、有当前 lease/空闲句柄、模型可用、无 unknown；steer：active、有当前lease、正在执行主请求且未停止/压缩/删除，无未知历史操作；interrupt：本进程有可取消的主请求（不含压缩）；end：未结束且空闲、无 unknown；restore：未结束、无活任务、需要恢复或核对；delete：结构可写且会话归属有效，不受打开/运行/压缩/修改任务及unknown限制，Project无需active，实际SQL外键失败仍如实回滚；compact：send 的运行条件且有可压缩历史；cancelCompaction：有当前压缩任务（Project 状态变化不阻止取消）；switchModel：active、未结束、无 unknown/任务且有 lease，型号失效的恢复例外见 03 §13；adoptAgent：active、未结束、无 unknown/任务，目标同 Agent 的正式可用版本。只读权限与真实归属始终先于动作许可，不能以 lease 替代身份校验。
 
@@ -287,4 +293,4 @@ RULEGEN-001：项目规则生成任务是独立于正式规则版本的持久事
 
 ## RUN-001｜单轮运行统计
 
-统计是一次根messages请求的临时派生结果，不是持久模型。Session累计Token是另一派生值，按Pi getSessionStats全树口径，读取已有全部原生entries（包含非活动分支及压缩前历史），汇总assistant、带usage的toolResult、usage、带usage的compaction/branch_summary中的input/output/cacheRead/cacheWrite，不额外累计reasoning，也不把summary中的tokensBefore视作用量。累计不改变历史轮次展示；无记录为0，缺失/非法助手用量标不完整，无可用记录时为null。不另存累计值或创建摘要。来源为该次Runtime.send期间的Pi assistant message_end.usage；仅累加本次调用，不扫描或差减历史。工具循环与steer消费属于原轮次，thinking已计入output不重复累加。缺失/非法用量或无有效响应标记不完整；费用不在本次范围。服务端以单调时钟从接受根请求至结束计算durationMs。运行统计不写SQL、配置文件、journal或Pi transcript，不更改Session/nativeRef归属；原生消息usage照常保留。
+RUN-002：取消新增统计持久快照。最新轮Token仅从Pi原生assistant usage派生，轮次范围复用现有请求journal的原生entryIds前后边界；不持久保存Token或耗时、不创建统计文件或表。项目读取最新message操作的baseline/after，Workspace根workspace_request及result附带entryIds边界（steer归原请求）；缺少可信边界返回latestRunUsage=null，不以最后user猜测轮次。终态缺失或失败、用量缺失标complete=false。耗时与实时统计仅保留globalThis进程共享快照（Session ID为键，服务实例重建及页面切换不清除），重启后耗时不可用；关闭/结束保留内存，删除清除。既有统计文件不自动读取、迁移或删除。Session累计Token是另一派生值，按Pi getSessionStats全树口径，读取已有全部原生entries（包含非活动分支及压缩前历史），汇总assistant、带usage的toolResult、usage、带usage的compaction/branch_summary中的input/output/cacheRead/cacheWrite，不额外累计reasoning，也不把summary中的tokensBefore视作用量。累计不改变历史轮次展示；无记录为0，缺失/非法助手用量标不完整，无可用记录时为null。不另存累计值或创建摘要。来源为该次Runtime.send期间的Pi assistant message_end.usage；仅累加本次调用，不扫描或差减历史。工具循环与steer消费属于原轮次，thinking已计入output不重复累加。缺失/非法用量或无有效响应标记不完整；费用不在本次范围。服务端以单调时钟从接受根请求至结束计算durationMs。统计不额外写SQL、配置文件、journal或Pi transcript（请求边界复用既有执行journal），不更改Session/nativeRef归属；原生消息usage照常保留。

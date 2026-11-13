@@ -1,4 +1,16 @@
 # 06｜Workspace 首期：项目集合与跨项目会话
+
+## CHANGE-001｜Workspace最新一轮原生编辑差异
+
+Workspace专属事实仅复用所属Pi Session Tree和已有workspace_request/result记录。最新无operation的workspace_request为根请求，runId取其key，边界取entryIds及匹配result.entryIds；operation=steer的记录不新建轮次。GET /api/workspaces/:id/sessions/:sessionId/changes及changes/content?runId=&fileId=先验证workspace_sessions所属workspace_id，其余DTO、匹配、只读和错误遵循03 CHANGE-001；缺少可信边界不猜测。无新增表/字段、文件扫描、正文快照、额度或Pi调用。
+
+UI-057：Workspace会话辅助按钮组恢复至标题栏右侧，与标题同一行，依次为本轮变更、文件检查、会话检查；三个按钮统一采用04定义的共享primary绿色背景，与发送按钮同色；发送按钮使用共享24×24px图标尺寸；共享标准尺寸与长标题省略遵循04 UI-057，不改变模型/API。
+
+“文件检查”旁“本轮变更”复用04浮窗，仅按顺序显示Pi原生edit差异，与文件/会话检查互斥；Session切换清除选择及旧响应，运行中按原规则刷新。跨项目路径按03词法转换为相对所属成员项目根路径，按03的完整projectPath分组，标题与详情仅显示成员项目根目录名，title保留完整路径，组内相对路径单行省略，不同项目同名文件保持独立；文件检查沿用04无横向滚动条高度占位规则；不扫描成员项目或补算bash/write。停止读写旧快照及正文目录；本次按用户明确清理要求删除本地退役目录，不迁移或触及Pi原生记录。验收沿用05并覆盖Workspace归属与steer。状态：代码已实现；`tests/session-file-changes-api.test.cjs` 的Workspace接口场景通过（原生差异、steer、归属、冷打开及边界），浏览器待验收。
+
+MODEL-SWITCH-001：Workspace的PUT S/model成功后沿用原lease及订阅，按返回结果恢复可发送投影并刷新树／上下文／列表，不调用open；主动重开按MCFG-003沿用已保存型号。不新增持久事实、接口或迁移；验收状态见05。
+
+UI-054／055／056：Workspace同步采用04的运行与选中分离、名称旁运行计数、顶部居中通知和Composer单行省略。运行来源为既有GET /api/workspaces/:id/sessions的allowedActions包含interrupt，仅主请求执行时成立；不以open或当前选择推断运行。导航每3秒读取列表的例外仅用于运行投影，页面隐藏暂停、恢复立即刷新，失败显示状态不可用；不请求transcript、不创建lease或Pi句柄，不新增模型／表／API。验收：多个会话同时运行及切换后各自标记正确，收起工作区仍显示数量，停止／完成后下次刷新移除，错误不伪装0；提示与快捷键按04。状态：代码已接入，类型检查与差异检查通过；浏览器多会话与视觉待验收。
 UI-053：Workspace复用04会话树标题规则，纯工具调用assistant按toolCall名称显示，thinking等按实际内容类型显示，真正空节点才标无正文；保留全部节点及原父子关系，验收见05。
 
 UI-052：Workspace复用04的空assistant占位规则，尚无内容的实时开始事件不绘制空标头，原始事件仍保留，已结束或历史空消息保留可展开原文；不影响thinking/工具/未知块与错误，验收状态见05。
@@ -9,7 +21,7 @@ UI-049：Workspace采用04连续工具组投影，复用Conversation/Disclosure�
 
 ## RUN-001｜Workspace单轮统计
 
-WorkspaceSession复用02 RUN-001的临时派生定义、03 RUN-001事件DTO与累加规则、04的单处投影。既有POST S/messages接受新请求后计时，幂等重放不产生新统计；GET S/events只实时发送run_started/run_metrics。沿用归属/lease/忙碌/unknown门禁及错误，统计本次Runtime.send的assistant message_end，工具循环及steer归原轮次；正常/停止/失败收尾只发送一份。GET S/messages同步增加03 RUN-001的tokenUsage累计DTO，复用本次readTree全树数据按02口径累计，包含压缩与非活动分支；空树为0，缺失用量标不完整。页面一行展示最后一轮消耗、时间与会话累计；重开恢复累计，不逐历史轮次展示。无新SQL/原生历史/journal写入或Pi调用，不补算历史单轮或迁移；验收及状态见05 RUN-001。
+WorkspaceSession复用02 RUN-001的统计定义及RUN-002原生用量派生规则、03 RUN-001事件DTO与累加规则、04的单处投影。既有POST S/messages接受新请求后计时，幂等重放不产生新统计；RUN-002：GET S/events同步通用03的进程内快照恢复及messages.latestRunUsage和run_progress，切换回来通过SSE ready.runMetrics恢复耗时及已报告Token，快照按通用03进程共享、不随事件服务重建清除；新根请求替换，结束/关闭保留内存；重启后不恢复耗时。根workspace_request/result复用现有journal增加原生entryIds前后边界，用于原生usage归属（steer不另起轮）；历史记录缺边界返回null，不改写旧数据。沿用归属/lease/忙碌/unknown门禁及错误，统计本次Runtime.send的assistant message_end，工具循环及steer归原轮次；正常/停止/失败收尾只发送一份。GET S/messages同步增加03 RUN-001的tokenUsage累计DTO，复用本次readTree全树数据按02口径累计，包含压缩与非活动分支；空树为0，缺失用量标不完整。RUN-003：页面按04独立显示最后一轮Token、耗时及会话累计，缺失项单独标不可用，不互相隐藏；重开恢复累计及原生最新轮Token，耗时仅原进程内可用，不逐历史轮次展示。取消新增统计文件，不保存统计计数；既有journal仅增加执行边界，无新SQL/原生历史写入或Pi调用，不改写旧记录或迁移；验收及状态见05 RUN-002。
 
 
 FILE-003：新增GET /api/workspaces/:id/sessions/:sessionId/files/content与files/download，application先从workspace_sessions核验归属并读取nativeRef，复用03会话目录只读契约；不得将Workspace会话文件当作WorkspaceProject文件。无新模型/表/迁移，无Pi调用。点击当前会话文件链接先预览，左上角下载原件。
@@ -287,7 +299,7 @@ DEL-001：用户确认删除会话拥有最高操作优先级。已校验归属�
 
 ## WFILE-001｜工作区文件检查
 
-会话工具栏在“会话检查”左侧增加“文件检查”，使用既有非模态AuxiliaryDialog，与会话检查和回复文件预览互斥，左侧任意单击、关闭、Esc或切换会话关闭。按当前Workspace.projects顺序在浮窗顶部展示横向项目选项卡，复用共享tab样式；默认选中会话defaultProjectId（不存在则首项），始终只选中一个项目，不使用可折叠分类按钮。下方tabpanel复用FileBrowser逐级浏览，仅挂载当前项目，不请求其他项目、不合并相同目录。选项卡保留tablist/tab/tabpanel关联、单一键盘焦点及左右方向键/Home/End切换；长项目名截断并提供完整提示，项目较多时选项卡栏可横向滚动，预览打开时栏仍可见。项目选择仅为页面状态，不改变默认项目、助手范围或会话cwd。点击文件复用FilePreviewPane预览与原件下载，下载按钮后增加“设置参考文件”，复用当前会话tree.addContextFiles与既有POST S/context-files，提交所选WorkspaceProject的{projectId,path}并同步Composer参考清单；不上传预览正文，不改变默认项目。无许可、运行/压缩/停止/未就绪、重复引用时禁用，格式/容量与错误沿用通用参考文件API，失败保留原清单，切换文件丢弃晚反馈。窄屏预览时可关闭预览返回分类；关闭/切换丢弃晚响应。列表、正文、下载分别调用既有GET /api/workspaces/:id/projects/:projectId/files、files/content、files/download，服务端核验成员归属及真实路径边界，不新增API、持久模型、SQL或Pi调用。无工作区Git变更API时不调用独立项目changes接口。组件只注入所属范围API适配，不按路径推导归属。
+会话工具栏在“会话检查”左侧增加“文件检查”，使用既有非模态AuxiliaryDialog，与会话检查和回复文件预览互斥，左侧任意单击、关闭、Esc或切换会话关闭。按当前Workspace.projects顺序在浮窗顶部展示横向项目选项卡，复用共享tab样式；默认选中会话defaultProjectId（不存在则首项），始终只选中一个项目，不使用可折叠分类按钮。下方tabpanel复用FileBrowser逐级浏览，仅挂载当前项目，不请求其他项目、不合并相同目录。选项卡保留tablist/tab/tabpanel关联、单一键盘焦点及左右方向键/Home/End切换；长项目名截断并提供完整提示，项目较多时选项卡栏可横向滚动，预览打开时栏仍可见。项目选择仅为页面状态，不改变默认项目、助手范围或会话cwd。点击文件复用FilePreviewPane预览与原件下载，下载按钮后增加“设置参考文件”，复用当前会话tree.addContextFiles与既有POST S/context-files，提交所选WorkspaceProject的{projectId,path}并同步Composer参考清单；不上传预览正文，不改变默认项目。无许可、运行/压缩/停止/未就绪、重复引用时禁用，格式/容量与错误沿用通用参考文件API，失败保留原清单，切换文件丢弃晚反馈。窄屏预览时可关闭预览返回分类；关闭/切换丢弃晚响应。列表、正文、下载分别调用既有GET /api/workspaces/:id/projects/:projectId/files、files/content、files/download，服务端核验成员归属及真实路径边界，不新增API、持久模型、SQL或Pi调用。FILE-004：GET /api/workspaces/:id/projects/:projectId/changes 为当前成员项目的只读Git差异API；可信单用户调用，无正文、lease、幂等键或SQL写入，不调用Pi。application先读取workspace及成员关系，不存在或非成员NOT_FOUND/404；基础设施从该成员rootPath核验真实根目录身份，复用通用目录/Git读取器，不查独立Project。files返回03 §14的ProjectFileListing（包括实际isGitRepository与gitState，不得固定false），目录安全/排序/截断遵循该契约；changes返回03 §14的ProjectChanges，容量、无提交仓库、非仓库空结果与GIT_READ_FAILED/500、GIT_TIMEOUT/504沿用该契约，根身份变化PATH_OUTSIDE_WORKSPACE/403。no-store，不修改索引、项目文件、SQL或Pi。缺少已装配读取器SERVICE_RESTART_REQUIRED/503，不自动重启。页面注入workspaceApi.projectChanges，以04 FILE-004投影diff按钮，不能调用独立项目changes接口。模型仅现有WorkspaceProject及临时Git派生事实，无新持久对象/字段/迁移。验收覆盖Git/非Git/缺少Git的列表状态、工作区/暂存区patch、成员隔离与只读副作用；状态：修复已接入；tests/workspace-project-git-api.test.cjs 的HTTP接口测试通过，使用临时内存库/临时仓库覆盖实际Git检测、首次提交前、工作区/暂存区patch、无Git与非仓库、成员隔离及文件/索引不改写；未访问独立Project或调用Pi。npm run typecheck与git diff --check通过；浏览器待验。已缓存旧workspaceServices的长驻进程需要操作者重启后加载新装配，不由应用自动重启。组件只注入所属范围API适配，不按路径推导归属。
 
 复用既有FileBrowser、FilePreviewPane、Button和AuxiliaryDialog，不新增组件体系；官方File Tree/Code Block评估与替代沿用01组件治理及本节已有File Tree评估。验收：工具栏顺序、项目选项卡与键盘切换、按需读取、工作区API定位、预览/下载、切换晚响应隔离、浮窗互斥及背景可交互。状态：代码投影及预览“设置参考文件”入口已接入；复用FileBrowser的可选API适配，项目默认行为不变，工作区只调用成员文件API。参考设置复用既有会话hook和API，设置期间防重复，已有引用同步显示；文件预览、项目装配与工作区装配3个改动TSX、类型及差异检查通过，未运行API测试（接口契约未变）。类型、3个改动TSX语法及差异检查通过；未运行浏览器验收。没有API契约变化，不新增测试文件，也未运行非API测试。
 
@@ -313,7 +325,7 @@ GET /api/workspaces/:id/projects/:projectId/files/content?path=项目相对路�
 
 ### 型号失效恢复修复（WSP-017 模型子项）
 
-MCFG-003（已实现，定向API验收通过；tests/session-open-default-model-api.test.cjs的Workspace application接口场景通过，临时内存库和Pi文件，无真实模型请求；类型检查通过）：所有Workspace会话open先核验完整原生历史；冷恢复与复用空闲句柄均按通用MCFG-003检查默认provider/model，不同则切换并追加原生model_change，相同不重复追加；默认不可用即返回status=unavailable的本会话租约，禁止发送。运行/压缩中打开保留本轮快照，下次空闲打开对齐；打开后手动模型仍用于后续发送。身份、cwd、历史前缀、三张Workspace表及journal不因对齐而改写，无迁移。验收覆盖冷/热打开、默认失败、重复打开和忙碌快照。MODEL-FAIL-001：共享Pi在可靠终结并落盘后报告已知模型请求失败，Workspace按既有journal failed收尾，不自动重发，不改变默认cwd/nativeRef/模型配置；真实unknown仍阻止配置写入。独立项目模型设置的针对性recover入口由04定义，不额外恢复Workspace的待核对分区。模型列表及切换同样按enabledModels过滤。GET models 仍返回当前原生选择、可用列表与来源；canSwitch 仅在有精确nativeRef、有效租约、无配置写入/打开/主请求/压缩/切换及未决journal时允许。没有原生身份的新会话仍需先成功初始化，不以模型恢复入口创建替代树。
+MCFG-003／MCFG-002：Workspace与通用规则一致，仅Pi当前分支无model_change的首次初始化使用当前默认；已有会话冷恢复、复用句柄、重连及派生沿用原生模型和思考等级，默认变化不覆盖。空闲打开／发送／压缩校验当前注册、enabledModels及认证，不可用时保留模型／历史、不回退默认；已有nativeRef核验完整后open返回status=unavailable恢复lease，显式切型号后继续。默认无效不影响已有可用型号；运行／压缩保留本轮快照，无新模型／表／迁移。验收与状态见05。MODEL-FAIL-001：共享Pi在可靠终结并落盘后报告已知模型请求失败，Workspace按既有journal failed收尾，不自动重发，不改变默认cwd/nativeRef/模型配置；真实unknown仍阻止配置写入。独立项目模型设置的针对性recover入口由04定义，不额外恢复Workspace的待核对分区。模型列表及切换同样按enabledModels过滤。GET models 仍返回当前原生选择、可用列表与来源；canSwitch 仅在有精确nativeRef、有效租约、无配置写入/打开/主请求/压缩/切换及未决journal时允许。没有原生身份的新会话仍需先成功初始化，不以模型恢复入口创建替代树。
 
 PUT model 的正文和输入校验引用03，使用 Idempotency-Key 和 x-session-lease-id；校验归属后在会话互斥内重新读取记录、journal与配置。沿用 WorkspaceRequestJournal 的准备/结果证据，data 可选 operation='switch-model' 区分消息键空间，hash包含本次操作和目标型号；同键异目标409，已完成键不再切换，prepared但没有结果时REQUEST_UNKNOWN，不能重放。冷恢复准备记录通过精确nativeRef写sidecar，不需先创建AgentSession。Pi确认setModel及原生文件持久化后追加settled结果，已确认无副作用的配置/认证错误追加failed；不能确认时保留未决证据。写SQL、改默认设置、自动重试旧消息和改变原生身份均禁止。
 

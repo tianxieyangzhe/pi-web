@@ -254,8 +254,12 @@ export class PiSessionRuntime implements PiRuntimePort, PiContextPort {
     loader.getAgentsFiles = () => ({agentsFiles:context.documents});
     await loader.reload();
     const configuration = await this.configuredModel();
-    const selected = input.selectedModel ?? manager.getBranch().findLast(entry => entry.type === "model_change");
-    const model = input.selectedModel ? await resolveConfiguredModel(configuration,input.selectedModel) : await resolveSessionModel(configuration,input.useDefaultModel?undefined:selected&&'provider' in selected?{provider:selected.provider,modelId:selected.modelId}:configuration.model?{provider:configuration.model.provider,modelId:configuration.model.id}:undefined);
+    const branch = manager.getBranch();
+    const selected = input.selectedModel ?? branch.findLast(entry => entry.type === "model_change");
+    const thinking = branch.findLast(entry => entry.type === "thinking_level_change");
+    const thinkingLevel = sessionThinkingLevels.find(level => level === thinking?.thinkingLevel);
+    if (thinking && thinkingLevel === undefined) throw new DomainError('SESSION_TREE_READ_FAILED', '原生会话的思考等级无法恢复', 500, true);
+    const model = input.selectedModel ? await resolveConfiguredModel(configuration,input.selectedModel) : await resolveSessionModel(configuration,selected&&'provider' in selected?{provider:selected.provider,modelId:selected.modelId}:configuration.model?{provider:configuration.model.provider,modelId:configuration.model.id}:undefined);
     let currentConfiguration=configuration;
     const modelRuntime=new Proxy(configuration.runtime,{get(_target,property){const value=Reflect.get(currentConfiguration.runtime,property,currentConfiguration.runtime);return typeof value==='function'?value.bind(currentConfiguration.runtime):value;}});
     const result = await createPersistentAgentSession({
@@ -264,6 +268,7 @@ export class PiSessionRuntime implements PiRuntimePort, PiContextPort {
       modelRuntime,
       resourceLoader: loader,
       settingsManager: SettingsManager.inMemory(),
+      thinkingLevel,
       model,
       tools: ['read', 'bash', 'edit', 'write', ...toolSearchNames],
 
@@ -286,17 +291,17 @@ export class PiSessionRuntime implements PiRuntimePort, PiContextPort {
     };
   }
 
-  private async refreshHandle(handle:Handle,selected?:{provider:string;modelId:string},useDefaultModel=false){
+  private async refreshHandle(handle:Handle,selected?:{provider:string;modelId:string}){
     const configuration=await this.configuredModel();
     const branchModel=handle.manager.getBranch().findLast(entry=>entry.type==='model_change');
-    const model=selected?await resolveConfiguredModel(configuration,selected):await resolveSessionModel(configuration,!useDefaultModel&&branchModel?{provider:branchModel.provider,modelId:branchModel.modelId}:undefined);
+    const model=selected?await resolveConfiguredModel(configuration,selected):await resolveSessionModel(configuration,branchModel?{provider:branchModel.provider,modelId:branchModel.modelId}:undefined);
     handle.useConfiguration(configuration);
     const previous=handle.session.model;
     if(previous?.provider===model.provider&&previous.id===model.id){if(JSON.stringify(previous)!==JSON.stringify(model))handle.session.agent.state.model=model;}
     else{await handle.session.setModel(model);persistManager(handle.manager);}
   }
 
-  async refreshModel(handle:object,useDefaultModel=false) {await this.refreshHandle(handle as Handle,undefined,useDefaultModel);}
+  async refreshModel(handle:object) {await this.refreshHandle(handle as Handle);}
 
   async open(input: SessionRuntimeInput) {
     const manager = SessionManager.create(input.workingDirectory);

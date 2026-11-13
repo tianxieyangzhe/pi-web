@@ -1,5 +1,27 @@
 # 05｜需求：模型与 API 的完成条件
 
+## FILE-004｜项目 Git diff 与代码预览
+
+工作区链路修复：此前列表固定isGitRepository=false且没有changes适配，导致diff常禁用；现在成员项目目录和Git读取统一复用根路径读取器，专属API与验收记录见06 FILE-004。tests/workspace-project-git-api.test.cjs、类型检查及差异检查通过；已有长驻服务需重载新装配，浏览器待验。
+
+验收：项目文件标题栏显示diff按钮；使用03 §14返回的仓库事实与gitState禁用无Git/非仓库/读取不可用情况；点击读取既有changes API并显示工作区及暂存区原文差异、红绿增删、空状态、未跟踪文件说明、截断和可重试错误，项目切换不串响应。共享代码预览默认显示行号与语法颜色，保留正文、缩进、复制与链接行号定位，未知语言/高亮失败保留原文。模型/API契约不变，无SQL/Pi或历史迁移。状态：代码已接入；npm run typecheck与git diff --check通过。复用既有API，未新增或运行API/非API测试，未执行生产构建或浏览器验收；浏览器视觉及交互待验收。
+
+## HOVER-001｜悬停触发范围
+
+验收：带提示的共享按钮与项目文字容器整块触发，包含省略号及行内留白；禁用按钮提示可触发且不能执行操作，独立子提示保持自身文案。发送按钮旁的快捷键/状态文字整段触发完整提示，提示内容与文字同步；输入正文区、发送和停止按钮不设置提示。全局HoverHints接管现有文本title，移入即显示，无等待定时器；覆盖动态节点及键盘聚焦，提示保留完整文本，popover顶层显示不挡操作，点击/滚动/移出/失焦关闭；iframe的可访问title不接管。复用Button与既有元素，仅改投影，无模型/API变化；状态：代码已调整，类型检查及差异检查通过；未新增或运行非API测试，浏览器验收待做。
+
+## CHANGE-001｜Session最新一轮原生编辑差异
+
+“文件检查”旁的“本轮变更”仅投影Pi Session已记录的成功edit差异，项目和Workspace一致。只显示最新根请求，steer归原轮；同文件多次编辑依次展示，改后还原也保留原生证据，不承诺整轮文件净变化，不补算write/bash，不调用模型、Git或项目文件采集。面板只显示差异，不显示全文和字节大小对比。
+
+验收：原生diff逐字保持、正确关联工具路径及分支祖先、同文件多次编辑和还原顺序、排除失败edit及没有原生diff的工具、steer与根边界、运行中/停止/失败后读取、冷打开恢复、下一轮替换与旧轮409、归属拒绝、边界缺失明确不可确认、读取无副作用。删除文件快照端口/存储/执行包装及直接diff依赖；停止读写旧快照/正文目录；本次按用户明确清理要求删除本地退役.data/session-file-changes目录。新增验收：列表按完整项目根路径分组、标题显示目录名且title保留完整项目路径，不同项目同名相对文件分开且可独立选择，组内仅相对路径、单行省略及完整title，文件检查路径横向滚动不占额外高度，长短路径切换对齐。状态：代码已实现；`tests/session-file-changes-api.test.cjs` 两项Project/Workspace接口场景通过，覆盖原生diff原文、工具祖先匹配、steer/多次编辑及还原、失败/停止记录保留、边界与旧轮拒绝、归属、冷打开及项目目录不可访问仍能读取。`tests/session-run-metrics-api.test.cjs` 六项既有统计接口回归通过。`npm run typecheck`及`git diff --check`通过；浏览器及真实模型验收待做。本次按用户授权删除本地退役快照目录，共1个文件35,545,453字节；未操作用户服务、数据库或Pi原生历史。相对路径、绝对/相对路径归并、项目根路径返回及跨项目同名文件独立选择已由`tests/session-file-changes-api.test.cjs`两项场景验证，类型检查及差异检查通过；项目路径分组、列表省略与路径栏滚动条占位的浏览器视觉验收待做。
+
+MODEL-SWITCH-001：修复模型／思考等级应用成功后被重新打开覆盖默认型号的问题。成功保持同一lease、订阅及Pi身份，仅刷新树／上下文／列表；当前型号不可用时显式目标切换成功也直接恢复原lease发送投影。独立项目PUT响应在切换事务证据完成及互斥释放后计算许可，连续应用不误报自身SESSION_BUSY。验收：原lease切换返回目标及canSwitch=true，无不可用原因；相同lease可继续切换、发送，历史与身份保留；页面成功流程不重开，主动重开仍遵循MCFG-003。Workspace共用页面修复，专属映射见06。状态：代码已修复；`tests/model-request-failure-api.test.cjs` 4项API测试通过，覆盖原lease切换返回目标型号及canSwitch=true、同键重放、连续调整思考等级、继续发送，以及已知失败／unknown恢复边界。`npm run typecheck`与`git diff --check`通过。仅使用临时内存SQLite及受控Pi，不调用真实供应商、不改用户数据或服务；两类页面的浏览器验收仍待做。
+
+## UI-054／UI-055／UI-056｜导航运行投影与通知布局
+
+仅投影现有模型/API，不新增持久事实或接口。UI-054验收：多个项目会话同时执行时分别显示转圈及运行中，选中背景独立保留；项目名称显示所属运行数量，收起仍显示，完成／停止后3秒刷新收敛；隐藏暂停、恢复立即刷新，失败显示不可用、不伪造0。运行取既有列表allowedActions.interrupt.allowed，Workspace专属映射及验收见06。UI-055验收：除助手目录／编辑页外，操作提示和错误在视口顶部居中，保留完整文字、关闭／既定重试；长内容滚动、窄屏不越界。UI-056验收：快捷键提示单行显示，窄宽度省略，不挤压发送／停止按钮。复用现有侧栏、lucide LoaderCircle及ErrorToast，不新增可见组件。状态：代码已接入，`npm run typecheck`与`git diff --check`通过；浏览器多会话与视觉验收待做，尚不标记整体验收完成。无API契约变化，未新增或运行测试文件；未执行生产构建、真实模型或数据库操作。
+
 ## BASELINE-001｜当前版本定版
 
 用户确认当前版本除 MCP 外可用，按此范围定版并提交源码。MCP 保留为未验收项，不宣称可用或验收完成；各需求已有的自动验证与未验证记录继续保留，不以本次定版替代测试证据。范围包含统一助手、项目规则生成、两类 Session、持续参考文件、运行中纠正、最后一轮 Token/耗时与 Session 累计及现有页面调整。参考文件作为需求主体的优先级、冲突处理与版本更新优化仅完成讨论，未作为本次新增实现。提交不包含本地运行数据、配置与 release-new 发布产物，不执行数据库迁移或服务启停。
@@ -16,6 +38,14 @@ UI-051（本轮修复，改动TS语法及git diff --check通过）：修复UI-05
 ## UI-050｜等待提示独立计时
 
 UI-050最终计时由RUN-001替代，等待期间仍复用本地计时器。
+
+## RUN-003｜耗时与本轮Token独立展示
+
+仅变更现有统计投影：耗时、本轮Token、会话累计各自显示，缺失项单独标不可用，不影响其余项。运行中不使用上一轮用量；空闲时快照无Token仍可使用messages.latestRunUsage。无模型/API/持久化变化，复用WaitingIndicator。状态：代码已接入，改动TSX的SWC语法检查及git diff --check通过；仅耗时、仅Token、两者缺失及累计独立显示的浏览器验收待做。无API/类型边界变化，未新增或运行测试文件、类型检查或生产构建。
+
+## RUN-002｜切换会话恢复本轮统计
+
+替代RUN-001的重开不补发限制：服务进程globalThis共享最新轮快照，切换/重订阅由SSE ready.runMetrics直接恢复耗时及已报告Token，事件服务实例重建不清除；新根请求替换、steer不重置、结束/关闭保留内存、删除清除。按用户要求取消统计持久化：Token从Pi原生usage及既有请求journal的entryIds范围派生，重启后通过messages.latestRunUsage恢复；耗时不持久化，重启后不可用。没有可信边界的旧记录返回null，不猜测轮次、不改写历史。Workspace仅在新请求的既有journal记录执行前后边界，不保存统计计数或新增文件/表。状态：代码已接入，tests/session-run-metrics-api.test.cjs六项API测试及tests/session-entry-link-api.test.cjs两项API测试共八项通过，验证两类冷读取、轮次/纠正输入归属、范围外调用排除、缺失证据不伪报、实时重订阅与最终统计、受控真实Pi三次模型调用和冷读取；类型及差异检查通过。仅临时库/文件及受控Runtime，无用户库/历史改写、迁移或真实供应商请求。补充修复验证：再次运行tests/session-run-metrics-api.test.cjs六项通过，新增ready直接返回运行耗时及Token、服务实例重建后ready恢复最终统计的断言；类型检查及差异检查通过。未执行浏览器或真实供应商验收。
 
 ## RUN-001｜最近单轮Token与耗时
 
@@ -87,9 +117,11 @@ SLIST-001（已实现，定向验收通过）：用户消息（原生/待确认/
 
 PSES-019（已实现，定向验收通过）：两类Session设置提供模型对应的Pi思考等级，允许仅改等级；PUT model可选thinkingLevel、严格支持校验、耐久幂等与互斥、同一原生身份持久化，不改默认配置/SQL。验收覆盖只读DTO、支持等级、相同值去重、冷恢复、同键异等级、忙碌/unknown和页面显式应用。实际验证tests/pi-session-fork-export.test.cjs（5项，新增实际Pi思考等级持久化/恢复/不支持值拒绝）、tests/project-operation-recovery.test.cjs（5项，新增项目等级幂等与门禁）、tests/workspace-model-recovery.test.cjs（5项，新增HTTP等级透传与冲突）、tests/session-model-settings.test.cjs（1项，扩充同排控件/等级草稿与显式应用）、tests/session-auxiliary-dialog.test.cjs（1项）；五文件17项通过。npm run typecheck、git diff --check通过；仅临时文件和受控Runtime，无真实模型请求、用户数据库/配置写入或服务启停。
 
-MCFG-003（已实现，定向API验收通过）：所有独立项目与Workspace会话每次空闲打开，对比provider/model并采用当前配置默认型号，包括冷恢复与活动句柄复用；默认不可用返回unavailable，历史型号仍可用也不绕过；相同型号不重复追加model_change，不改Pi身份、历史前缀、SQL或配置文件。运行/压缩中保留本轮模型，下次空闲打开对齐；打开后显式切换可用于后续发送，GET models与历史读取不触发切换。不新增表或历史迁移。实际验证：tests/session-open-default-model-api.test.cjs两项application接口测试通过，覆盖两类会话的冷/热打开、重复打开不追加、默认不可用的冷/热拒绝、恢复默认后重开、只读模型列表、忙碌保护及原生历史前缀/身份保真；npm run typecheck通过。使用临时内存库、配置和Pi文件，无真实模型请求、用户数据改写、服务启停或生产构建。
+MCFG-003（代码已接入，定向API验证通过；浏览器待验收）：新会话首次初始化且Pi当前分支无model_change时使用当前默认；已有会话打开、刷新、重连、冷恢复及派生沿用分支最后保存模型和思考等级。默认配置变化不覆盖已有模型，无需保存旧默认或来源标记。验收覆盖两类会话的首次初始化、默认变更后的冷／热打开、重复打开不追加、思考等级保持、原生身份和历史保真；已有模型可用时默认不可用不影响打开。仅临时库与受控Runtime验证，不迁移用户数据。
 
-MCFG-002（已实现，定向验收通过）：读取settings.enabledModels并按Pi scope语法过滤模型列表与执行选择；当前型号不存在/被过滤/无认证时在同一Session自动采用配置默认型号，默认也不可用才提示。空闲刷新同规则，显式切换不回退，不重发请求；验收覆盖配置来源、范围匹配、默认失败、历史保真和原生model_change持久化。实际验证tests/model-settings-fallback.test.cjs（4项）、tests/pi-session-fork-export.test.cjs（4项）、tests/workspace-model-recovery.test.cjs（4项）、tests/project-session-lifecycle.test.cjs（1项），四文件13项通过；npm run typecheck和git diff --check通过。仅临时配置/文件、受控Runtime和离线流，无真实模型请求、用户库/配置/原生历史写入或服务启停。
+MCFG-002（代码已接入，定向API验证通过；浏览器待验收）：settings.enabledModels沿用Pi scope语法；当前型号不存在、被过滤或认证不可用时返回MODEL_UNAVAILABLE，不自动回退默认、不改模型／思考等级或历史、不发送。已有身份的open可取得unavailable恢复lease，models只读返回实际选择及可用列表，显式切换后原lease可继续。验收覆盖两类open、messages、model及compact相关入口的许可与副作用；配置解析错误仍MODEL_CONFIGURATION_ERROR。旧自动回退验收已被本规则取代。
+
+MCFG-002／003本次验证：`tests/session-open-default-model-api.test.cjs` 4项application API测试通过，覆盖两类首次初始化、默认变化与默认无效时冷／热重开、metadata-only思考等级保持、当前型号被过滤／移除时unavailable与历史不变。`tests/model-request-failure-api.test.cjs` 5项API测试通过，含当前型号不可用而默认仍有效时不prompt／不改模型或历史，显式原lease切型号后恢复发送，以及既有失败／unknown边界。`tests/workspace-model-recovery.test.cjs`仅按名称运行HTTP model recovery、uncertain switch、prevalidation failure、Workspace HTTP四项API场景，均通过；整文件初次运行因既有互斥／删除等待场景超时，未将该场景计为通过。类型检查与差异检查通过；仅临时目录、内存SQLite及受控Pi，未调用真实供应商、修改用户历史／数据库、启停服务或生产构建。浏览器、真实模型及压缩端到端仍待验收。
 
 SCONN-001（已实现，定向验收通过）：Session只显示打开/关闭，可关闭后重开同一Pi身份；历史ended_at不再终止使用，DELETE实际删除记录。打开后的状态与进度由事件驱动，无定时轮询；覆盖旧已结束记录重开、连接开闭/租约、订阅初始快照竞态、消息/压缩终态、用户关闭不自动重连、真实删除及跨会话晚事件隔离。只用临时库、受控Runtime及最小DOM验证，不改用户历史库。
 
@@ -282,7 +314,7 @@ UI-039 验证：`tests/prompt-input-submit.test.cjs` 覆盖流进行时清空与
 | UI-044 | 代码已实现；最小DOM通过，真实浏览器待验 | 全树标题与正文定位 | 全部分支节点标题可见，不展示正文或原始详情；点击按 entryId 展开必要容器并滚动高亮，树选择与活动叶子区分，不调用 Pi 分支切换；空树、未知类型、附件归组及异常节点仍可定位或明确报错 |
 | PCFG-001 | 代码已实现；临时配置与受控Pi定向通过 | npm 启动目录整份优先 | 对 models.json/settings.json 分别验证本地存在只读本地、本地缺失才读对应全局、两个文件来源可不同；不合并字段、不从业务 cwd 查找；损坏、空白、权限和无效配置均报错；删除固定环境模型及备用来源规则 |
 | PCFG-002 | 代码已实现；受控Pi定向通过，真实认证待验 | Pi 参数完整支持 | 使用原生解析器，协议、认证引用、headers、compat、reasoning、input、cost 等完整进入 Pi；显式 contextWindow/maxTokens 在新建、恢复、切换、请求和压缩中生效，不受应用写死数值覆盖；验证不同容量/输出上限、缺省及非法参数，未知容量如实呈现；不暴露配置凭据 |
-| PCFG-003 | 代码已实现；受控Pi定向通过 | 默认设置与精确恢复 | 采用选中settings文件的defaultProvider/defaultModel/enabledModels，不读另一文件补值；新会话及已有会话每次空闲打开按MCFG-003对齐默认模型；打开后空闲操作按MCFG-002校验手动选择，默认不可用的打开返回unavailable；默认设置与会话 cwd、工具边界、自动压缩互不混淆 |
+| PCFG-003 | 代码已实现；受控Pi定向通过 | 默认设置与精确恢复 | 采用选中settings文件的defaultProvider/defaultModel/enabledModels，不读另一文件补值；新会话首次初始化按MCFG-003使用默认；已有会话及派生沿用原生模型／思考等级；空闲操作按MCFG-002校验当前型号，失效返回unavailable，不自动回退默认；默认设置与会话 cwd、工具边界、自动压缩互不混淆 |
 | PSES-014 | 代码已实现；受控Pi与API定向通过 | 会话模型切换 | API 核验归属、可用性、空闲和租约；调用 Pi setModel 并原生保存，刷新容量和树；同值不重复追加，跨会话不变，不写配置或 SQL 模型副本；忙碌/unknown/认证失败/持久化不明按契约处理 |
 | PSES-015 | 代码已实现；隔离派生与恢复定向通过 | 从节点创建独立会话 | 包含选中节点的祖先路径进入新 Pi 身份，事务只创建新 Session，归属及角色引用合法；不复制旁支，不改源树/叶子；覆盖非用户节点、跨树拒绝、幂等重试、SQL 回滚及原生候选文件的 unknown 恢复 |
 | PSES-016 | 代码已实现；导出范围/原文/清理定向通过 | 明确范围导出 | HTML/JSONL 都支持全树或当前分支，完整保留所有选定节点及原文，不把原生 branch 导出标成 tree；不调用模型、不写业务记录或源文件；覆盖分叉、压缩、内部敏感节点、读取失败、断开清理和 ended 只读导出 |

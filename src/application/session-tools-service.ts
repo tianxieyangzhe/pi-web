@@ -68,7 +68,7 @@ export function createSessionToolsService(d: {
       if(typeof body.provider!=='string'||!body.provider||body.provider.length>1024||typeof body.modelId!=='string'||!body.modelId||body.modelId.length>1024)throw new DomainError('INVALID_INPUT','请选择有效模型',400,true);
       const identity={provider:body.provider,modelId:body.modelId,...(body.thinkingLevel!==undefined?{thinkingLevel:body.thinkingLevel as SessionThinkingLevel}:{})};
       d.execution.assertLease(id,lease);
-      return run(projectId,id,'switch-model',key,identity,async(input,observe)=>{editable(input);await d.runtime.switchModel(input,identity);d.sessions.updateRuntime(id,{state:"idle"});observe({after:d.runtime.operationEvidence(input),target:identity});return modelView(projectId,id,lease);},()=>modelView(projectId,id,lease));
+      return run(projectId,id,'switch-model',key,identity,async(input,observe)=>{editable(input);await d.runtime.switchModel(input,identity);d.sessions.updateRuntime(id,{state:"idle"});observe({after:d.runtime.operationEvidence(input),target:identity});},()=>undefined).then(()=>modelView(projectId,id,lease));
     },
     adoptAgent(projectId:string,id:string,body:Record<string,unknown>,key:string,etag:string|null) {
       exactFields(body,['agentId','revision','contentSha256']);

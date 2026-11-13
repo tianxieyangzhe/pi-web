@@ -29,5 +29,6 @@ export const workspaceApi={
   readFileBlob:(id:string,projectId:string,path:string,signal?:AbortSignal)=>readFileBlob(`${base(id)}/projects/${encodeURIComponent(projectId)}/files/download?path=${encodeURIComponent(path)}`,signal),
   downloadFile:(id:string,projectId:string,path:string)=>downloadFile(`${base(id)}/projects/${encodeURIComponent(projectId)}/files/download?path=${encodeURIComponent(path)}`,path),
   readFile:(id:string,projectId:string,path:string)=>request<import('../domain/models').FilePreview>(`${base(id)}/projects/${encodeURIComponent(projectId)}/files/content?path=${encodeURIComponent(path)}`),
+  projectChanges:(id:string,projectId:string)=>request<import('../domain/models').ProjectChanges>(`${base(id)}/projects/${encodeURIComponent(projectId)}/changes`),
   files:(id:string,projectId:string,path='')=>request<ProjectFileListing>(`${base(id)}/projects/${projectId}/files?path=${encodeURIComponent(path)}`),
 };

@@ -1,3 +1,4 @@
+import { ErrorToast } from '../conversation/error-toast';
 import {Button} from '../../components/button';
 import {useCallback,useEffect,useRef,useState} from "react";
 import {api} from "../../api/client";
@@ -50,6 +51,6 @@ export function NativeContextSection({projectId,sessionId,onBusy,onRestore,runni
     </div>
     {(!value?.canCompact||!value.runtimeReady)&&value?.compactionState!=="running"&&<p className="session-inspector__note">{value?.unavailableReason??"发送首条消息后可管理"}</p>}
     <p className="session-inspector__note">Pi 管理当前对话窗口。压缩调用模型并保留历史，自动压缩保持开启，参数使用 Pi 默认值；也可手动压缩。</p>
-    {(error||value?.error)&&<p role="alert">{error||value?.error?.message}</p>}
+    <ErrorToast message={error||value?.error?.message}/>
   </section>;
 }

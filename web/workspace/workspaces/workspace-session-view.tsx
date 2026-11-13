@@ -2,6 +2,7 @@ import {Button} from '../../components/button';
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { WorkspaceRecord, WorkspaceSessionDTO } from '../../../src/domain/workspace';
 import { workspaceApi } from '../../api/workspace-client';
+import {SessionFileChanges} from '../files/session-file-changes';
 import { AuxiliaryDialog } from '../auxiliary-dialog';
 import { SessionInspection,locateSessionEntry } from '../inspector/session-inspection';
 import { useSessionTree } from '../conversation/use-session-tree';
@@ -11,9 +12,11 @@ import { SessionModelSettings } from '../inspector/session-model-settings';
 import {FileBrowser,FilePreviewPane} from '../files/file-browser';
 import type {FilePreview} from '../../domain/models';
 
-export function WorkspaceSessionView({ scrollRevision, onOpenFileLink, workspace, session: initial, onChanged, inspectionOpen: panel, onInspectionChange:setPanel,filesOpen,onFilesChange }:  {
+export function WorkspaceSessionView({ scrollRevision, onOpenFileLink, workspace, session: initial, onChanged, inspectionOpen: panel, onInspectionChange:setPanel,filesOpen,onFilesChange,changesOpen,onChangesChange }:  {
   scrollRevision?:number;
   onOpenFileLink?: (href:string)=>void;
+  changesOpen:boolean;
+  onChangesChange:(open:boolean)=>void;
   filesOpen:boolean;
   onFilesChange:(open:boolean)=>void;
   inspectionOpen:boolean;
@@ -32,7 +35,7 @@ export function WorkspaceSessionView({ scrollRevision, onOpenFileLink, workspace
   const fileProject=workspace.projects.find(p=>p.id===filesProjectId)??workspace.projects.find(p=>p.id===current.defaultProjectId)??workspace.projects[0];
   function selectFileProject(id:string){if(id!==fileProject?.id){setFilePreview(null);setFilesProjectId(id);}}
   const previewProject=workspace.projects.find(p=>p.id===filePreview?.projectId);
-  const fileApi=useMemo(()=>fileProject?{list:(path:string)=>workspaceApi.files(workspace.id,fileProject.id,path),read:(path:string)=>workspaceApi.readFile(workspace.id,fileProject.id,path)}:undefined,[workspace.id,fileProject?.id,fileProject?.rootPath]);
+  const fileApi=useMemo(()=>fileProject?{list:(path:string)=>workspaceApi.files(workspace.id,fileProject.id,path),read:(path:string)=>workspaceApi.readFile(workspace.id,fileProject.id,path),changes:()=>workspaceApi.projectChanges(workspace.id,fileProject.id)}:undefined,[workspace.id,fileProject?.id,fileProject?.rootPath]);
   useEffect(()=>{if(!filesOpen){setFilePreview(null);setFilesProjectId(initial.defaultProjectId);} },[filesOpen,initial.defaultProjectId]);
   const base = workspaceApi.session(workspace.id, initial.id);
   const tree = useSessionTree(base, () => workspaceApi.messages(workspace.id, initial.id), onChanged);
@@ -75,13 +78,15 @@ export function WorkspaceSessionView({ scrollRevision, onOpenFileLink, workspace
   return <div className="flex min-h-0 flex-1 overflow-hidden">
     <section className="flex min-w-0 flex-1 flex-col">
       <div className="main-toolbar"><div className="main-toolbar__leading"><span>{workspace.name}</span></div><div className="main-toolbar__actions"><nav className="main-toolbar__panel-switcher" aria-label="会话辅助工具">
-        <Button type="button" aria-pressed={filesOpen} disabled={!workspace.projects.length} onClick={()=>{setFilePreview(null);setFilesProjectId(workspace.projects.some(p=>p.id===current.defaultProjectId)?current.defaultProjectId:workspace.projects[0]?.id??null);onFilesChange(!filesOpen);}}>文件检查</Button>
-        <Button type="button" aria-pressed={panel} onClick={()=>setPanel(!panel)}>会话检查</Button>
+        <Button variant="primary" type="button" aria-pressed={changesOpen} onClick={()=>onChangesChange(!changesOpen)}>本轮变更</Button>
+        <Button variant="primary" type="button" aria-pressed={filesOpen} disabled={!workspace.projects.length} onClick={()=>{setFilePreview(null);setFilesProjectId(workspace.projects.some(p=>p.id===current.defaultProjectId)?current.defaultProjectId:workspace.projects[0]?.id??null);onFilesChange(!filesOpen);}}>文件检查</Button>
+        <Button variant="primary" type="button" aria-pressed={panel} onClick={()=>setPanel(!panel)}>会话检查</Button>
       </nav></div></div>
       <SessionConversationView assistantProjectId={current.defaultProjectId} assistantWorkspaceId={workspace.id} scrollRevision={scrollRevision} onOpenFileLink={onOpenFileLink} title={workspace.name} label="工作区会话"
         purpose={`${current.purpose} · 默认目录：${workspace.projects.find(p => p.id === current.defaultProjectId)?.rootPath ?? ''}`}
         session={controller} referenceProjects={projects} listReferenceFiles={listFiles} />
     </section>
+    {changesOpen&&<AuxiliaryDialog title="本轮变更" onClose={()=>onChangesChange(false)}><SessionFileChanges base={base} running={tree.running} revision={tree.eventRevision}/></AuxiliaryDialog>}
     {filesOpen&&<AuxiliaryDialog title="文件检查" onClose={()=>onFilesChange(false)}><div className="flex h-[70vh] min-h-0 min-w-0 flex-col">
       <div role="tablist" aria-label="工作区项目" className="flex shrink-0 overflow-x-auto border-b border-slate-200 px-4 pt-2">
         {workspace.projects.map((project,index)=><Button variant="tab" key={project.id} type="button" role="tab" id={`${fileTabsId}-${project.id}-tab`} aria-selected={fileProject?.id===project.id} aria-controls={`${fileTabsId}-panel`} tabIndex={fileProject?.id===project.id?0:-1} title={project.name} onClick={()=>selectFileProject(project.id)} onKeyDown={event=>{
@@ -99,7 +104,7 @@ export function WorkspaceSessionView({ scrollRevision, onOpenFileLink, workspace
     </div></AuxiliaryDialog>}
     {panel&&<AuxiliaryDialog title="会话检查" onClose={()=>setPanel(false)}><SessionInspection tree={tree.tree} selected={selected} onSelect={setSelected} onLocate={id=>{setPanel(false);requestAnimationFrame(()=>locateSessionEntry(id));}} settings={<>
       <section><h3 className="mb-2 font-semibold">Session</h3><p>{current.purpose.trim()||'新会话'}</p><p className="mt-1 break-all text-xs text-slate-500">{initial.id} · {tree.connection==='open'?'打开':'关闭'}</p></section>
-      <SessionModelSettings modelApi={modelApi} leaseId={tree.leaseId} onApplied={async()=>{await tree.refresh();await onChanged();tree.retryOpen();}}/>
+      <SessionModelSettings modelApi={modelApi} leaseId={tree.leaseId} onApplied={async()=>{await tree.modelApplied();await onChanged();}}/>
       <NativeContextSection eventRevision={tree.eventRevision} projectId={`workspace:${workspace.id}`} sessionId={initial.id} running={tree.running} onBusy={setCompacting} onRestore={async()=>{if(await perform('restore'))tree.retryOpen();}} contextApi={contextApi}/>
     </>}/></AuxiliaryDialog>}
   </div>;

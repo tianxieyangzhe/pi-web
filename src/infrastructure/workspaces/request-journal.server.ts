@@ -17,7 +17,8 @@ function validData(data: unknown): boolean {
   if (!data || typeof data !== 'object' || Array.isArray(data)) return false;
   const value = data as Record<string, unknown>;
   return typeof value.key === 'string' && !!value.key && typeof value.hash === 'string' && !!value.hash
-    && Object.keys(value).every(key => ['key', 'hash', 'outcome', 'operation'].includes(key))
+    && Object.keys(value).every(key => ['key', 'hash', 'outcome', 'operation', 'entryIds'].includes(key))
+    && (value.entryIds === undefined || (Array.isArray(value.entryIds) && value.entryIds.every(id => typeof id === 'string' && !!id) && new Set(value.entryIds).size === value.entryIds.length))
     && (value.operation === undefined || value.operation === 'switch-model' || value.operation === 'steer')
     && (value.outcome === undefined || ['settled', 'failed', 'aborted', 'queued'].includes(String(value.outcome)));
 }

@@ -1,5 +1,5 @@
 # 01｜架构：模型与 Pi 的归属
-UI-049/UI-050：连续工具调用复用现有Conversation/Disclosure。已重新检索官方Tool（https://elements.ai-sdk.dev/components/tool），其单工具折叠不能直接表达Pi多分支历史与跨实时/历史的连续组，沿用原生details及既有折叠样式，统一组件体系支持该语义时复核。等待沿用已评估的Loader/Spinner与WaitingIndicator；单轮统计按RUN-001由application/session-run-metrics收集Runtime公开message_end用量并计时，通过既有SSE发送，页面只显示最近一轮及Session累计；application复用messages已读取的全树派生tokenUsage，不另读历史或增加前端遍历。无新增Pi调用或持久模型。
+UI-049/UI-050：连续工具调用复用现有Conversation/Disclosure。已重新检索官方Tool（https://elements.ai-sdk.dev/components/tool），其单工具折叠不能直接表达Pi多分支历史与跨实时/历史的连续组，沿用原生details及既有折叠样式，统一组件体系支持该语义时复核。等待沿用已评估的Loader/Spinner与WaitingIndicator；单轮统计按RUN-001由application/session-run-metrics收集Runtime公开message_end用量并计时，通过既有SSE发送；RUN-002由application/session-events保留最新轮次进程内快照，重订阅恢复；取消统计文件，冷打开由application/session-run-metrics结合原生usage和既有执行journal边界派生latestRunUsage，重启不恢复耗时；页面只显示最近一轮及Session累计；application复用messages已读取的全树派生tokenUsage，不另读历史或增加前端遍历。无新增Pi调用或持久模型。
 
 
 FILE-003：会话文件只读用例位于application/session-file-service，基础设施复用会话附件目录与有界文件读取，bootstrap注入SQL Session查询；不通过项目文件API绕过归属、不改变Pi/文件归属。
@@ -13,6 +13,8 @@ ROUTE-CLEAN-001：删除退役记忆/模板固定404路由、旧记忆改名脚�
 本文范围：应用架构、独立项目执行与通用组件治理。Workspace 的专属设计、模型、API、交互与需求统一见 [06｜Workspace](06-workspace.md)，本文不定义或复写其规则。
 
 本文只定义代码位置、依赖方向，以及模型与 Pi 的归属。字段以 `02` 为准，API 以 `03` 为准，完成条件以 `05` 为准。页面投影不是本文职责。
+
+CHANGE-001：application/session-file-changes只读投影所属Pi树中的原生edit差异，复用既有根请求journal边界；Project/Workspace用例通过既有runtime.readTree读取。不新增Pi Session、工具、快照存储或目录扫描，不调用模型生成差异，不依赖Git。移除文件采集端口、存储与执行包装。沿用已评估的AuxiliaryDialog、Button和原生pre显示差异；官方Code Block（https://elements.ai-sdk.dev/components/code-block）与Tool不提供所需根轮次/多次edit投影语义，通用组件支持时复核。
 
 ## 1. 会话与 Pi 归属
 
@@ -37,13 +39,13 @@ Agent 是独立可复用的版本化 Markdown 定义，无 Project owner；会�
 | models.json | `<applicationConfigRoot>/models.json` | `~/.pi/agent/models.json` |
 | settings.json | `<applicationConfigRoot>/settings.json` | `~/.pi/agent/settings.json` |
 
-两个文件分别选择来源。只在本地文件不存在（ENOENT）时读取对应全局文件；本地存在则整份使用，不读取、不合并全局对应文件。空文件、JSON 损坏、权限错误、字段无效均报告配置错误，不以回退掩盖。两级均缺失时按 Pi 原生无自定义文件的行为解析；会话打开必须采用可确定且可用的默认模型，缺少默认模型或认证时明确报错，不任取首项；打开后的空闲操作按当前原生选择校验。
+两个文件分别选择来源。只在本地文件不存在（ENOENT）时读取对应全局文件；本地存在则整份使用，不读取、不合并全局对应文件。空文件、JSON 损坏、权限错误、字段无效均报告配置错误，不以回退掩盖。两级均缺失时按 Pi 原生无自定义文件的行为解析；新会话首次初始化必须采用可确定且可用的默认模型，缺少默认模型或认证时明确报错，不任取首项；已有会话打开及后续空闲操作按当前原生选择校验，默认变化不覆盖已有选择。
 
 模型通过当前依赖版本的 Pi ModelRuntime/ModelRegistry 原生解析和认证机制装配，完整支持 Pi 支持的模型、供应商及嵌套参数，不建立缩水白名单或丢弃未知字段后假装兼容；Pi 不支持的字段按其校验规则报错。包括 api、baseUrl、认证与环境变量引用、headers、兼容参数、reasoning、input、cost、contextWindow、maxTokens 等，新增 Pi 参数随依赖的原生契约适配。协议不限于单一供应商或 Chat Completions。凭据、配置全文、请求头和原生路径只在服务端使用。
 
 settings.json采用defaultProvider、defaultModel及enabledModels，不从另一份文件补值。enabledModels按Pi原生模型scope模式匹配（支持provider/id、通配与thinking后缀），用于模型列表及执行选择的过滤；省略或空数组不限制，非空但无匹配时无可用模型，字段类型错误报告配置错误。当前Session模型不存在、被过滤或认证不可用时，打开/恢复及下一次空闲操作自动采用配置默认模型；默认模型同样必须通过过滤及认证，默认也不可用才提示MODEL_UNAVAILABLE。不任意挑选其他模型，不重发失败请求。自动压缩必须开启并采用Pi默认参数，工具边界仍由应用契约决定。应用不再从环境文件中的固定模型三元组生成模型或提供备用模型；Pi 配置内显式声明的环境变量引用正常生效。
 
-MCFG-003：新会话和已有会话每次打开均采用有效默认模型；精确恢复历史身份后，当前分支的provider/model与默认不同则调用Pi setModel并持久化model_change，相同则不重复追加。已有活动句柄空闲时同样检查，正在回复或压缩时保持本轮快照，下次空闲打开再对齐。默认不可用时返回MODEL_UNAVAILABLE及恢复用途租约。打开后手动选择的模型在本次会话操作中继续生效，空闲操作仍按MCFG-002校验可用性。用户切换只调用本会话的 Pi setModel，并保存原生 model_change，不写默认配置或 SQL 模型副本。会话思考等级通过Pi getSupportedThinkingLevels/getAvailableThinkingLevels及setThinkingLevel读取和修改，持久事实仅为原生thinking_level_change，不写SQL或默认配置；接口见03 PSES-019。手动压缩使用当前会话模型；Agent 编辑器使用默认模型；自定义润色无工具，项目生成按WAGENT-010在目标cwd使用读取工具。
+MCFG-003：只有当前Pi分支尚无model_change的新会话首次初始化才采用当前有效默认模型；已有模型事实的打开、重连、冷恢复和派生均沿用该分支保存的provider/model及thinking_level_change，不按默认变更覆盖、不重复追加相同模型。无需保存默认配置旧值或默认／手动来源标记。MCFG-002：空闲打开、发送与压缩重新校验当前型号的注册、enabledModels及认证，参数更新交给Pi；型号不可用返回MODEL_UNAVAILABLE，保留原生模型与历史，不自动回退默认，已有身份可取得仅恢复用途lease后显式切型号。运行/压缩中保持本轮快照。用户切换只调用本会话的 Pi setModel，并保存原生 model_change，不写默认配置或 SQL 模型副本。会话思考等级通过Pi getSupportedThinkingLevels/getAvailableThinkingLevels及setThinkingLevel读取和修改，持久事实仅为原生thinking_level_change，不写SQL或默认配置；接口见03 PSES-019。手动压缩使用当前会话模型；Agent 编辑器使用默认模型；自定义润色无工具，项目生成按WAGENT-010在目标cwd使用读取工具。
 
 显式 contextWindow 和 maxTokens 必须进入实际 Runtime，分别用于上下文容量和最大输出限制，禁止应用硬编码容量或输出上限覆盖配置。缺省使用 Pi 解析结果；容量不能确认时指标为未知。配置读取发生在应用初始化、模型列表请求及后续操作的配置校验边界；运行中的模型/工具循环固定本次快照，变更在下一次空闲操作时生效，不在流中热替换。重新解析失败必须报告，不能用旧缓存伪装成功。应用不提供配置文件写入或隐式修改能力。
 
@@ -77,6 +79,8 @@ web/styles/                  全局视觉样式
 Next.js 同时提供页面和同源 API；不增加独立 Vite 服务或第二个浏览器端口。文件树、预览与 Git 变化仍由独立项目 API 读取；目录列表不依赖 Git 状态。
 
 FILE-001：文件读取/下载用例在application/project-file-service，bootstrap/project-files装配基础设施，route仅映射请求/响应；Workspace按原application端口校验归属。DOCX结构提取在infrastructure/references/file-preview，响应DTO在domain/file-preview。不新增UI组件，复用以下已登记的FilePreviewPane与文件浮窗，以原生标题/表格/代码和按钮投影API，无新增依赖。
+
+FILE-004：复用现有Project files/changes只读API和FileBrowser；不调用Pi、不新增存储。已重新检索官方Code Block（https://elements.ai-sdk.dev/components/code-block），支持Shiki与行号，但引入项目未采用的组件依赖且不含现有文件行号定位/生命周期。采用web/workspace/files/file-code-preview.tsx封装已有Shiki依赖，按需加载并以React文本token安全渲染；统一组件体系支持现有定位契约时复核。Git diff在既有FileBrowser中用pre和共享Button展示，不新增浮窗。
 
 ## 5. AI Elements 组件治理
 

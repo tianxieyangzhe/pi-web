@@ -61,7 +61,7 @@ export type ActivityEvent = {
   detail?: string;
 };
 
-export type SessionTree = { tokenUsage?: import("../../src/domain/session-run-metrics").SessionTokenUsage; entries: Array<{ entry: Record<string, unknown> & { id: string; parentId: string | null; type: string; timestamp: string }; label: string | null; labelTimestamp: string | null }>; activeLeafId: string | null };
+export type SessionTree = { latestRunUsage?: import("../../src/domain/session-run-metrics").SessionTokenUsage | null; tokenUsage?: import("../../src/domain/session-run-metrics").SessionTokenUsage; entries: Array<{ entry: Record<string, unknown> & { id: string; parentId: string | null; type: string; timestamp: string }; label: string | null; labelTimestamp: string | null }>; activeLeafId: string | null };
 export type PiStreamEvent = { sessionId: string; runId: string | null; sequence: number | null; type: string; entryId: string | null; temporaryId: string | null; payload: unknown };
 
 export type AgentEvent =

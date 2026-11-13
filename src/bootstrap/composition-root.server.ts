@@ -40,7 +40,7 @@ function createServices() {
     normalizeProjectRoot,
     assertProjectMutable(id){for(const session of sessionRepository.listForProject(id)){if(execution.hasLease(session.id)||sessionLocks.has(session.id)||['starting','running','interrupting'].includes(session.state))throw new DomainError('SESSION_BUSY','项目仍有打开或活动操作',409,true);}const pending=operations.list(id).filter(record=>!['completed','failed','acknowledged'].includes(record.phase));if(pending.length)throw new DomainError(pending.some(record=>sessionTools.running(record.operationId))?'SESSION_BUSY':'REQUEST_UNKNOWN','项目仍有活动或待核对操作',409,true);}
   });
-  const execution = createSessionExecutionService({projectRules:projectRulesStore,assistants,openHistory:sessionOpenHistory,
+  const execution = createSessionExecutionService({operations,projectRules:projectRulesStore,assistants,openHistory:sessionOpenHistory,
     contextFiles:sessionContextFiles,
     assertContextWritable:(projectId,id)=>{assertSchemaCompatible();sessionTools.assertKnown(projectId,id);},
     readContextFile:reference=>{

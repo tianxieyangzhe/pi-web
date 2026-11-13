@@ -8,7 +8,7 @@ import { createSessionFileService } from "@/application/session-file-service";
 import { readSessionFile } from "@/infrastructure/references/session-file-reader.server";
 import { resolveProjectReferenceAt, readProjectBytes } from '@/infrastructure/projects/project-files.server';
 import { sessionContextFiles } from '@/infrastructure/references/session-context-files.server';
-import { readdirSync } from 'node:fs';
+import { listWorkspaceProjectFiles, readWorkspaceProjectChanges } from '@/infrastructure/workspaces/project-files.server';
 import path from 'node:path';
 import { database, assertSchemaCompatible } from '@/infrastructure/database/database.server';
 import { createWorkspaceRepository } from '@/infrastructure/database/workspace-repository';
@@ -26,12 +26,8 @@ function create() {
       if(!project)throw new DomainError('REFERENCE_OUTSIDE_SCOPE','参考项目不属于当前工作区',403,true);
       return {name:reference.path.split('/').at(-1)!,bytes:readProjectBytes(project.rootPath,reference.path,50_000_000)};
     },sessionFiles:createSessionFileService((id,sid)=>repository.session(id,sid),readSessionFile),openHistory:sessionOpenHistory,preview:value=>piSessionRuntime.preview(value),repository,directories:workspaceDirectories,runtime:piSessionRuntime,downloadFile:(workspaceId,projectId,relative)=>downloadWorkspaceFile(repository.get(workspaceId)!.projects,projectId,relative),readFile:(workspaceId,projectId,relative)=>readWorkspaceFile(repository.get(workspaceId)!.projects,projectId,relative),listFiles:async(workspaceId,projectId,relative)=>{
-    const {workspaceReferenceTarget}=await import('@/infrastructure/workspaces/reference-path.server');
-    const workspace=repository.get(workspaceId)!;
-    const {target}=await workspaceReferenceTarget(workspace.projects,projectId,relative);
-    const entries=readdirSync(target,{withFileTypes:true});
-    return {entries:entries.slice(0,1000).map(entry=>({name:entry.name,path:path.posix.join(relative,entry.name),parentPath:relative,type:entry.isDirectory()?'directory':'file'})),isGitRepository:false,truncated:entries.length>1000};
-  },resolveReference:(workspaceId,reference)=>{
+    return listWorkspaceProjectFiles(repository.get(workspaceId)!.projects,projectId,relative);
+  },projectChanges:(workspaceId,projectId)=>readWorkspaceProjectChanges(repository.get(workspaceId)!.projects,projectId),resolveReference:(workspaceId,reference)=>{
     const project=repository.get(workspaceId)?.projects.find(item=>item.id===reference.projectId);
     if(!project||path.isAbsolute(reference.path))throw new DomainError('PATH_OUTSIDE_WORKSPACE','参考文件不属于工作区',403,true);
     return resolveProjectReferenceAt(project.rootPath,reference.path);

@@ -34,21 +34,27 @@ function MessageContent({ message }: { message: Record<string, unknown> }) {
 function ReferenceEntry({ entry }: { entry: SessionTree["entries"][number]["entry"] }) {
   return <div data-entry-id={entry.id}><Disclosure title="本轮附件"><MessageContent message={{content:entry.content}} /><Disclosure title="完整原生节点"><Raw value={entry} /></Disclosure></Disclosure></div>;
 }
-function WaitingIndicator({running,metrics,tokenUsage}:{running:boolean;metrics?:SessionRunMetrics|null;tokenUsage?:SessionTokenUsage}) {
+function WaitingIndicator({running,metrics,tokenUsage,latestRunUsage}:{running:boolean;metrics?:SessionRunMetrics|null;tokenUsage?:SessionTokenUsage;latestRunUsage?:SessionTokenUsage|null}) {
   const [seconds,setSeconds]=useState<number|null>(null);
   useEffect(()=>{
     if(!running)return;
     const since=performance.now();
-    const update=()=>setSeconds(Math.max(0,Math.floor((performance.now()-since)/1000)));
+    const update=()=>setSeconds(metrics?Math.max(0,Math.floor((metrics.durationMs+performance.now()-since)/1000)):null);
     update();const timer=setInterval(update,1000);
     return()=>{clearInterval(timer);update();};
-  },[running]);
-  if(!running&&!metrics&&!tokenUsage)return null;
-  const elapsed=!running&&metrics?Math.floor(metrics.durationMs/1000):seconds??0;
-  const time=elapsed>=3600?`${Math.floor(elapsed/3600)}:${String(Math.floor(elapsed/60)%60).padStart(2,'0')}:${String(elapsed%60).padStart(2,'0')}`:`${Math.floor(elapsed/60)}:${String(elapsed%60).padStart(2,'0')}`;
+  },[running,metrics]);
+  if(!running&&!metrics&&!tokenUsage&&!latestRunUsage)return null;
+  const elapsed=metrics?(running?seconds:Math.floor(metrics.durationMs/1000)):null;
+  const usage=metrics?.totalTokens!=null?metrics:running&&metrics?metrics:latestRunUsage??metrics;
+  const tokens=usage?.totalTokens;
+  const tokenLabel=tokens==null?'本轮Token不可用':`${running?'本轮已报告':'本轮消耗'} ${tokens.toLocaleString()} tokens${!running&&!usage?.complete?'（仅供参考）':''}`;
+  const duration=elapsed??0;
+  const time=elapsed===null?'耗时不可用':duration>=3600?`${Math.floor(duration/3600)}:${String(Math.floor(duration/60)%60).padStart(2,'0')}:${String(duration%60).padStart(2,'0')}`:`${Math.floor(duration/60)}:${String(duration%60).padStart(2,'0')}`;
   return <p className="m-0 flex flex-wrap items-center gap-2 py-1 text-xs text-zinc-500" role="status">
-    {running?<><LoaderCircle className="animate-spin" size={14} aria-hidden="true"/>正在等待 <span className="tabular-nums" aria-live="off">{time}</span></>:metrics?<>{metrics.totalTokens!=null?`本轮消耗 ${metrics.totalTokens.toLocaleString()} tokens${metrics.complete?"":"（仅供参考）"}`:"Token仅供参考"} · 耗时 <span className="tabular-nums">{time}</span></>:null}
-    {tokenUsage&&<span className="tabular-nums">{running||metrics?"· ":""}会话累计 {tokenUsage.totalTokens==null?"不可用":`${tokenUsage.totalTokens.toLocaleString()} tokens`}{tokenUsage.complete?"":"（仅供参考）"}</span>}
+    {running&&<><LoaderCircle className="animate-spin" size={14} aria-hidden="true"/>正在等待</>}
+    <span className="tabular-nums">{tokenLabel}</span>
+    <span className="tabular-nums" aria-live="off">· {elapsed===null?'耗时不可用':`耗时 ${time}`}</span>
+    {tokenUsage&&<span className="tabular-nums">· 会话累计 {tokenUsage.totalTokens==null?"不可用":`${tokenUsage.totalTokens.toLocaleString()} tokens`}{tokenUsage.complete?"":"（仅供参考）"}</span>}
   </p>;
 }
 export function Conversation({ tree, temporary, steeringQueue = [], pendingText, running, runMetrics, afterTurns }: { runMetrics?:SessionRunMetrics|null; tree: SessionTree; steeringQueue?:string[]; temporary: TemporaryNode[]; pendingText: string; running: boolean; afterTurns?: Map<string, ReactNode> }) {
@@ -122,6 +128,6 @@ export function Conversation({ tree, temporary, steeringQueue = [], pendingText,
       return <Disclosure key={key} title={title} open={expandedGroups.has(key)} onOpenChange={open=>setExpandedGroups(current=>{if(current.has(key)===open)return current;const next=new Set(current);if(open)next.add(key);else next.delete(key);return next;})}>{group.rows.map(row=><div className="min-w-0" key={row.key}>{row.content}</div>)}</Disclosure>;
     })}
     {steeringQueue.map((text,index)=><article key={index} className="ml-auto w-3/4 rounded-lg bg-sky-100 px-3 py-2"><span className="text-[11px] text-zinc-500">纠正 · 等待 Pi 消费</span><div className="whitespace-pre-wrap text-sm">{text}</div></article>)}
-    <WaitingIndicator running={running} metrics={runMetrics} tokenUsage={tree.tokenUsage}/>
+    <WaitingIndicator running={running} metrics={runMetrics} tokenUsage={tree.tokenUsage} latestRunUsage={tree.latestRunUsage}/>
   </section>;
 }

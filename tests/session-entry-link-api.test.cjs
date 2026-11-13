@@ -66,8 +66,10 @@ for(const scope of ['project','workspace'])test(`${scope} SSE links streamed ass
   const nativeTotal=h.session.getSessionStats().tokens.total;
   assert.equal(nativeTotal,60);
   assert.deepEqual((await readMessages()).tokenUsage,{totalTokens:nativeTotal,complete:true});
+  if(scope==='workspace')assert.deepEqual((await readMessages()).latestRunUsage,{totalTokens:60,complete:true},'native request boundaries include all three model calls');
   await runtime.close(h);
   assert.deepEqual((await readMessages()).tokenUsage,{totalTokens:nativeTotal,complete:true},'cold history uses the same total as Pi');
+  if(scope==='workspace')assert.deepEqual((await readMessages()).latestRunUsage,{totalTokens:60,complete:true},'cold reads derive the latest root from native usage');
  }finally{
   disconnect?.();const h=runtime.getHandle(id);if(h)await runtime.close(h);f.close();
  }

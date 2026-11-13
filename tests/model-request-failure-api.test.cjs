@@ -19,8 +19,8 @@ async function fixture(){
  const sessions={get(id){const row=db.prepare('SELECT value FROM sessions WHERE id=?').get(id);return row?JSON.parse(row.value):null;},updateRuntime(id,patch){const value={...this.get(id),...patch};db.prepare('UPDATE sessions SET value=? WHERE id=?').run(JSON.stringify(value),id);return value;}};
  const modelRuntime=await pi.ModelRuntime.create({credentials:{async read(){},async list(){return [];},async modify(){},async delete(){}},modelsPath:null,allowModelNetwork:false,refreshOnCreate:false});
  modelRuntime.registerProvider('controlled',{baseUrl:'http://localhost',apiKey:'fake',api:'openai-completions',models:['bad','good'].map(id=>({id,name:id,reasoning:false,input:['text'],cost:{input:0,output:0,cacheRead:0,cacheWrite:0},contextWindow:128000,maxTokens:1000}))});
- let available=true,streamCalls=0,errorText='API error (404): no route available for the requested model';
- const runtime=new PiSessionRuntime(async()=>({runtime:modelRuntime,defaults:{provider:'controlled',modelId:'bad'},models:available?modelRuntime.getModels():[],configuration:{models:'native',settings:'native'}}));
+ let available=true,blockedModel=null,streamCalls=0,errorText='API error (404): no route available for the requested model';
+ const runtime=new PiSessionRuntime(async()=>({runtime:modelRuntime,defaults:{provider:'controlled',modelId:'bad'},models:available?modelRuntime.getModels().filter(model=>model.id!==blockedModel):[],configuration:{models:'native',settings:'native'}}));
  const projects={get:()=>({id:'p',name:'Project',status:'active',rootPath:root})},execution=createSessionExecutionService({sessions,projects,catalog:{getAgent:()=>null},runtime});
  const operations=createProjectOperationStore(root),tools=createSessionToolsService({sessions,projects,runtime,execution,operations,assertWritable(){},present:value=>value,catalog:{}});
  const opened=await tools.open('p','s','open'),lease=opened.leaseId;
@@ -29,7 +29,7 @@ async function fixture(){
   stream.push(errorText?{type:'error',reason:'error',error:message}:{type:'done',reason:'stop',message});stream.end();return stream;
  };
  async function settled(operationId){for(let i=0;i<100&&tools.running(operationId);i++)await tick();assert.equal(tools.running(operationId),false);return operations.read('p',operationId).at(-1);}
- return {root,db,ref,sessions,runtime,execution,operations,tools,lease,settled,pi,get streamCalls(){return streamCalls;},setAvailable:value=>{available=value;},setError:value=>{errorText=value;},async close(){execution.close('s',lease);const h=runtime.getHandle('s');if(h)await runtime.close(h);sessionLocks.delete('s');db.close();fs.rmSync(root,{recursive:true,force:true});}};
+ return {root,db,ref,sessions,runtime,execution,operations,tools,lease,settled,pi,get streamCalls(){return streamCalls;},setAvailable:value=>{available=value;},blockModel:id=>{blockedModel=id;},setError:value=>{errorText=value;},async close(){execution.close('s',lease);const h=runtime.getHandle('s');if(h)await runtime.close(h);sessionLocks.delete('s');db.close();fs.rmSync(root,{recursive:true,force:true});}};
 }
 test('message and model APIs settle a real controlled Pi provider rejection and permit changing models with the original lease',async()=>{
  const f=await fixture();
@@ -40,7 +40,12 @@ test('message and model APIs settle a real controlled Pi provider rejection and 
   const history=fs.readFileSync(f.ref.sessionFile,'utf8');assert(history.startsWith(before));assert(history.includes('no route available for the requested model'));
   assert.throws(()=>f.tools.accept('p','s',body,'bad-request',f.lease),e=>e.code==='MODEL_REQUEST_FAILED');assert.equal(f.streamCalls,1);
   assert.equal((await f.tools.models('p','s',f.lease)).canSwitch,true);
-  await f.tools.switchModel('p','s',{provider:'controlled',modelId:'good'},'change',f.lease);
+  const switched=await f.tools.switchModel('p','s',{provider:'controlled',modelId:'good'},'change',f.lease);
+  assert.equal(switched.current.modelId,'good');assert.equal(switched.canSwitch,true);assert.equal(switched.unavailableReason,null);
+  const repeated=await f.tools.switchModel('p','s',{provider:'controlled',modelId:'good'},'change',f.lease);
+  assert.equal(repeated.canSwitch,true);assert.equal(repeated.current.modelId,'good');
+  const thinking=await f.tools.switchModel('p','s',{provider:'controlled',modelId:'good',thinkingLevel:'off'},'thinking',f.lease);
+  assert.equal(thinking.canSwitch,true);assert.equal(thinking.thinkingLevel,'off');assert.equal(thinking.current.modelId,'good');
   assert.equal((await f.tools.models('p','s',f.lease)).current.modelId,'good');assert.deepEqual(f.sessions.get('s').nativeRef,f.ref);assert(fs.readFileSync(f.ref.sessionFile,'utf8').startsWith(history));
   f.setError('');const next=f.tools.accept('p','s',{content:'New user intent'},'new-request',f.lease);assert.equal((await f.settled(next.operationId)).phase,'completed');assert.equal(f.streamCalls,2);
  }finally{await f.close();}
@@ -72,6 +77,19 @@ test('true unknown still blocks model and restore APIs; historical recovery is r
   const result=await f.tools.recover('p','s',{operationId:record.operationId,action:'acknowledge-unknown'},'explicit-ack');assert.equal(result.status,'acknowledged');assert.deepEqual(fs.readFileSync(f.ref.sessionFile),native);assert.equal(f.streamCalls,0);
   assert.throws(()=>f.tools.accept('p','s',{content:'Unknown'},'unknown',f.lease),e=>e.code==='REQUEST_UNKNOWN');assert.equal((await f.tools.models('p','s',f.lease)).canSwitch,true);
   await f.tools.switchModel('p','s',{provider:'controlled',modelId:'good'},'after-ack',f.lease);assert.equal((await f.tools.models('p','s',f.lease)).current.modelId,'good');assert.equal(f.streamCalls,0);
+ }finally{await f.close();}
+});
+test('message API rejects an unavailable saved model without using the valid application default',async()=>{
+ const f=await fixture();
+ try{
+  await f.tools.switchModel('p','s',{provider:'controlled',modelId:'good'},'select-good',f.lease);
+  const before=fs.readFileSync(f.ref.sessionFile),handle=f.runtime.getHandle('s');f.blockModel('good');
+  const accepted=f.tools.accept('p','s',{content:'Do not fall back'},'blocked-current',f.lease),record=await f.settled(accepted.operationId);
+  assert.equal(record.phase,'failed');assert.equal(record.evidence.errorCode,'MODEL_UNAVAILABLE');assert.equal(f.streamCalls,0);
+  assert.equal(handle.session.model.id,'good');assert.deepEqual(fs.readFileSync(f.ref.sessionFile),before);
+  const view=await f.tools.models('p','s',f.lease);assert.equal(view.current.modelId,'good');assert.equal(view.current.available,false);assert.equal(view.canSwitch,true);assert(view.models.some(model=>model.modelId==='bad'&&model.available));
+  const changed=await f.tools.switchModel('p','s',{provider:'controlled',modelId:'bad'},'explicit-recovery',f.lease);assert.equal(changed.current.modelId,'bad');assert.equal(changed.canSwitch,true);
+  f.setError('');const next=f.tools.accept('p','s',{content:'Explicit new intent'},'after-explicit',f.lease);assert.equal((await f.settled(next.operationId)).phase,'completed');assert.equal(f.streamCalls,1);
  }finally{await f.close();}
 });
 test('message API retains unknown if the durable failure receipt cannot be written',async()=>{

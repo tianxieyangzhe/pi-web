@@ -152,7 +152,7 @@ export function InlineComposerEditor({ value, attachments, onChange, onPaste, on
   }, [disabled]);
   useEffect(() => () => { for (const url of urls.current.values()) URL.revokeObjectURL(url); }, []);
   return <div ref={root} role="textbox" aria-label={placeholder} aria-multiline="true" aria-disabled={disabled} data-placeholder={placeholder}
-    title="Enter 发送，Shift+Enter 换行，↑ / ↓ 切换历史输入（首行 ↑ 开始）" contentEditable={!disabled} suppressContentEditableWarning
+    contentEditable={!disabled} suppressContentEditableWarning
     className="h-28 min-h-28 max-h-[max(112px,40dvh)] w-full flex-none resize-y overflow-auto whitespace-pre-wrap break-words px-3 py-2 text-sm leading-6 outline-none empty:before:pointer-events-none empty:before:text-zinc-400 empty:before:content-[attr(data-placeholder)]"
     onInput={emit} onBlur={save} onMouseUp={save} onKeyUp={save} onKeyDown={event => {
       if ((event.target as HTMLElement).closest("button")) return;

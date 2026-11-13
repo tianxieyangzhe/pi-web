@@ -97,7 +97,7 @@ export type ActivityEvent = {
 
 export type AgentEvent =
   | { type: 'run_started'; requestId: string; startedAt: string }
-  | ({ type: 'run_metrics' } & import('./session-run-metrics').SessionRunMetrics)
+  | ({ type: 'run_metrics' | 'run_progress' } & import('./session-run-metrics').SessionRunMetrics)
   | {type:"context_changed"}
   | {type:"steering_cleared"}
   | { type: "pi_event"; piType: string; payload: unknown; temporaryId: string | null }
