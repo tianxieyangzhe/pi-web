@@ -87,7 +87,7 @@ FILE-004：复用现有Project files/changes只读API和FileBrowser；不调用P
 | 场景 | 组件语义 | 现有例外或替代 |
 | --- | --- | --- |
 | 全应用按钮 | 原生Button / Prompt Input / Confirmation | 已重新检索官方组件目录（https://elements.ai-sdk.dev/components），其Prompt Input与Confirmation内含按钮但不提供独立应用级按钮入口；未引入shadcn依赖。由web/components/button.tsx集中包装原生button，上传触发器复用buttonStyles；以04 BUTTON-001为唯一外观规范。引入统一基础组件库时复核。 |
-| Session 消息与 Markdown 回复 | Conversation / Message / Response | 现有 `web/workspace/conversation/ai-elements/response.tsx` 提供安全 Markdown 子集；官方依赖可用后复核替换 |
+| Session 消息与 Markdown 回复 | Conversation / Message / Response | 已复核官方Message（https://elements.ai-sdk.dev/components/message），其MessageResponse使用Streamdown并支持KaTeX数学公式；现有 `web/workspace/conversation/ai-elements/response.tsx` 保留安全Markdown子集与本地文件链接行为，MATH-001在此接入KaTeX及公式保护，不新增消息组件体系。整体迁入Streamdown时复核替换 |
 | 项目会话等待响应 | Loader / Spinner | 已检索官方 [Loader](https://elements.ai-sdk.dev/components/loader)，当前指向 shadcn Spinner，匹配加载语义；项目尚未引入 shadcn 组件体系，复用现有 lucide `LoaderCircle` 和 `.spin`，在项目会话 Feature Wrapper 中配合可访问状态文本；统一基础组件体系引入时复核。 |
 | Pi Session Tree entry（含工具） | Conversation / Message / Tool | 会话栏按 `03` 投影整棵树；工具内容及其他节点不得过滤，现有 `conversation.tsx` 可使用原生 disclosure 展开完整内容，官方组件能够承载节点和分支关系时复核 |
 | 原生上下文用量 | Context | 已检索官方 Context（https://ai-sdk.dev/elements/components/context）；依赖 AI SDK/shadcn HoverCard 与进度组件，项目尚未引入配套系统且需表达未知容量与最后可信值。当前以 `web/workspace/inspector/native-context-section.tsx` Feature Wrapper 和原生 progress 显示；配套依赖与未知值映射可用时复核替换 |

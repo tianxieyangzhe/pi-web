@@ -1,6 +1,28 @@
 import type { ReactNode } from "react";
+import katex from "katex";
+import { protectMath, type Formula } from "./math";
 
-type InlineToken = { kind: "text" | "code" | "strong" | "emphasis" | "strike" | "link"; value: string; href?: string };
+type InlineToken = { kind: "text" | "code" | "strong" | "emphasis" | "strike" | "link" | "math"; value: string; href?: string };
+
+function MathFormula({ formula }: { formula: Formula }) {
+  const original = <span className="whitespace-pre-wrap">{formula.source}</span>;
+  if (!formula.complete) return original;
+  try {
+    const html = katex.renderToString(formula.tex, {
+      displayMode: formula.display,
+      throwOnError: true,
+      trust: false,
+      strict: "error",
+      maxSize: 20,
+      maxExpand: 1000,
+      macros: {},
+    });
+    // Only KaTeX-generated markup is inserted; message HTML remains inert.
+    return <span className={formula.display ? "block min-w-0 max-w-full overflow-x-auto overflow-y-hidden" : undefined} dangerouslySetInnerHTML={{ __html: html }} />;
+  } catch {
+    return original;
+  }
+}
 
 function isSafeHref(href: string) {
   const value = href.trim();
@@ -15,7 +37,7 @@ function isSafeHref(href: string) {
 
 function tokenizeInline(value: string): InlineToken[] {
   const tokens: InlineToken[] = [];
-  const pattern = /(`[^`]+`|\[[^\]]+\]\([^\s)]+(?:\s+[^)]*)?\)|\*\*[^*]+\*\*|__[^_]+__|~~[^~]+~~|\*[^*]+\*|_[^_]+_)/g;
+  const pattern = /(\uE000mathx*\d+\uE001|`[^`]+`|\[[^\]]+\]\([^\s)]+(?:\s+[^)]*)?\)|\*\*[^*]+\*\*|__[^_]+__|~~[^~]+~~|\*[^*]+\*|_[^_]+_)/g;
   let cursor = 0;
 
   for (const match of value.matchAll(pattern)) {
@@ -23,7 +45,9 @@ function tokenizeInline(value: string): InlineToken[] {
     const start = match.index ?? cursor;
     if (start > cursor) tokens.push({ kind: "text", value: value.slice(cursor, start) });
 
-    if (token.startsWith("`")) {
+    if (token.startsWith("\uE000")) {
+      tokens.push({ kind: "math", value: token });
+    } else if (token.startsWith("`")) {
       tokens.push({ kind: "code", value: token.slice(1, -1) });
     } else if (token.startsWith("[")) {
       const separator = token.indexOf("](");
@@ -44,19 +68,23 @@ function tokenizeInline(value: string): InlineToken[] {
   return tokens;
 }
 
-function InlineMarkdown({ value, insideLink = false }: { value: string; insideLink?: boolean }) {
+function InlineMarkdown({ value, formulas, insideLink = false }: { value: string; formulas: Map<string, Formula>; insideLink?: boolean }) {
   const nodes: ReactNode[] = [];
   tokenizeInline(value).forEach((token, index) => {
-    if (token.kind === "code") nodes.push(<code className="rounded border border-[#e7ebf2] bg-[#f4f6fa] px-1 py-0.5 font-mono text-[.9em] text-[#37517c]" key={index}>{token.value}</code>);
-    else if (token.kind === "strong") nodes.push(<strong className="font-semibold" key={index}><InlineMarkdown value={token.value} insideLink={insideLink} /></strong>);
-    else if (token.kind === "emphasis") nodes.push(<em key={index}><InlineMarkdown value={token.value} insideLink={insideLink} /></em>);
-    else if (token.kind === "strike") nodes.push(<del key={index}><InlineMarkdown value={token.value} insideLink={insideLink} /></del>);
-    else if (token.kind === "link") {
-      if (insideLink) { nodes.push(<InlineMarkdown key={index} value={token.value} insideLink />); return; }
-      const external = /^https?:\/\//i.test(token.href ?? "");
-      nodes.push(<a className="text-[#2455a3] underline underline-offset-2" key={index} href={token.href} target={external ? "_blank" : undefined} rel={external ? "noreferrer noopener" : undefined}><InlineMarkdown value={token.value} insideLink /></a>);
+    if (token.kind === "math") {
+      const formula = formulas.get(token.value);
+      nodes.push(formula ? <MathFormula key={index} formula={formula} /> : token.value);
     }
-    else nodes.push(token.value);
+    else if (token.kind === "code") nodes.push(<code className="rounded border border-[#e7ebf2] bg-[#f4f6fa] px-1 py-0.5 font-mono text-[.9em] text-[#37517c]" key={index}>{token.value}</code>);
+    else if (token.kind === "strong") nodes.push(<strong className="font-semibold" key={index}><InlineMarkdown formulas={formulas} value={token.value} insideLink={insideLink} /></strong>);
+    else if (token.kind === "emphasis") nodes.push(<em key={index}><InlineMarkdown formulas={formulas} value={token.value} insideLink={insideLink} /></em>);
+    else if (token.kind === "strike") nodes.push(<del key={index}><InlineMarkdown formulas={formulas} value={token.value} insideLink={insideLink} /></del>);
+    else if (token.kind === "link") {
+      if (insideLink) { nodes.push(<InlineMarkdown formulas={formulas} key={index} value={token.value} insideLink />); return; }
+      const external = /^https?:\/\//i.test(token.href ?? "");
+      nodes.push(<a className="text-[#2455a3] underline underline-offset-2" key={index} href={token.href} target={external ? "_blank" : undefined} rel={external ? "noreferrer noopener" : undefined}><InlineMarkdown formulas={formulas} value={token.value} insideLink /></a>);
+    }
+    else nodes.push(...token.value.split("\n").flatMap((line, lineIndex) => lineIndex === 0 ? [line] : [<br key={`${index}-${lineIndex}`} />, line]));
   });
   return <>{nodes}</>;
 }
@@ -80,7 +108,7 @@ function isBlockStart(lines: string[], index: number) {
     || Boolean(lines[index + 1] && line.includes("|") && isTableSeparator(lines[index + 1]));
 }
 
-function renderBlocks(source: string, prefix: string): ReactNode[] {
+function renderBlocks(source: string, prefix: string, formulas: Map<string, Formula>): ReactNode[] {
   const lines = source.replace(/\r\n?/g, "\n").split("\n");
   const blocks: ReactNode[] = [];
   let index = 0;
@@ -102,7 +130,7 @@ function renderBlocks(source: string, prefix: string): ReactNode[] {
     const heading = line.match(/^(#{1,6})\s+(.*)$/);
     if (heading) {
       const level = heading[1].length;
-      const content = <InlineMarkdown value={heading[2]} />;
+      const content = <InlineMarkdown formulas={formulas} value={heading[2]} />;
       const key = `${prefix}-${blocks.length}`;
       if (level === 1) blocks.push(<h1 className="m-0 text-xl font-semibold tracking-tight" key={key}>{content}</h1>);
       else if (level === 2) blocks.push(<h2 className="m-0 text-lg font-semibold tracking-tight" key={key}>{content}</h2>);
@@ -123,7 +151,7 @@ function renderBlocks(source: string, prefix: string): ReactNode[] {
     if (/^\s*>/.test(line)) {
       const quoteLines: string[] = [];
       while (index < lines.length && /^\s*>/.test(lines[index])) quoteLines.push(lines[index++].replace(/^\s*>\s?/, ""));
-      blocks.push(<blockquote className="m-0 border-l-[3px] border-[#b8cdf2] py-0.5 pl-3.5 text-[#60708a]" key={`${prefix}-${blocks.length}`}>{renderBlocks(quoteLines.join("\n"), `${prefix}-quote-${blocks.length}`)}</blockquote>);
+      blocks.push(<blockquote className="m-0 border-l-[3px] border-[#b8cdf2] py-0.5 pl-3.5 text-[#60708a]" key={`${prefix}-${blocks.length}`}>{renderBlocks(quoteLines.join("\n"), `${prefix}-quote-${blocks.length}`, formulas)}</blockquote>);
       continue;
     }
 
@@ -138,8 +166,8 @@ function renderBlocks(source: string, prefix: string): ReactNode[] {
         index += 1;
       }
       const key = `${prefix}-${blocks.length}`;
-      if (ordered) blocks.push(<ol className="m-0 grid list-decimal gap-1.5 pl-6" key={key}>{items.map((item, itemIndex) => <li key={itemIndex}><InlineMarkdown value={item} /></li>)}</ol>);
-      else blocks.push(<ul className="m-0 grid list-disc gap-1.5 pl-6" key={key}>{items.map((item, itemIndex) => <li key={itemIndex}><InlineMarkdown value={item} /></li>)}</ul>);
+      if (ordered) blocks.push(<ol className="m-0 grid list-decimal gap-1.5 pl-6" key={key}>{items.map((item, itemIndex) => <li key={itemIndex}><InlineMarkdown formulas={formulas} value={item} /></li>)}</ol>);
+      else blocks.push(<ul className="m-0 grid list-disc gap-1.5 pl-6" key={key}>{items.map((item, itemIndex) => <li key={itemIndex}><InlineMarkdown formulas={formulas} value={item} /></li>)}</ul>);
       continue;
     }
 
@@ -149,18 +177,19 @@ function renderBlocks(source: string, prefix: string): ReactNode[] {
       index += 2;
       const rows: string[][] = [];
       while (index < lines.length && lines[index].includes("|") && lines[index].trim()) rows.push(splitTableRow(lines[index++]));
-      blocks.push(<div className="max-w-full overflow-auto" key={`${prefix}-${blocks.length}`}><table className="w-full border-collapse text-[.92em]"><thead><tr>{headers.map((cell, cellIndex) => <th className="min-w-[84px] border border-[#e1e8f2] bg-[#f5f8fd] px-2.5 py-2 font-semibold text-[#3b4c68]" key={cellIndex} style={{ textAlign: alignments[cellIndex] }}><InlineMarkdown value={cell} /></th>)}</tr></thead><tbody>{rows.map((row, rowIndex) => <tr key={rowIndex}>{headers.map((_, cellIndex) => <td className="min-w-[84px] border border-[#e1e8f2] px-2.5 py-2 align-top" key={cellIndex} style={{ textAlign: alignments[cellIndex] }}><InlineMarkdown value={row[cellIndex] ?? ""} /></td>)}</tr>)}</tbody></table></div>);
+      blocks.push(<div className="max-w-full overflow-auto" key={`${prefix}-${blocks.length}`}><table className="w-full border-collapse text-[.92em]"><thead><tr>{headers.map((cell, cellIndex) => <th className="min-w-[84px] border border-[#e1e8f2] bg-[#f5f8fd] px-2.5 py-2 font-semibold text-[#3b4c68]" key={cellIndex} style={{ textAlign: alignments[cellIndex] }}><InlineMarkdown formulas={formulas} value={cell} /></th>)}</tr></thead><tbody>{rows.map((row, rowIndex) => <tr key={rowIndex}>{headers.map((_, cellIndex) => <td className="min-w-[84px] border border-[#e1e8f2] px-2.5 py-2 align-top" key={cellIndex} style={{ textAlign: alignments[cellIndex] }}><InlineMarkdown formulas={formulas} value={row[cellIndex] ?? ""} /></td>)}</tr>)}</tbody></table></div>);
       continue;
     }
 
     const paragraph: string[] = [];
     while (index < lines.length && lines[index].trim() && !(paragraph.length > 0 && isBlockStart(lines, index))) paragraph.push(lines[index++]);
-    blocks.push(<p className="m-0" key={`${prefix}-${blocks.length}`}>{paragraph.map((part, partIndex) => <span key={partIndex}>{partIndex > 0 && <br />}<InlineMarkdown value={part} /></span>)}</p>);
+    blocks.push(<p className="m-0" key={`${prefix}-${blocks.length}`}><InlineMarkdown value={paragraph.join("\n")} formulas={formulas} /></p>);
   }
 
   return blocks;
 }
 
 export function Response({ children, className = "" }: { children: string; className?: string }) {
-  return <div className={`markdown-response grid min-w-0 gap-2.5 break-words whitespace-normal [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 ${className}`.trim()}>{renderBlocks(children, "response")}</div>;
+  const { text, formulas } = protectMath(children.replace(/\r\n?/g, "\n"));
+  return <div className={`markdown-response grid min-w-0 gap-2.5 break-words whitespace-normal [&>*]:min-w-0 [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 ${className}`.trim()}>{renderBlocks(text, "response", formulas)}</div>;
 }

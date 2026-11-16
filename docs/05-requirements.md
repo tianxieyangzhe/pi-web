@@ -1,5 +1,9 @@
 # 05｜需求：模型与 API 的完成条件
 
+## MATH-001｜消息数学公式排版
+
+验收：用户所给几何分析中的向量、分式、根号及多行公式正确排版；兼容04所列四种分隔符，公式中的下划线及竖线不触发Markdown；代码和转义美元保持原文；未闭合、无效公式保持原文，消息继续显示；长公式不撑宽会话。共享Response覆盖独立项目与Workspace，仅投影既有正文，无模型/API/历史变化。状态：代码已接入，新增KaTeX依赖及根布局样式，公式在既有Markdown前保护并由共享Response渲染；`npm run typecheck`与`git diff --check`通过。生产构建补充验收：用户反馈Next压缩后生成无效模板字符串，公式保护的反引号匹配改用普通字符串拼接，保留原有代码保护语义；`AI_WORKSPACE_BUILD_DIR=.next-release npm run build`通过，已完成生产编译、TypeScript、页面数据收集、静态页生成及构建追踪；未替换release/或启停服务。未新增或运行测试文件，未运行浏览器或真实模型验收；所列公式、代码保留、无效回退及窄屏滚动的浏览器视觉验收待做。
+
 ## FILE-004｜项目 Git diff 与代码预览
 
 工作区链路修复：此前列表固定isGitRepository=false且没有changes适配，导致diff常禁用；现在成员项目目录和Git读取统一复用根路径读取器，专属API与验收记录见06 FILE-004。tests/workspace-project-git-api.test.cjs、类型检查及差异检查通过；已有长驻服务需重载新装配，浏览器待验。
