@@ -1,3 +1,4 @@
+import {observeRepository} from '@/application/application-changes';
 import type { Agent, AgentDefinition } from "@/domain/models";
 import { DomainError } from "@/domain/errors";
 import { roleETag, validateDefinition } from "@/domain/agent-definition";
@@ -115,12 +116,26 @@ const repository:AgentRepositoryPort = {
     })();
     return this.get(id);
   },
-  delete(id: string): boolean {
+  delete(id: string, expected?:string): boolean {
     assertRoles(); assertSchemaCompatible();
-    const row = database.prepare("SELECT id FROM agents WHERE id=?").get(id);
-    if (!row) return false;
-    database.prepare("DELETE FROM agents WHERE id=?").run(id);
-    return true;
+    return database.transaction(() => {
+      const current = this.get(id);
+      if (!current) return false;
+      if (expected && roleETag(current) !== expected) throw new DomainError("WRITE_CONFLICT", "助手已更新，请重新读取", 409, true);
+      // Existing schemas prohibit changing a session's agent via UPDATE. Reinsert
+      // the same row inside this transaction, preserving every other column.
+      const sessions = database.prepare("SELECT * FROM sessions WHERE agent_id=?").all(id) as Record<string, unknown>[];
+      for (const session of sessions) {
+        const columns = Object.keys(session);
+        const quoted = columns.map(column => `"${column.replaceAll('"', '""')}"`);
+        database.prepare("DELETE FROM sessions WHERE id=?").run(session.id);
+        database.prepare(`INSERT INTO sessions (${quoted.join(",")}) VALUES (${columns.map(() => "?").join(",")})`)
+          .run(...columns.map(column => column === "agent_id" || column === "agent_snapshot_json" ? null : session[column]));
+      }
+      const result = database.prepare("DELETE FROM agents WHERE id=? AND revision=? AND updated_at=?").run(id,current.revision,current.updatedAt);
+      if (!result.changes) throw new DomainError("WRITE_CONFLICT", "助手已更新，请重新读取", 409, true);
+      return true;
+    })();
   },
   isInUse(id: string): boolean {
     assertRoles();
@@ -128,5 +143,5 @@ const repository:AgentRepositoryPort = {
   }
 };
 
-return repository;
+return observeRepository(repository,{create:['catalog'],update:['catalog'],delete:['catalog','sessions']});
 }

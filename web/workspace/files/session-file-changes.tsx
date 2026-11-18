@@ -19,7 +19,7 @@ export function SessionFileChanges({ base, running, revision = 0 }: { base: stri
   const selectedRef = useRef(selected); selectedRef.current = selected;
   const runRef = useRef<string | null>(null);
   useEffect(() => {
-    let disposed = false, pending = false, timer: ReturnType<typeof setTimeout> | undefined;
+    let disposed = false, pending = false;
     const controller = new AbortController();
     setError(''); setLoading(true);
     async function load() {
@@ -32,13 +32,12 @@ export function SessionFileChanges({ base, running, revision = 0 }: { base: stri
         runRef.current = next.runId; setView(next);
         if (selectedRef.current && !next.files.some(file => file.id === selectedRef.current)) { setSelected(null); setContent(null); }
         setError('');
-        if (next.status === 'running' || running) timer = setTimeout(() => { void load(); }, 3000);
-      } catch (cause) { if (!disposed) { setError(cause instanceof Error ? cause.message : '无法读取原生编辑差异'); if (running) timer = setTimeout(() => { void load(); }, 3000); } }
+      } catch (cause) { if (!disposed) setError(cause instanceof Error ? cause.message : '无法读取原生编辑差异'); }
       finally { pending = false; if (!disposed) setLoading(false); }
     }
-    const visible = () => { if (!document.hidden) { if (timer) clearTimeout(timer); void load(); } };
+    const visible = () => { if (!document.hidden) void load(); };
     void load(); document.addEventListener('visibilitychange', visible);
-    return () => { disposed = true; controller.abort(); if (timer) clearTimeout(timer); document.removeEventListener('visibilitychange', visible); };
+    return () => { disposed = true; controller.abort(); document.removeEventListener('visibilitychange', visible); };
   }, [base, running, revision, reload]);
   useEffect(() => {
     setContent(null);

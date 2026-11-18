@@ -61,7 +61,16 @@ export function Conversation({ tree, temporary, steeringQueue = [], pendingText,
   const [expandedTools,setExpandedTools]=useState<Set<string>>(()=>new Set());
   const [expandedGroups,setExpandedGroups]=useState<Set<string>>(()=>new Set());
   const entries = new Map(tree.entries.map(({ entry }) => [entry.id, entry]));
-  const visibleTemporary = temporary.filter(item => !item.entryId || !entries.has(item.entryId));
+  const retryEvents = temporary.flatMap(item => item.events.filter(event => event.type === 'auto_retry_start' || event.type === 'auto_retry_end'));
+  const latestRetry = retryEvents.at(-1);
+  const currentRetryEvents = latestRetry ? retryEvents.filter(event => event.runId === latestRetry.runId) : [];
+  const retryPayload = latestRetry?.payload as { attempt?:number; maxAttempts?:number; delayMs?:number; errorMessage?:string; success?:boolean; finalError?:string } | undefined;
+  const retryTitle = latestRetry?.type === 'auto_retry_start'
+    ? `自动重试 · ${retryPayload?.attempt ?? '?'} / ${retryPayload?.maxAttempts ?? '?'} · 计划等待 ${typeof retryPayload?.delayMs === 'number' ? retryPayload.delayMs / 1000 : '?'} 秒`
+    : latestRetry?.type === 'auto_retry_end' ? `自动重试${retryPayload?.success === true ? '成功' : retryPayload?.success === false ? '失败' : '结束'}` : '';
+  const visibleTemporary = temporary.filter(item => !item.entryId || !entries.has(item.entryId))
+    .map(item => ({...item, events:item.events.filter(event => event.type !== 'auto_retry_start' && event.type !== 'auto_retry_end')}))
+    .filter(item => item.events.length > 0);
   const resultToolIds=new Set([...tree.entries.map(({entry})=>entry.message),...visibleTemporary.map(temporaryMessage)]
     .flatMap(value=>{const message=value as Record<string,unknown>|null|undefined;return message?.role==='toolResult'&&typeof message.toolCallId==='string'?[message.toolCallId]:[];}));
   function toolDisclosure(value:Record<string,unknown>,fallbackKey:string,complete:boolean,events?:TemporaryNode['events']) {
@@ -105,7 +114,7 @@ export function Conversation({ tree, temporary, steeringQueue = [], pendingText,
       const tool = toolEvents.length ? Object.assign({}, ...toolEvents.map(event => event.payload)) as Record<string, unknown> : null;
       if(!message&&tool&&typeof tool.toolCallId==='string'&&resultToolIds.has(tool.toolCallId))continue;
       const fallbackKey=item.entryId?`entry:${item.entryId}`:`temporary:${item.key}`;
-      const content=<article className={`grid min-w-0 gap-1 ${message?.role==='user'?'ml-auto w-3/4 rounded-lg bg-sky-100 px-3 py-2 text-left':''}`} key={item.key}><span className="text-[11px] text-zinc-500">{String(message?.role ?? "Pi")} · {item.entryId ? "等待历史核对" : "未确认持久化"}</span>{message ? message.role==='toolResult'?toolDisclosure(message,fallbackKey,true):<MessageContent message={message} /> : tool ? toolDisclosure(tool,fallbackKey,toolEvents.at(-1)?.type==='tool_execution_end',item.events) : <Disclosure title="实时事件"><Raw value={item.events} /></Disclosure>}</article>;
+      const content=<article className={`grid min-w-0 gap-1 ${message?.role==='user'?'ml-auto w-3/4 rounded-lg bg-sky-100 px-3 py-2 text-left':''}`} key={item.key}>{message ? message.role==='toolResult'?toolDisclosure(message,fallbackKey,true):<MessageContent message={message} /> : tool ? toolDisclosure(tool,fallbackKey,toolEvents.at(-1)?.type==='tool_execution_end',item.events) : <Disclosure title="实时事件"><Raw value={item.events} /></Disclosure>}</article>;
       const details=activity(message,fallbackKey);
       if(!message&&tool&&typeof tool.toolCallId==='string'){details.calls.set(tool.toolCallId,String(tool.toolName??'tool'));if(toolEvents.at(-1)?.type==='tool_execution_end')details.returned.add(tool.toolCallId);details.failed=!!tool.isError;}
       rows.push({key:item.key,content,...details,entryId:item.entryId??undefined,runId:item.events.find(event=>event.runId)?.runId});
@@ -128,6 +137,10 @@ export function Conversation({ tree, temporary, steeringQueue = [], pendingText,
       return <Disclosure key={key} title={title} open={expandedGroups.has(key)} onOpenChange={open=>setExpandedGroups(current=>{if(current.has(key)===open)return current;const next=new Set(current);if(open)next.add(key);else next.delete(key);return next;})}>{group.rows.map(row=><div className="min-w-0" key={row.key}>{row.content}</div>)}</Disclosure>;
     })}
     {steeringQueue.map((text,index)=><article key={index} className="ml-auto w-3/4 rounded-lg bg-sky-100 px-3 py-2"><span className="text-[11px] text-zinc-500">纠正 · 等待 Pi 消费</span><div className="whitespace-pre-wrap text-sm">{text}</div></article>)}
+    {latestRetry&&<Disclosure title={retryTitle}>
+      {(retryPayload?.finalError??retryPayload?.errorMessage)&&<Raw value={retryPayload?.finalError??retryPayload?.errorMessage}/>}
+      <Raw value={currentRetryEvents}/>
+    </Disclosure>}
     <WaitingIndicator running={running} metrics={runMetrics} tokenUsage={tree.tokenUsage} latestRunUsage={tree.latestRunUsage}/>
   </section>;
 }

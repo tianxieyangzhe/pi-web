@@ -8,13 +8,14 @@ import { UserRound as AgentIcon, Plus } from "lucide-react";
 export function RoleDirectory({open,roles,onRefresh,onEdit}:{open:boolean;roles:Agent[];onRefresh:()=>Promise<void>;onEdit:(target:RoleTarget)=>void}) {
   const [error,setError]=useState(""),[notice,setNotice]=useState(""),[busyId,setBusyId]=useState<string|null>(null);
   async function remove(role:Agent){
-    if(!window.confirm(`删除“${role.name}”？若已有会话引用，将归档并保留历史版本。`))return;
-    setError("");setNotice("");
+    if(busyId||!window.confirm(`删除“${role.name}”？`))return;
+    setBusyId(role.id);setError("");setNotice("");
     try{
-      const result=await api.deleteAgent(role.id,role.writeETag);
+      await api.deleteAgent(role.id,role.writeETag);
       await onRefresh();
-      setNotice(result.archived?`“${role.name}”已归档，历史引用保留。`:`“${role.name}”已删除。`);
-    }catch(cause){setError(cause instanceof Error?cause.message:"删除 Agent 失败");}
+      setNotice(`“${role.name}”已删除。`);
+    }catch(cause){setError(cause instanceof Error?cause.message:"删除助手失败");}
+    finally{setBusyId(null);}
   }
   async function setStatus(role:Agent,status:Agent["status"]){
     setBusyId(role.id);setError("");setNotice("");

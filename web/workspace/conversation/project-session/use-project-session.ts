@@ -1,3 +1,4 @@
+import { subscribeApplicationResource } from '../../../api/application-events';
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../../../api/client";
 import type { ConversationMessage, Project, Session } from "../../../domain/models";
@@ -9,19 +10,21 @@ export function useProjectSession(project: Project | null, preferredSessionId?: 
   const [loadedProjectId, setLoadedProjectId] = useState<string | null>(null);
   const loadVersion = useRef(0);
   const base = project && sessionId ? `/api/projects/${project.id}/sessions/${sessionId}` : null;
-  const state = useSessionTree(base, () => api.listMessages(project!.id, sessionId!), async () => {
-    const result = await api.listSessions(project!.id); if (selected.current === base) setSessions(result);
-  });
+  const state = useSessionTree(base, () => api.listMessages(project!.id, sessionId!));
   const selected = useRef(base); selected.current = base;
   const load = useCallback(async (nextProject: Project, preferred?: string | null) => {
     const version = ++loadVersion.current, nextSessions = await api.listSessions(nextProject.id);
     if (version !== loadVersion.current) return;
     setSessions(nextSessions); setSessionId(preferred && nextSessions.some(item => item.id === preferred) ? preferred : null); setLoadedProjectId(nextProject.id);
   }, []);
+  const projectId=project?.id;
   useEffect(() => {
-    if (!project) { loadVersion.current++; setLoadedProjectId(null); setSessionId(null); return; }
-    void load(project, preferredSessionId).catch(cause => state.setError(cause instanceof Error ? cause.message : "无法加载项目会话"));
-  }, [load, preferredSessionId, project]);
+    if (!projectId) { loadVersion.current++; setLoadedProjectId(null); setSessionId(null); return; }
+    return subscribeApplicationResource<Session[]>(`/api/projects/${projectId}/sessions`,next=>{
+      setSessions(next);setLoadedProjectId(projectId);
+      setSessionId(preferredSessionId&&next.some(item=>item.id===preferredSessionId)?preferredSessionId:null);
+    },state.setError);
+  }, [projectId,preferredSessionId]);
   const compacting=state.compacting;
   async function send(content: string, _steer = false, references?: import("../../../../src/domain/message-references").MessageReference[], webSearch?: boolean, toolSearch?: boolean) {
     if (!state.ready || compacting || stopping) throw new Error("会话尚未就绪、正在压缩或停止");

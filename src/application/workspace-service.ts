@@ -1,3 +1,4 @@
+import {applicationChanges} from './application-changes';
 import {workspaceAssistantContext} from './assistant-context';
 import {sessionFileChanges} from './session-file-changes';
 import { createSessionRunMetrics, sessionTokenUsage, latestRunTokenUsage } from './session-run-metrics';
@@ -113,7 +114,7 @@ export function createWorkspaceService(d: { projectRules?:import('./ports/projec
       try{
         await assertKnown(value);scope(workspaceId,id);
         const result=changeSessionContextFiles(d.contextFiles,id,method,body,etag,reference=>d.readContextFile!(workspaceId,reference));
-        events.agent(id,{type:"context_changed"});return result;
+        applicationChanges.publish({topic:"context-files",key:id});events.agent(id,{type:"context_changed"});return result;
       }finally{running.delete(id);finish();presence.settled(id);}
     },
     async sessionFilePreview(workspaceId:string,sessionId:string,path:string) {

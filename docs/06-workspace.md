@@ -1,5 +1,7 @@
 # 06｜Workspace 首期：项目集合与跨项目会话
 
+SSE-001：Workspace既有events接口共用03的entry_appended原生身份转发与树同步规则，context_edit不重复进入临时消息；完整原生树与失败目标保留，不新增Workspace模型、API或迁移。验收状态见05。
+
 ## CHANGE-001｜Workspace最新一轮原生编辑差异
 
 Workspace专属事实仅复用所属Pi Session Tree和已有workspace_request/result记录。最新无operation的workspace_request为根请求，runId取其key，边界取entryIds及匹配result.entryIds；operation=steer的记录不新建轮次。GET /api/workspaces/:id/sessions/:sessionId/changes及changes/content?runId=&fileId=先验证workspace_sessions所属workspace_id，其余DTO、匹配、只读和错误遵循03 CHANGE-001；缺少可信边界不猜测。无新增表/字段、文件扫描、正文快照、额度或Pi调用。
@@ -10,10 +12,12 @@ UI-057：Workspace会话辅助按钮组恢复至标题栏右侧，与标题同�
 
 MODEL-SWITCH-001：Workspace的PUT S/model成功后沿用原lease及订阅，按返回结果恢复可发送投影并刷新树／上下文／列表，不调用open；主动重开按MCFG-003沿用已保存型号。不新增持久事实、接口或迁移；验收状态见05。
 
-UI-054／055／056：Workspace同步采用04的运行与选中分离、名称旁运行计数、顶部居中通知和Composer单行省略。运行来源为既有GET /api/workspaces/:id/sessions的allowedActions包含interrupt，仅主请求执行时成立；不以open或当前选择推断运行。导航每3秒读取列表的例外仅用于运行投影，页面隐藏暂停、恢复立即刷新，失败显示状态不可用；不请求transcript、不创建lease或Pi句柄，不新增模型／表／API。验收：多个会话同时运行及切换后各自标记正确，收起工作区仍显示数量，停止／完成后下次刷新移除，错误不伪装0；提示与快捷键按04。状态：代码已接入，类型检查与差异检查通过；浏览器多会话与视觉待验收。
+UI-054／055／056：Workspace同步采用04的运行与选中分离、名称旁运行计数、顶部居中通知和Composer单行省略。运行来源为PUSH-001 navigation推送，沿用既有allowedActions包含interrupt的主请求口径；不以open或当前选择推断运行。PUSH-001取消导航轮询例外：共享SSE直接推送navigation快照，来源为本服务当前主请求活动及SQL归属，断线显示状态不可用、重连恢复快照；不请求transcript、不创建lease或Pi句柄，不新增模型／表，通用订阅API契约见03 PUSH-001。验收：多个会话同时运行及切换后各自标记正确，收起工作区仍显示数量，停止／完成后由服务端推送移除，错误不伪装0；提示与快捷键按04。状态：代码已接入，类型检查与差异检查通过；浏览器多会话与视觉待验收。
 UI-053：Workspace复用04会话树标题规则，纯工具调用assistant按toolCall名称显示，thinking等按实际内容类型显示，真正空节点才标无正文；保留全部节点及原父子关系，验收见05。
 
 UI-052：Workspace复用04的空assistant占位规则，尚无内容的实时开始事件不绘制空标头，原始事件仍保留，已结束或历史空消息保留可展开原文；不影响thinking/工具/未知块与错误，验收状态见05。
+
+UI-058：Workspace复用04自动重试实时事件投影，不将auto_retry_start／auto_retry_end标记为待持久化节点；仅调整共享Conversation，模型/API及会话树不变，验收及状态见05。
 
 UI-051：Workspace复用04的会话状态分派修复；session_state只更新运行与等待显示，不进入Pi临时内容列表，真实Pi原文保留。验收及状态见05 UI-051；无Workspace模型/API变化。
 
@@ -384,6 +388,12 @@ S/assistant使用类型化文件保存精确版本引用，不修改workspace_se
 AGENT-003：工作区来源生成复用通用03的生成技能API与04的选择投影，技能可选，不选时模型直接调查项目；所选技能指导各项目独立规则整理；自动修订可按意见同时调整多段，未涉及项目规则保持原文，服务端拒绝越界项目，不扩大projectIds分析范围，不改变固定workspace XML、会话技能、Pi权限或版本模型。
 
 
+ASSIST-014：工作区会话的助手引用不阻止目录删除；有效选择按通用02/03规则派生，目录删除后read返回selection=null、下一轮resolve为null，保留WorkspaceSession及Pi身份和历史。运行中的轮次继续使用已经装配的内存配置，不自动中止。
+
+PUSH-002：工作区会话messages和context-files加入03共享资源订阅，先校验workspaceId+sessionId归属，原DTO和全树/工具原文不变。Pi节点通知仅更新树；参考清单只在成功变更后更新，页面不再成对GET。临时节点与快照跨连接到达顺序按03处理，租约及pong规则不变。验收见05 PUSH-002。
+
+PUSH-001：Workspace目录、已展开会话列表和成员项目规则状态复用03共享资源订阅及原DTO；服务端提交、会话活动/原生追加/终态、规则进度主动通知。navigation不调用完整sessions DTO或Pi预览；成员规则按真实workspaceId/projectId校验，不访问独立Project。无新模型/SQL/迁移/lease；验收以05 PUSH-001及工作区归属隔离为准。
+
 ## REF-ASSIST-001｜消息引用助手与Skill
 
 会话输入工具栏按“引用助手 → 引用 Skill → 上传文件”排列，独立项目与工作区复用。助手从候选API及GET /api/agents/:id读取正式精确版本，选择后通过既有GET/PUT S/assistant写入会话助手选择（精确agentId/revision/contentSha256、If-Match和当前lease），下一轮按ASSIST-011装配系统提示词。只允许active正式版本；继承默认提示词的助手同样可选。助手不转换为附件、不写messages.references、不占附件额度、不在输入框或对话中显示合成文件。选择持续生效至显式更换或移除，在Composer引用入口查看名称与更换；会话检查不再展示助手分区，既有移除API保留但不新增移除入口；不隐藏既有Pi历史或用户上传文件。Skill列表复用GET /api/agents/skills，新增GET /api/agents/skills/:skillId返回{id,name,description,sha256,content}完整技能文本，受控技能目录读取与错误沿用AGENT-003，无Pi调用、数据库写入或新增持久模型。技能只作为本次消息材料，不自动安装或授予能力。客户端不提供路径，响应不含绝对路径。
@@ -418,7 +428,7 @@ BUTTON-001：工作区导航、会话操作、项目成员设置及目录弹窗�
 
 工作区新增与设置铺满导航右侧剩余画布，不设最大宽度。项目列表操作列并排放置“AGENTS.md 设置”和移除按钮；已保存成员可选择规则设置，未保存的新成员禁用设置并提示先保存工作区。当前规则选择只保存于页面，不改变默认项目、工作区配置或Session。
 
-下方仅装配当前选择的一个已保存且仍在编辑列表内的项目规则区，初始选已保存默认项目，否则首个已保存成员；移除当前项后回退首个可用成员，没有可用成员时不装配。点击设置切换所属项目，旧读取及轮询随组件卸载停止，旧响应不得写入新项目；已接受后台生成继续运行，重新进入从原API恢复状态。未提交生成要求属于页面草稿，切换时丢弃。
+下方仅装配当前选择的一个已保存且仍在编辑列表内的项目规则区，初始选已保存默认项目，否则首个已保存成员；移除当前项后回退首个可用成员，没有可用成员时不装配。点击设置切换所属项目，旧订阅随组件卸载释放，旧响应不得写入新项目；已接受后台生成继续运行，重新进入由共享SSE发送当前状态，不轮询。未提交生成要求属于页面草稿，切换时丢弃。
 
 整个设置主体宽屏采用两列：左侧从上至下为工作区信息、项目列表、保存操作和所选项目的生成配置，右侧仅所选项目的只读AGENTS.md预览；不再将工作区信息放在两列上方。窄屏信息和配置在上，预览在下；无已保存项目时右侧显示保存后可预览的占位。独立项目原有左右顺序不变。仍调用所属成员agent-rules既有GET/PUT/POST/PATCH，无模型/API/SQL/Pi变化，无历史迁移。
 

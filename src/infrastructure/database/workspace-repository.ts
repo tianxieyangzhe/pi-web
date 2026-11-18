@@ -1,3 +1,4 @@
+import {observeRepository} from '@/application/application-changes';
 import { deleteSessionRecord } from "./delete-session.server";
 import type Database from "better-sqlite3";
 import path from "node:path";
@@ -73,5 +74,5 @@ export function createWorkspaceRepository(db: Database.Database): WorkspaceRepos
     end(workspaceId,id) { assertWritable(); db.prepare('UPDATE workspace_sessions SET ended_at=? WHERE id=? AND workspace_id=? AND ended_at IS NULL').run(new Date().toISOString(),id,workspaceId); const value = this.session(workspaceId,id); if (!value) throw notFound(); return value; },
 
   };
-  return repository;
+  return observeRepository(repository,{save:['catalog'],createSession:['sessions'],deleteSession:['sessions'],bindNative:['sessions'],end:['sessions']});
 }

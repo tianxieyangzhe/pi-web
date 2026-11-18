@@ -1,3 +1,4 @@
+import {subscribeApplicationResource} from '../api/application-events';
 import {Button} from '../components/button';
 import {HoverHints} from '../components/hover-hints';
 import { ErrorToast } from './conversation/error-toast';
@@ -51,8 +52,9 @@ export function Workspace() {
   const activity=useNavigationActivity(state.projects.map(item=>item.id),workspaces.map(item=>item.id));
   const loadWorkspaces=useCallback(async()=>{try{setWorkspaces(await workspaceApi.list());setWorkspaceError('');}catch(cause){setWorkspaceError(cause instanceof Error?cause.message:'无法加载工作区');}},[]);
   const loadSessions=useCallback(async(id:string)=>{const version=(sessionLoadVersions.current.get(id)??0)+1;sessionLoadVersions.current.set(id,version);const sessions=await workspaceApi.sessions(id);if(sessionLoadVersions.current.get(id)===version)setWorkspaceSessions(current=>({...current,[id]:sessions}));},[]);
-  useEffect(()=>{void loadWorkspaces();},[loadWorkspaces]);
-  useEffect(()=>{if(selection?.kind==='workspace')void loadSessions(selection.workspaceId).catch(cause=>setWorkspaceError(cause.message));},[selection,loadSessions]);
+  useEffect(()=>{setWorkspaces(state.workspaces);},[state.workspaces]);
+  const selectedWorkspaceId=selection?.kind==='workspace'?selection.workspaceId:null;
+  useEffect(()=>{if(!selectedWorkspaceId)return;return subscribeApplicationResource<WorkspaceSessionDTO[]>(`/api/workspaces/${selectedWorkspaceId}/sessions`,sessions=>{setWorkspaceSessions(current=>({...current,[selectedWorkspaceId]:sessions}));setWorkspaceError('');},setWorkspaceError);},[selectedWorkspaceId]);
   const project=state.projects.find(item=>item.id===selectedProjectId(selection))??null;
   const projectSession=useProjectSession(project,selection?.kind==='project'?selection.sessionId:undefined);
   useEffect(()=>{if(project&&projectSession.loadedProjectId===project.id)navigation.updateProjectSessions(project.id,projectSession.sessions);},[project,projectSession.loadedProjectId,projectSession.sessions,navigation.updateProjectSessions]);

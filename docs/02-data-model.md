@@ -10,6 +10,12 @@ UI-049：工具连续组仅由所属Pi树与SSE投影，折叠选择是当前Ses
 
 需要新增、合并、拆分、重命名或退役表时，先完成本节要求的事实、问题、取舍、数量、关系和历史映射。未获用户明确授权，不把映射写成可执行迁移。
 
+PUSH-002：共享推送直接传输既有SessionTree及SessionContextFilesView；缓存/临时节点关联只为当前页面投影，身份按所属Session+真实entryId，不按文本推断。无新持久对象、存储或迁移。
+
+## PUSH-001｜推送派生事实
+
+不新增表、文件或持久事件日志。订阅资源、监听器、序号、待发送合并通知和连接状态均为进程内投影。navigation为Record<`project:${id}`|`workspace:${id}`,string[]>，值为所属正在执行主请求的Session ID；来源是SQL归属和现有运行协调器活动，排除压缩/配置任务，不读取Pi历史。catalog为现有ProjectDTO/AgentDTO/MCP DTO/WorkspaceRecord数组的集合；会话列表和项目规则沿用原DTO。断线不把未知标成空闲；重连发送当前完整快照。
+
 ## CHANGE-001｜原生编辑差异投影
 
 无新增持久对象、SQL表、快照或正文文件。最新根请求身份和边界复用既有ProjectOperation message的operationId、baseline.entryIds、after.entryIds；Workspace专属映射见06。只从所属Pi Session Tree的原生toolResult读取成功edit的details.diff与firstChangedLine，并沿parentId匹配assistant toolCall的toolCallId及arguments.path。同文件多次编辑按原生顺序保留，不合并为文件净变化；还原编辑仍显示。write、bash没有原生edit差异时不推算。
@@ -193,8 +199,8 @@ contextWindow 与 maxTokens 是 Pi 解析结果中的正整数，无法确认时
 | 对象 / SQL 表 | 字段到列、类型与默认值 | 身份、关系与生命周期 |
 | --- | --- | --- |
 | Project / projects | id→id TEXT PK；name→name TEXT NOT NULL（1..120 字符）；description→description TEXT NULL（≤2000 字符）；kind→kind TEXT NOT NULL（code/knowledge/general，创建默认 code）；rootPath→root_path TEXT NOT NULL；status→status TEXT NOT NULL（active/disabled/archived，创建 active）；createdAt/updatedAt→created_at/updated_at TEXT NOT NULL UTC ISO | id/created_at 不可变；root_path 为可访问的规范真实绝对目录，同独立项目表内 UNIQUE；与 Workspace 不比较。存在 Session 或其他 FK 引用时不可改 root_path 或删除；状态变化不改变 Pi 身份。只 active 接受新会话与执行；disabled/archived 仍可读历史和删除符合条件的会话 |
-| Session / sessions | id→id TEXT PK；projectId→project_id TEXT NOT NULL FK projects.id RESTRICT；purpose→purpose TEXT NOT NULL DEFAULT ''（≤500 字符）；agentId→agent_id TEXT NULL FK agents.id RESTRICT；agentSnapshot→agent_snapshot_json TEXT NULL（合法引用对象）；nativeRef→native_ref_json TEXT NULL（合法对象）；createdAt/updatedAt→created_at/updated_at TEXT NOT NULL；endedAt→ended_at TEXT NULL；createRequestKeyHash/createRequestSha256→create_request_key_hash/create_request_sha256 TEXT NULL | id/project_id/created_at 不可变；Agent 引用与快照同空或同有且身份一致，agent_id 创建后不可替换，快照仅显式采用同一Agent版本可更新；nativeRef 首次 NULL→值后不可修改；ended_at 仅 NULL→时间且不可清空。创建键两列同空或同有、64 位小写十六进制；新建必有，历史未知键保持 NULL，UNIQUE(project_id,create_request_key_hash) 仅约束非空键 |
-| Agent / agents | id TEXT PK；name TEXT NOT NULL（1..120）；description TEXT NULL（≤2000）；kind TEXT NULL（正式仅为project）；revision INTEGER NOT NULL ≥1；content_sha256 TEXT NULL（正式为64位小写十六进制）；status TEXT NOT NULL（active/disabled/archived）；created_at/updated_at TEXT NOT NULL | 新定义 id/created_at/kind 不可变，初始 revision=1；正文变化新建 revision+1 的不可变文件，更新目录索引；仅状态变化不产生正文版本。旧无 kind/hash 的记录只读待转换，不作为正式指导。无引用可物理删除目录记录，有引用只能归档；所有已有版本文件保留 |
+| Session / sessions | id→id TEXT PK；projectId→project_id TEXT NOT NULL FK projects.id RESTRICT；purpose→purpose TEXT NOT NULL DEFAULT ''（≤500 字符）；agentId→agent_id TEXT NULL FK agents.id RESTRICT；agentSnapshot→agent_snapshot_json TEXT NULL（合法引用对象）；nativeRef→native_ref_json TEXT NULL（合法对象）；createdAt/updatedAt→created_at/updated_at TEXT NOT NULL；endedAt→ended_at TEXT NULL；createRequestKeyHash/createRequestSha256→create_request_key_hash/create_request_sha256 TEXT NULL | id/project_id/created_at 不可变；Agent 引用与快照同空或同有且身份一致，agent_id 创建后不可替换，ASSIST-014删除助手时与快照同时解除为NULL；其余快照仅显式采用同一Agent版本可更新；nativeRef 首次 NULL→值后不可修改；ended_at 仅 NULL→时间且不可清空。创建键两列同空或同有、64 位小写十六进制；新建必有，历史未知键保持 NULL，UNIQUE(project_id,create_request_key_hash) 仅约束非空键 |
+| Agent / agents | id TEXT PK；name TEXT NOT NULL（1..120）；description TEXT NULL（≤2000）；kind TEXT NULL（正式仅为project）；revision INTEGER NOT NULL ≥1；content_sha256 TEXT NULL（正式为64位小写十六进制）；status TEXT NOT NULL（active/disabled/archived）；created_at/updated_at TEXT NOT NULL | 新定义 id/created_at/kind 不可变，初始 revision=1；正文变化新建 revision+1 的不可变文件，更新目录索引；仅状态变化不产生正文版本。旧无 kind/hash 的记录只读待转换，不作为正式指导。ASSIST-014：删除直接物理移除目录记录，不写归档状态，也不因会话引用拒绝。关联sessions的agent_id/agent_snapshot_json同时置NULL；其余字段逐值保留，会话及Pi身份不变。选择文件指向已删除目录时有效选择派生为null，不回退SQL、不加载遗留版本；原始选择文件保留，下一次显式选择覆盖。所有已有版本文件保留 |
 
 本轮持久化取舍：保留旧state/status并双写会继续制造进程退出后虚假running及两份生命周期，因此移除；ended_at只保留迁移时的历史结束事实，不参与当前执行许可。创建键采用原Session表的两个有约束列承载，与Session存在性同事务，不增建幂等SQL表；文件journal只承载跨Pi/SQL边界的操作证据，不能替代归属/FK或保存对话。关系总览仍为Project→Session→唯一Pi树、Session→可空Agent精确版本；单个未决操作的证据附属于该独立项目Session（create准备时附属于确定的新Session ID），SQL表净变化仍为§4的-1。
 
@@ -270,7 +276,7 @@ FILE-003：Pi在所属session-files目录生成的文件仍是普通宿主文件
 
 每个新版本在应用启动目录的agents/<id>/<revision>/保存AGENTS.md和definition.json。AI_WORKSPACE_AGENT_DIR显式设置时仍覆盖默认目录。默认读取先查agents中的对应版本，仅当该版本不存在时只读回退.data/agents；发现版本损坏不得回退掩盖。历史文件不自动搬迁、改写或删除，版本身份及摘要不变；同一版本已在旧目录存在时禁止在新目录重写。项目根目录的开发契约AGENTS.md及参考项目原文件不属于此目录调整。前者仅含非空原始Markdown正文，为自定义系统提示词或各项目规则，均保留全部空白及正文中的原有字符，不作XML转义、不添加组织标签、frontmatter、应用标题或占位说明；仅不同非空部分之间用双换行连接。项目身份和各段归属只由后者记录。后者只含存储format、身份/name/description、mode/scope/source和正文范围偏移、项目id/name等解析元信息，不复制正文。新存储format=4对应领域definition.format=3，不保存补充指令或其位置；旧存储format=2的XML布局及format=3原文布局只读兼容，验证原摘要与原布局后恢复正文，不自动改写历史文件。摘要SHA256覆盖元信息与AGENTS.md两者，文件均不可变。正文合计上限256KiB；服务端验证正文布局、偏移及摘要，损坏拒绝；XML仅属于运行时组装。旧<revision>.md继续只读使用旧parser及原摘要，编辑保存产生新格式版本而非重写旧文件。仅状态变化不新建版本。既有快照引用保持原值。
 
-Session显式助手选择用独立类型化文件.data/session-assistants/<SHA256(scope,ownerId,sessionId)>.json保存{version:1,scope,ownerId,sessionId,selection:null|AgentSnapshotRef}，原子替换，writeETag覆盖整份记录。无文件时Project沿用原SQL agent引用、Workspace默认null；写null明确移除且不回退SQL。新建/更换/移除不更改原SQL约束与历史绑定，工作区文件引用参与助手删除的in-use检查；Session删除保留孤立文件，API不可访问。每轮按精确版本读取，不随助手新版本自动升级；运行中固定本轮，不更换Pi身份。元数据关系仍显式，不借任意JSON隐藏关系。不新增SQL表，不需要历史迁移；任何未来SQL迁移另行授权。
+Session显式助手选择用独立类型化文件.data/session-assistants/<SHA256(scope,ownerId,sessionId)>.json保存{version:1,scope,ownerId,sessionId,selection:null|AgentSnapshotRef}，原子替换，writeETag覆盖整份记录。无文件时Project沿用原SQL agent引用、Workspace默认null；写null明确移除且不回退SQL。新建/更换/移除不更改原SQL约束与历史绑定，工作区文件引用不阻止助手删除，目录不存在时按ASSIST-014派生为无助手；Session删除保留孤立文件，API不可访问。每轮按精确版本读取，不随助手新版本自动升级；运行中固定本轮，不更换Pi身份。元数据关系仍显式，不借任意JSON隐藏关系。不新增SQL表，不需要历史迁移；任何未来SQL迁移另行授权。
 
 
 AGENT-003：生成技能是仓库文件资源skills/<id>/SKILL.md，不新增SQL表、助手版本字段或Session绑定。id为目录名（小写字母、数字、连字符），正文为原始UTF-8；列表派生{id,name,description,sha256}，摘要覆盖完整文件字节。选择仅为本次生成请求参数，不持久化进AGENTS.md。缺少或损坏的技能拒绝加载，不回退成无技能生成。
@@ -282,6 +288,10 @@ AGENT-003：生成技能是仓库文件资源skills/<id>/SKILL.md，不新增SQL
 
 
 ASSIST-013：直接输入/粘贴的润色材料、候选和原始错误原因属于本次prepare调用/浏览器草稿，不新增持久模型、SQL字段或附件快照；失败不创建助手版本、不迁移或改写已有数据。
+
+## ASSIST-014｜删除与旧约束兼容
+
+表数量不变，无Schema或历史库迁移。删除是显式API副作用：在同一SQLite事务读取关联sessions的所有列，逐行DELETE后INSERT同ID记录，仅agent_id和agent_snapshot_json改为NULL，其他列（含原生身份、创建幂等键及全部时间）逐值保留，以兼容现有禁止UPDATE助手身份的触发器；随后条件DELETE agents。中间记录不可见，任一步失败整体回滚，不关外键、不删改触发器、不调用会话删除服务、不触碰Pi文件。后续如增加引用sessions的关系须重新评估此兼容写法，不绕过实际外键。助手目录缺失代表已删除，版本损坏仍是错误，不将其视为删除。活动轮次保留已经装配的内存快照，下一轮及重新打开按无助手装配。
 
 ## ASSIST-011｜统一助手与项目规则
 当前目标替代AGENT-002～009、WAGENT-010中的助手正文与规则归属。新助手definition.format=4，仅含scope:global|project|workspace、source、systemPromptMode:inherit|replace、systemPrompt。scope=global时source必须为null，表示通用型，可用于任意会话，不拥有或隐含项目范围；其他scope的source必选独立项目或工作区；工作区projectIds=null表示整个工作区，非空唯一数组表示指定项目。inherit正文为空，replace非空且UTF-8≤256KiB。不再有generated/custom、projects正文、workspaceRules或助手AGENTS.md。版本仍由agents索引关联，agents/<id>/<revision>/definition.json以存储format=6保存完整定义并计算摘要；不增加SQL表或列，不迁移旧版本，旧格式只读兼容，编辑后显式保存新版本。

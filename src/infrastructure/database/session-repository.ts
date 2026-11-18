@@ -1,3 +1,4 @@
+import {observeRepository} from '@/application/application-changes';
 import type Database from 'better-sqlite3';
 import type { JsonObject, Session } from '@/domain/models';
 import type { CreateSessionRecord, SessionRepositoryPort } from '@/application/ports/core';
@@ -67,5 +68,5 @@ export function createSessionRepository(db: Database.Database, assertWritable: (
     markInterruptedAfterRestart() { return 0; },
     delete(projectId, id) { assertWritable(); deleteSessionRecord(db,'project',projectId,id); states.delete(id); },
   };
-  return repository;
+  return observeRepository(repository,{create:['sessions'],updateRuntime:['sessions'],setNativeRefIfAbsent:['sessions'],adoptAgent:['sessions'],delete:['sessions']});
 }

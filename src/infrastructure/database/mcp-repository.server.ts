@@ -1,3 +1,5 @@
+import {observeRepository} from '@/application/application-changes';
+import type {McpRepositoryPort} from '@/application/ports/catalog';
 import type { Mcp, McpConfig } from "@/domain/models";
 import { database, assertSchemaCompatible } from "./database.server";
 import { entityId, now, type DatabaseRow } from "./common";
@@ -16,7 +18,7 @@ function mapMcp(row: DatabaseRow): Mcp {
   };
 }
 
-export const mcpRepository = {
+const repository: McpRepositoryPort = {
   list(): Mcp[] {
     assertSchemaCompatible();
     return (database.prepare("SELECT * FROM mcps ORDER BY status, name, id").all() as DatabaseRow[]).map(
@@ -96,3 +98,4 @@ export const mcpRepository = {
     );
   },
 };
+export const mcpRepository = observeRepository(repository,{create:['catalog'],update:['catalog'],delete:['catalog']});

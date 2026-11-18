@@ -1,3 +1,4 @@
+import {subscribeApplicationResource} from '../api/application-events';
 import { ErrorToast } from './conversation/error-toast';
 import {Button} from '../components/button';
 import {useEffect,useRef,useState,type ReactNode} from 'react';
@@ -27,14 +28,10 @@ export function ProjectRulesSettings({projectId,workspaceId,name,children,previe
  useEffect(()=>{alive.current=true;return()=>{alive.current=false;};},[]);
  useEffect(()=>{const controller=new AbortController();void api.generationSkills(controller.signal).then(result=>{if(!controller.signal.aborted)setSkills(result.skills);}).catch(e=>{if(!controller.signal.aborted)setSkillError(e instanceof Error?e.message:'技能列表读取失败');});return()=>controller.abort();},[]);
  useEffect(()=>{
-  const controller=new AbortController();let timer:ReturnType<typeof setTimeout>|undefined,hasActiveTask=true;
-  async function read(){try{
-   const next=await api.projectRules(url,controller.signal);if(controller.signal.aborted)return;setValue(next);setReadError('');hasActiveTask=!!next.generation&&activeGeneration(next.generation.status);
+  return subscribeApplicationResource<ProjectRulesStatus>(url,next=>{
+   setValue(next);setReadError('');
    if(!restored.current){restored.current=true;if(next.generation){setSkill(next.generation.skillId??'');setRequirements(next.generation.mode==='revise'?next.generation.requirements:'');}}
-  }catch(e){if(!controller.signal.aborted)setReadError(e instanceof Error?e.message:'规则状态读取失败');}
-   if(!controller.signal.aborted&&hasActiveTask)timer=setTimeout(()=>void read(),1500);
-  }
-  void read();return()=>{controller.abort();if(timer)clearTimeout(timer);};
+  },setReadError);
  },[url,refresh]);
  const task=value?.generation,working=!!task&&activeGeneration(task.status);
  async function mutate(work:()=>Promise<ProjectRulesStatus>){if(lock.current)return;lock.current=true;setPending(true);setError('');try{const next=await work();if(alive.current)setValue(next);}catch(e){if(alive.current)setError(e instanceof Error?e.message:'操作失败');}finally{lock.current=false;if(alive.current){setPending(false);setRefresh(n=>n+1);}}}

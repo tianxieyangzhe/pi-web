@@ -1,3 +1,4 @@
+import {observeRepository} from '@/application/application-changes';
 import type Database from 'better-sqlite3';
 import type {Project} from '@/domain/models';
 import type {ProjectRepositoryPort} from '@/application/ports/catalog';
@@ -15,5 +16,5 @@ export function createProjectRepository(db:Database.Database,assertWritable:()=>
   delete(id,expected){assertWritable();try{return db.transaction(()=>{const current=this.get(id);if(!current)return false;if(expected&&roleETag(current)!==expected)throw new DomainError('WRITE_CONFLICT','项目已变化，请重新读取',409,true);if(this.isInUse(id))throw new DomainError('PROJECT_REFERENCED','项目仍被历史记录引用',409,true);return db.prepare('DELETE FROM projects WHERE id=?').run(id).changes>0;}).immediate();}catch(error){return translate(error);}},
   isInUse(id){const tables=['sessions','agents'];for(const name of tables){if(db.prepare("SELECT 1 FROM sqlite_master WHERE name=? AND type='table'").get(name)&&db.prepare('SELECT 1 FROM '+name+' WHERE project_id=? LIMIT 1').get(id))return true;}return false;},
  };
- return repository;
+ return observeRepository(repository,{create:['catalog'],update:['catalog'],delete:['catalog']});
 }

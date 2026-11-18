@@ -1,3 +1,4 @@
+import {applicationChanges} from './application-changes';
 import {sessionFileChanges} from './session-file-changes';
 import {projectAssistantContext} from './assistant-context';
 import { createSessionRunMetrics, sessionTokenUsage, latestRunTokenUsage } from './session-run-metrics';
@@ -180,7 +181,7 @@ export function createSessionExecutionService(dependencies: {
       try{const result=changeSessionContextFiles(dependencies.contextFiles,sessionId,method,body,etag,reference=>{
         if(reference.projectId!==value.projectId)throw new DomainError('REFERENCE_OUTSIDE_SCOPE','参考文件不属于当前会话',403,true);
         return dependencies.readContextFile!(reference);
-      });events.agent(sessionId,{type:"context_changed"});return result;}finally{releaseSession(sessionId);}
+      });applicationChanges.publish({topic:"context-files",key:sessionId});events.agent(sessionId,{type:"context_changed"});return result;}finally{releaseSession(sessionId);}
     },
     hasLease,
     async open(sessionId: string, key: string, readOnly = false) {

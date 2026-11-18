@@ -26,6 +26,29 @@ test('server challenges require exact session, connection, challenge and deadlin
   assert.equal(b.filter(x=>x.event==='message').length,0);
  }finally{closeA();closeB();}assert.equal(closed,2);
 });
+test('events API preserves appended native entries and exposes their persisted identity without a temporary message',async()=>{
+ const f=fixture(),response=sessionEventResponse(new Request('http://local/events'),f.events,'s','a');
+ const reader=response.body.getReader(),decoder=new TextDecoder();
+ try{
+  await reader.read();await reader.read();
+  for(const entry of [
+   {type:'context_edit',id:'4989dc86',parentId:'1825a0b9',timestamp:'2026-11-16T06:30:01.512Z',targetId:'1825a0b9',replacement:null},
+   {type:'custom',id:'custom-entry',parentId:'4989dc86',customType:'evidence',data:{text:'original'}}
+  ]){
+   const payload={type:'entry_appended',entry};
+   f.events.agent('s',{type:'pi_event',piType:'entry_appended',temporaryId:'unrelated-active-message',payload});
+   const chunk=decoder.decode((await reader.read()).value);
+   const event=JSON.parse(chunk.split('\n').find(line=>line.startsWith('data:')).slice(5));
+   assert.equal(event.type,'entry_appended');assert.equal(event.sessionId,'s');
+   assert.equal(event.entryId,entry.id);assert.equal(event.temporaryId,null);
+   assert.deepEqual(event.payload,payload);assert.ok(event.runId);assert.ok(event.sequence>0);
+  }
+  f.events.agent('s',{type:'pi_event',piType:'entry_appended',temporaryId:null,payload:{type:'entry_appended',entry:{type:'unknown'}}});
+  const chunk=decoder.decode((await reader.read()).value);
+  const event=JSON.parse(chunk.split('\n').find(line=>line.startsWith('data:')).slice(5));
+  assert.equal(event.entryId,null);assert.deepEqual(event.payload.entry,{type:'unknown'});
+ }finally{await reader.cancel();}
+});
 test('SSE disconnect releases only its lease and does not fabricate a terminal event',async()=>{
  const f=fixture();const response=sessionEventResponse(new Request('http://local/events'),f.events,'s','a');
  assert.match(response.headers.get('cache-control'),/no-store/);assert.match(response.headers.get('content-type'),/text\/event-stream/);

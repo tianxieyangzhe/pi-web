@@ -1,4 +1,5 @@
-import { useCallback, useRef, useState } from "react";
+import { subscribeApplicationResource } from '../../api/application-events';
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../../api/client";
 import type { Session } from "../../domain/models";
 
@@ -43,16 +44,19 @@ export function useProjectSessionNavigation() {
 
   const toggleProject = useCallback((projectId: string) => {
     const expand = !expandedProjectIds.has(projectId);
+    if(expand&&!loadedProjectIds.current.has(projectId))setLoadingProjectIds(current=>new Set(current).add(projectId));
     setExpandedProjectIds((current) => {
       const next = new Set(current);
       if (expand) next.add(projectId);
       else next.delete(projectId);
       return next;
     });
-    if (expand) void loadProjectSessions(projectId, true);
-  }, [expandedProjectIds, loadProjectSessions]);
+  }, [expandedProjectIds]);
 
   const updateProjectSessions = useCallback((projectId: string, sessions: Session[]) => {
+    requestVersions.current.set(projectId,(requestVersions.current.get(projectId)??0)+1);
+    loadingRequests.current.delete(projectId);
+    setLoadingProjectIds(current=>{if(!current.has(projectId))return current;const next=new Set(current);next.delete(projectId);return next;});
     loadedProjectIds.current.add(projectId);
     setSessionsByProject((current) => current[projectId] === sessions ? current : { ...current, [projectId]: sessions });
     setErrorsByProject((current) => {
@@ -62,6 +66,12 @@ export function useProjectSessionNavigation() {
       return next;
     });
   }, []);
+
+  const expandedKey=JSON.stringify([...expandedProjectIds].sort());
+  useEffect(()=>{
+    const releases=(JSON.parse(expandedKey) as string[]).map(id=>subscribeApplicationResource<Session[]>(`/api/projects/${id}/sessions`,sessions=>updateProjectSessions(id,sessions),message=>{setLoadingProjectIds(current=>{const next=new Set(current);next.delete(id);return next;});setErrorsByProject(current=>({...current,[id]:message}));}));
+    return ()=>{for(const release of releases)release();};
+  },[expandedKey,updateProjectSessions]);
 
   const createProjectSession = useCallback(async (projectId: string, body: Record<string,unknown> = {}) => {
     const session = await api.createSession(projectId,body);

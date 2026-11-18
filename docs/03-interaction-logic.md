@@ -1,5 +1,21 @@
 # 03｜API：模型如何变化
 
+## PUSH-002｜会话快照直接推送
+
+PUSH-001白名单扩展两范围/api/.../sessions/:sessionId/messages与context-files；输入只定位所属owner/session，读取复用原messages/context-files服务，先核验真实归属，无lease写入、不打开Runtime、不调用prompt，不单独暴露原生路径。返回snapshot数据分别为原SessionTree（含全分支/原文/用量）和SessionContextFilesView，不创建第二份历史。不存在/越界资源发送resource_error NOT_FOUND，不影响其他资源。
+
+messages初始及重连推送完整快照，后续仅原生落盘/关联、配置/压缩变化和终态等既有session通知触发，服务端合并串行读取，内容不变不重复发送。context-files初始/重连读取，之后只在参考清单成功变更的context-files通知后读取，不能随每个Pi节点重读。失败不伪造空树/空清单；页面保留旧数据、标不可用，成功快照恢复。页面不在entry_link/entry_appended/终态/ready后再GET messages与context-files；显式用户刷新可读取，变更请求失败可显式同步错误后的事实。跨连接快照先于entry_link到达时，按所属Session和真实entryId消除临时节点，不能等待下一份相同快照或按文本猜测。发送要求会话lease、树和清单均就绪。pong仅应答所属SSE服务端ping，不是业务查询，保留原挑战校验。
+
+## PUSH-001｜共享资源订阅
+
+GET /api/events?resources=<JSON字符串数组>，可信单用户读取许可，无正文/幂等键/lease，无SQL写入、不调用Pi。资源1..64项去重，仅允许catalog、navigation、/api/projects/:id/sessions、/api/workspaces/:id/sessions、两范围既有agent-rules路径以及PUSH-002规定的会话messages/context-files；不接受任意URL、自由路径或代理请求。参数或路径白名单无效返回HTTP 400；合法资源路径的归属不存在或读取失败通过下述resource_error返回既有NOT_FOUND等错误码，不阻断其他资源。
+
+成功返回text/event-stream、no-store/no-transform、禁代理缓冲。先订阅变更再读取快照；snapshot={resource,data}，catalog={projects,agents,mcps,workspaces}，navigation按02，其他资源直接为既有接口DTO。服务端在提交成功、运行状态变化、原生追加/关联/终态、规则任务进度变化后合并通知并推送受影响资源的新快照；每连接每资源串行发送，慢读取期间合并后续通知，不能乱序覆盖。已删除资源或读取失败发送resource_error={resource,error:{code,message}}，页面保留数据但明确不可用。连接首次及重连发送全量当前快照，不重放历史事件。每30秒仅发送SSE注释保活，不做业务查询；取消/断开清理监听、合并队列及定时器，背压超限断开以便重新同步。
+
+浏览器全页面共享一条多资源EventSource；订阅集合变化才重建连接，组件共用相同资源，不定时重开。目录、导航、已展开会话列表及项目规则状态直接使用推送数据；文件变更按所属会话SSE的原生落盘/终态事件读取既有changes接口。首次加载、用户主动读取/操作及服务端事件触发的快照允许HTTP，禁止页面定时业务请求及失败后的定时查询回退。连接重试仅由EventSource断线恢复负责，不重发变更操作。
+
+SSE-001：既有会话events接口转发Pi entry_appended时，从payload.entry.id取得非空原生entryId，temporaryId固定null，payload逐字保留。该事件通知所属Pi树已追加节点，不是待关联的流式消息；客户端触发既有messages快照同步并立即返回，不新增temporary项。旧服务外层entryId缺失时可从payload.entry.id识别同一通知。无合法原生ID时保持原事件兜底，不猜测身份。模型恢复追加的context_edit（包括replacement=null）及其目标原文均留在完整历史树；不在应用重放失败调用或修改Pi上下文。两类会话共用，无新路由、SQL写入、模型或Pi调用；快照失败保留现有树并显示既有同步错误。
+
 ## CHANGE-001｜Session原生编辑差异API
 
 S=/api/projects/:projectId/sessions/:sessionId。GET S/changes校验SQL Session所属Project，无正文、lease或幂等键要求；只读所属Pi树和既有根请求journal。返回{runId:string|null,status:not_recorded|boundary_unavailable|running|recorded,notice:string|null,files:[{id,path,projectPath:string|null,editCount}]}。runId为既有根请求operationId，文件id为该路径首个原生edit结果entryId。GET S/changes/content?runId=&fileId=只接受这两个唯一非空定位参数（各最多256字符），返回{runId,fileId,edits:[{entryId,patch,firstChangedLine:number|null}]}，patch逐字取自成功edit的details.diff，不由模型或应用重算，不返回完整前后正文。列表path由对应原生工具参数按服务端项目根作词法相对化，统一/分隔符：项目内取相对所属根路径，Workspace内取相对最长匹配成员根路径，范围外相对当前cwd（可含../）；不读文件系统。projectPath派生自最长匹配的服务端项目根路径（完整根路径，仅用于用户要求的项目分组显示），未知路径或范围外为null，不推导虚假项目归属；页面按projectPath分组。原生diff与transcript原文保持不变。
@@ -69,7 +85,7 @@ OPS-004：浏览器 API 客户端的请求键使用共享安全随机 UUID 生�
 
 实时内容统一采用会话级 SSE：项目 `GET /api/projects/:projectId/sessions/:sessionId/events?leaseId=...`，前置检查归属、读取许可及本进程有效打开使用权。独立项目消息 POST 接受后返回 202 `{accepted:true,sessionId,operationId}`，不绑定长运行响应；旧项目NDJSON服务端适配和客户端解析整体删除，消息POST仅返回202 JSON；实时输出只通过已有SSE。应用启动执行后持续消费直至真实终态，页面断流不取消执行。只读及非发起页面同样订阅原生变化，不定时读取 transcript。所有流及历史响应 `Cache-Control: no-store, no-transform`。
 
-会话SSE使用事件DTO `{ sessionId, runId, sequence, type, entryId, temporaryId, payload }`：运行事件的 `runId` 为本进程生成、单次运行唯一的临时标识，`sequence` 为该运行内从 1 开始递增的整数；不属于单次运行的应用状态事件两者均为 null。`entryId` 和 `temporaryId` 在无对应身份时为 null；Pi 内容事件的 `type` 和 `payload` 表达对应 Pi 事件，不修改原始内容。完成、失败、调用进度等应用状态事件也使用此封装，但不冒充 Pi 原生 entry；其 payload 使用现有状态与错误契约。文本、thinking、工具调用参数、工具更新和结果按 Pi 实际事件完整传递，不按类型或敏感程度过滤。事件有 Pi 原生 entry ID 时带该 ID；尚无 ID 时使用仅限本次运行的临时关联标识，不能当作持久节点或自行推断父节点。Pi 的普通消息可能在 `message_end` 通知订阅者之后才追加对应 entry，不能假定通知时 ID 已存在；仅在服务端从同一 Pi 运行可靠取得该映射后，发送带两种标识的关联事件。custom 消息对应 `custom_message`，按同一运行中的 customType、content 对象身份和 details 对象身份可靠定位，不按普通 message 查找；Pi 在通知前已追加的节点立即发送关联，通知后才追加者延迟核对。无法确认映射时不按文本或时间猜测。模型或 Pi 没有提供的内容不补造。两类页面打开先订阅 SSE 再读快照，订阅期间缓冲事件并按运行标识和序号去重；项目页面同样先订阅再读快照；消息 POST 只提交意图；断流、重连、运行结束或失败时重读快照，以 Pi 树为准。最终快照成功后移除能确认已关联的临时展示；无法确认某临时内容已持久化时保留并明确标记未确认，不把它编造成节点。快照失败保留当前展示及错误并允许重试，不假报同步。各页面和多次运行的临时标识不能混用；不同 Session 的事件不能混入。
+会话SSE使用事件DTO `{ sessionId, runId, sequence, type, entryId, temporaryId, payload }`：运行事件的 `runId` 为本进程生成、单次运行唯一的临时标识，`sequence` 为该运行内从 1 开始递增的整数；不属于单次运行的应用状态事件两者均为 null。`entryId` 和 `temporaryId` 在无对应身份时为 null；Pi 内容事件的 `type` 和 `payload` 表达对应 Pi 事件，不修改原始内容。完成、失败、调用进度等应用状态事件也使用此封装，但不冒充 Pi 原生 entry；其 payload 使用现有状态与错误契约。文本、thinking、工具调用参数、工具更新和结果按 Pi 实际事件完整传递，不按类型或敏感程度过滤。事件有 Pi 原生 entry ID 时带该 ID；尚无 ID 时使用仅限本次运行的临时关联标识，不能当作持久节点或自行推断父节点。Pi 的普通消息可能在 `message_end` 通知订阅者之后才追加对应 entry，不能假定通知时 ID 已存在；仅在服务端从同一 Pi 运行可靠取得该映射后，发送带两种标识的关联事件。custom 消息对应 `custom_message`，按同一运行中的 customType、content 对象身份和 details 对象身份可靠定位，不按普通 message 查找；Pi 在通知前已追加的节点立即发送关联，通知后才追加者延迟核对。无法确认映射时不按文本或时间猜测。模型或 Pi 没有提供的内容不补造。两类页面打开先订阅 SSE 再读快照，订阅期间缓冲事件并按运行标识和序号去重；PUSH-002：项目页面同样通过共享订阅接收完整快照；消息 POST 只提交意图；断流、重连、运行结束或失败由服务端推送快照，以 Pi 树为准。最终快照成功后移除能确认已关联的临时展示；无法确认某临时内容已持久化时保留并明确标记未确认，不把它编造成节点。快照失败保留当前展示及错误并允许重试，不假报同步。各页面和多次运行的临时标识不能混用；不同 Session 的事件不能混入。
 
 ## 5. API 边界
 ~~~text
@@ -187,7 +203,7 @@ Session 不可恢复时展示错误与“恢复会话”入口，沿用已有 PO
 
 项目目录、参考文件和任意上传 Markdown 都仅是生成材料；上传先校验编码、大小和读取范围，再经无工具 LLM 转换为严格候选。模型不产生身份、版本或权限授权；应用校验用途、能力、长度和摘要，能力由用户明确选择且默认关闭。
 
-保存先原子创建不可变 Markdown 版本，再条件更新目录索引；失败保留旧索引和本地草稿，不覆盖已引用版本。取消丢弃未保存草稿并回到列表。保存定义不建立项目 owner 或执行授权，也不自动更新运行中的 Session。无引用时可删除，有引用时只能归档并保留历史版本。
+保存先原子创建不可变 Markdown 版本，再条件更新目录索引；失败保留旧索引和本地草稿，不覆盖已引用版本。取消丢弃未保存草稿并回到列表。保存定义不建立项目 owner 或执行授权，也不自动更新运行中的 Session。ASSIST-014：直接删除目录记录并解除SQL会话绑定；选择文件指向不存在目录时派生为null。引用不阻止删除，不写归档状态；历史版本文件保留。
 
 独立项目 Session 可无 Agent 运行。明确选择时校验项目用途及可用版本并保存精确快照；旧库强制角色触发器导致不兼容时返回 `SCHEMA_INCOMPATIBLE`，不自动迁移。显式采用同一 Agent 新版时，展示差异并核对用途、摘要、范围与空闲状态，只更新选中引用，下一次执行装配新指导，原生历史和历史版本保留。
 
@@ -237,13 +253,13 @@ PSES-019：PUT model可携带thinkingLevel（off/minimal/low/medium/high/xhigh/m
 
 ## 会话列表预览（SLIST-001）
 
-现有会话GET列表/详情及返回SessionDTO的动作增补02定义的lastUserInput/lastActivityAt/previewUnavailable，无新接口和SQL事务。服务端从数据库nativeRef核验身份及cwd，只读Pi树，按追加顺序派生，不改分支、不prompt。原生读取失败只标记本条预览不可用，不隐藏记录。订阅后的原生输入落盘/终态触发客户端现有列表重读，无定时轮询。Workspace同样映射06。
+现有会话GET列表/详情及返回SessionDTO的动作增补02定义的lastUserInput/lastActivityAt/previewUnavailable，无新接口和SQL事务。服务端从数据库nativeRef核验身份及cwd，只读Pi树，按追加顺序派生，不改分支、不prompt。原生读取失败只标记本条预览不可用，不隐藏记录。PUSH-001：订阅后的原生输入落盘/终态触发服务端推送现有列表DTO，无定时轮询。Workspace同样映射06。
 
 ## 当前连接 API（SCONN-001）
 
 用户已要求会话只有打开与关闭两态。runtime/open取得租约并按精确Pi身份初始化/恢复，GET events订阅ready后才视为页面打开；runtime/close释放当前lease并结束该订阅，保留SQL记录和原生文件。关闭后可重新打开，历史ended_at不再参与许可。旧POST end仅作为关闭兼容入口，释放本会话连接/空闲句柄，不更新SQL或产生新的end journal。删除继续DELETE指定Session行，删除后GET/打开404，不伪造closed记录。
 
-打开后的agent_start/agent_settled、compaction_start/compaction_end、context_changed（服务端完成收尾）、entry_link、错误和连接关闭事件驱动UI；首次订阅ready和重新连接先订阅后读一致快照，事件触发必要的树/上下文/元数据读取，禁止定时轮询。SSE ready携带{connectionId,activity:{running:boolean,compacting:boolean}}当前运行活动快照，避免HTTP open到订阅之间遗漏终态；连接关闭由明确事件通知，客户端仅在网络断线时自动重连，用户关闭后不自动重开。运行许可仍校验租约、归属、模型、互斥和unknown，错误表示操作结果，不是新的Session状态。历史end journal仅供核验，不能重放为新的SQL写入。
+打开后的agent_start/agent_settled、compaction_start/compaction_end、context_changed（服务端完成收尾）、entry_link、错误和连接关闭事件驱动UI；首次订阅ready和重新连接先订阅后读一致快照，PUSH-002：树与参考清单直接接收共享推送；其他上下文/元数据仅按必要事件更新，禁止定时轮询。SSE ready携带{connectionId,activity:{running:boolean,compacting:boolean}}当前运行活动快照，避免HTTP open到订阅之间遗漏终态；连接关闭由明确事件通知，客户端仅在网络断线时自动重连，用户关闭后不自动重开。运行许可仍校验租约、归属、模型、互斥和unknown，错误表示操作结果，不是新的Session状态。历史end journal仅供核验，不能重放为新的SQL写入。
 
 ## 11. 通用 HTTP 与 Project / Session 生命周期（GAP-002）
 
@@ -278,7 +294,7 @@ interrupt/end/restore/role 的 journal 结果通过 §13 核对；写操作均�
 | POST /agents/prepare | {kind,mode,requirements?,feedback?,markdown?,fileName?,projectId?,referenceFiles?,currentDraft?}→200 AgentCandidate | mode=generate/import/revise，kind=project；generate要求requirements或材料，import要求markdown，revise要求feedback与currentDraft；只收本轮材料，不保存项目owner，错误不修改已存Agent |
 | POST /agents | {name,description?,kind,definition,status?}→201 AgentDTO | definition={instructions,capabilities}，status默认active，其他限额按02；先生成新ID/revision=1并独占写版本文件，再事务INSERT agents索引；失败保留待核对文件，不重用ID/覆盖文件，不把失败候选当正式版本 |
 | PATCH /agents/:agentId | {name?,description?,definition?,status?,kind?}、If-Match→200 AgentDTO | 不接受id/owner/revision/hash覆盖；正式Agent不接受kind变化，旧legacy转换时kind必填且定义完整、用户明确确认转换；至少一项。正文或frontmatter变化创建revision+1候选并fsync，事务按旧ETag条件更新name/description/revision/content_sha256/status/updated_at（独立legacy首次正式转换还写kind）；仅status变化不写新文件；冲突保留旧索引及候选，WRITE_CONFLICT/409 |
-| DELETE /agents/:agentId | 无正文、If-Match→200 {deleted:boolean,archived:boolean} | 有Session/历史FK引用时只条件UPDATE status=archived与updated_at，返回false/true；无引用时DELETE目录行，true/false；同事务重查引用，不删除Markdown历史；旧引用不能因归档丢失 |
+| DELETE /agents/:agentId | 无正文、If-Match→200 {deleted:true} | ASSIST-014：校验If-Match，缺少428、冲突409、不存在404；引用不阻止删除；短事务内按02 ASSIST-014逐值重写关联sessions行，仅解除agent_id/agent_snapshot_json，再按revision/updated_at条件DELETE agents行；失败整体回滚。选择文件有效选择按目录存在性派生，已删除返回null且不回退SQL；现存目录版本损坏仍报错。活动轮次固定内存快照，下一轮重新装配无助手；不UPDATE status，不删除历史版本文件，不调用Pi，无幂等键 |
 
 AgentCandidate={name,description,definition,warnings:string[],sources:{path:string,hash:string}[],markdown:string}；hash为材料字节SHA256，path为上传显示名或项目内相对路径，不泄露宿主绝对目录。LLM只产出name/description/instructions/warnings，应用将capabilities初始化false；revise也不沿用LLM返回的授权，用户选择保存在编辑器本地，在保存请求显式提交。markdown由应用按02格式生成，仅只读展示。
 
@@ -375,7 +391,7 @@ SSE ready的activity增加steering:string[]，从当前Pi队列读取供重连�
 
 ## AGENT-002｜助手API（替代旧Agent生成/正文写入契约）
 
-GET/POST /api/agents、GET/PATCH/DELETE /api/agents/:id沿用目录与If-Match语义，正文写请求上限1MiB，正文合计限制按02。definition支持02的新格式，旧格式只读兼容；新UI提交definition.format=3，名字/说明及项目XML组织结构不写入AGENTS.md。返回markdown与新保存文件均为原始正文；范围从类型化项目关系读取，只有Pi运行时装配XML。旧存储format=2文件按原布局验证后恢复规则，新保存存储format=4，不改旧文件。save先按02的agents默认目录写不可变AGENTS.md/definition.json并fsync，再在短SQL事务更新索引；读取按02逐版本兼容历史目录，损坏返回ROLE_VERSION_MISSING，不迁移历史文件；失败保留旧索引和候选，GET核对不自动重放。删除检查原SQL及Session助手文件引用，有引用归档，历史版本不删除。
+GET/POST /api/agents、GET/PATCH/DELETE /api/agents/:id沿用目录与If-Match语义，正文写请求上限1MiB，正文合计限制按02。definition支持02的新格式，旧格式只读兼容；新UI提交definition.format=3，名字/说明及项目XML组织结构不写入AGENTS.md。返回markdown与新保存文件均为原始正文；范围从类型化项目关系读取，只有Pi运行时装配XML。旧存储format=2文件按原布局验证后恢复规则，新保存存储format=4，不改旧文件。save先按02的agents默认目录写不可变AGENTS.md/definition.json并fsync，再在短SQL事务更新索引；读取按02逐版本兼容历史目录，损坏返回ROLE_VERSION_MISSING，不迁移历史文件；失败保留旧索引和候选，GET核对不自动重放。删除按ASSIST-014解除SQL绑定并直接删除目录记录；Session助手文件引用不阻止删除，已删除目录派生为无助手，历史版本不删除。
 
 POST /api/agents/prepare接收{mode:generate|revise,source?,requirements?,feedback?,inputText?,currentDraft?,target?:systemPrompt|projects|auto}，请求体上限1MiB。source为02的显式来源，前端不传cwd、项目名或权限。服务端从Project/Workspace记录读取并核对项目集合（generated工作区projectIds可为全部有效ID或选定非空子集，custom工作区必须为空）；读取只在所选根目录内，无越界/符号链接跟随，无运行项目命令。generated按06 WAGENT-010逐项目进入真实cwd，Pi读取工具主动调查，逐项目调用LLM返回规则；每个项目必须有结果，不允许LLM伪造ID或范围。返回{name,description,definition,markdown,warnings,sources:[{path,hash}]}，来源路径带项目标识，不单独暴露绝对路径。自定义首次输入或上传调用prepare(mode=generate,currentDraft为custom,inputText为完整材料)，inputText非空且UTF-8不超过256KiB，作为材料而非正式正文。LLM润色成功后返回完整系统提示词，失败或取消保留已有草稿和待处理输入；修订省略target时默认auto：模型依据完整currentDraft及feedback返回changes:{systemPrompt?}|{rules:[{id,rules}]}，每项为该段完整替换正文，可一次涉及多段；未返回的段落逐字符保留。服务端按创建方式严格验证：custom只接受系统提示词，generated只接受已选择项目的规则；禁止instructions、混合两类内容、重复/越界、修改mode/scope/source及给generated添加系统提示词；空changes拒绝。显式target只能是与创建方式匹配的systemPrompt或projects，instructions返回INVALID_INPUT；省略target时初次生成按创建方式选择，修订为auto。custom允许保留作用范围source，由服务端核验项目/工作区；工作区只允许自身，projectIds必须为空；不采集范围项目资料、不使用生成技能、不生成项目规则，空系统提示词保存返回INVALID_ROLE。custom修订可以显式调整范围，系统提示词仍完整替换；范围本身不送入正文。source范围调整须显式提交。生成失败/取消保留客户端草稿与已存助手。错误沿用INVALID_INPUT/INVALID_ROLE/ROLE_GENERATION_INVALID/ROLE_MATERIALS_UNAVAILABLE/ROLE_INPUT_TOO_LARGE/REQUEST_ABORTED；不存在NOT_FOUND，越界REFERENCE_OUTSIDE_SCOPE。
 

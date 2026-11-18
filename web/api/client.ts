@@ -83,7 +83,7 @@ export const api = {
   getSkill:(id:string,signal?:AbortSignal)=>request<import('../../src/application/ports/generation-skills').GenerationSkill>(`/api/agents/skills/${encodeURIComponent(id)}`,{signal,cache:'no-store'}),
   createAgent: (body: Record<string, unknown>,signal?:AbortSignal) => request<Agent>("/api/agents", {...mutation("POST", body),signal}),
   updateAgent: (id: string, body: Record<string, unknown>,signal?:AbortSignal) => request<Agent>(`/api/agents/${id}`,  {...mutation("PATCH", Object.fromEntries(Object.entries(body).filter(([key])=>key!=="writeETag"))),signal,headers:{...jsonHeaders,"if-match":String(body.writeETag??'')}}),
-  deleteAgent: (id: string,etag?:string) => request<{ deleted: boolean; archived:boolean }>(`/api/agents/${id}`,{...mutation("DELETE"),headers:{"if-match":etag??""}}),
+  deleteAgent: (id: string,etag?:string) => request<{ deleted: true }>(`/api/agents/${id}`,{...mutation("DELETE"),headers:{"if-match":etag??""}}),
   listMcps: () => request<Mcp[]>("/api/mcps"),
   getMcp: (id: string) => request<Mcp>(`/api/mcps/${id}`),
   createMcp: (body: Record<string, unknown>) => request<Mcp>("/api/mcps", mutation("POST", body)),

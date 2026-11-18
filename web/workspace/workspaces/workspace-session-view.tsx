@@ -38,7 +38,7 @@ export function WorkspaceSessionView({ scrollRevision, onOpenFileLink, workspace
   const fileApi=useMemo(()=>fileProject?{list:(path:string)=>workspaceApi.files(workspace.id,fileProject.id,path),read:(path:string)=>workspaceApi.readFile(workspace.id,fileProject.id,path),changes:()=>workspaceApi.projectChanges(workspace.id,fileProject.id)}:undefined,[workspace.id,fileProject?.id,fileProject?.rootPath]);
   useEffect(()=>{if(!filesOpen){setFilePreview(null);setFilesProjectId(initial.defaultProjectId);} },[filesOpen,initial.defaultProjectId]);
   const base = workspaceApi.session(workspace.id, initial.id);
-  const tree = useSessionTree(base, () => workspaceApi.messages(workspace.id, initial.id), onChanged);
+  const tree = useSessionTree(base, () => workspaceApi.messages(workspace.id, initial.id));
   const identity = useRef(initial.id);
   identity.current = initial.id;
   useEffect(() => { setCurrent(initial); }, [initial]);

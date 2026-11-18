@@ -32,7 +32,6 @@ function createServices() {
   const assistants=createSessionAssistantAccess(sessionAssistantStore,(id,revision,hash)=>agentRepository.getVersion(id,revision,hash));
   const catalog = createCatalogService({
     resolveAssistantSource,
-    assistantInUse:id=>sessionAssistantStore.inUse(id),
     validateAssistant:definition=>{if((definition.format===3||definition.format===4)&&definition.source){const actual=resolveAssistantSource(definition.source);if(definition.projects?.some(p=>!actual.some(a=>a.id===p.id&&a.name===p.name)))throw new DomainError("INVALID_ROLE","项目规则身份与来源不一致",422,true);}},
     projects: projectRepository,
     mcps: mcpRepository,

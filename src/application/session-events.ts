@@ -1,3 +1,4 @@
+import { applicationChanges } from './application-changes';
 import { randomUUID } from "node:crypto";
 import { DomainError } from "@/domain/errors";
 import type { AgentEvent } from "@/domain/models";
@@ -15,6 +16,8 @@ export class SessionEvents {
   private runs = new Map<string, { id: string; sequence: number; started: boolean }>();
   constructor(private presence: { assertLease: (id: string, lease: string) => void; renew: (id: string, lease: string) => void; release: (id: string, lease: string) => void }, private clock = () => performance.now(),private activity:(sessionId:string)=>unknown=()=>null) {}
 
+  activitySnapshot(sessionId:string) { return this.activity(sessionId) as {running?:boolean;compacting?:boolean}|null; }
+
   subscribe(sessionId: string, leaseId: string, send: (frame: SubscriptionFrame) => void, end: () => void) {
     this.presence.assertLease(sessionId, leaseId);
     if ([...this.connections.values()].some(c => c.leaseId === leaseId)) throw new DomainError("SESSION_SUBSCRIPTION_EXISTS", "此使用权已经订阅", 409, true);
@@ -24,9 +27,11 @@ export class SessionEvents {
       if (!this.connections.delete(connectionId)) return;
       if (timer) clearInterval(timer);
       this.presence.release(sessionId, leaseId);
+      applicationChanges.publish({topic:'session',key:sessionId});
       end();
     };
     this.connections.set(connectionId, { sessionId, leaseId, challenge: null, deadline: 0, send, close });
+    applicationChanges.publish({topic:'session',key:sessionId});
     try {
       const stats=this.metrics.get(sessionId);
       const runMetrics=stats?{...(stats.start.payload as object),durationMs:0,input:null,output:null,cacheRead:null,cacheWrite:null,totalTokens:null,complete:false,...(stats.latest?.payload as object??{}),...(stats.latest?.type==='run_metrics'?{}:{durationMs:((stats.latest?.payload as {durationMs:number}|undefined)?.durationMs??0)+Math.max(0,this.clock()-stats.at)})}:null;
@@ -61,6 +66,7 @@ export class SessionEvents {
   publish(sessionId: string, event: SessionEvent) {
     if(event.type==='run_started')this.metrics.set(sessionId,{start:event,latest:null,at:this.clock()});
     if(event.type==='run_progress'||event.type==='run_metrics'){const stats=this.metrics.get(sessionId);if(stats&&(stats.start.payload as {requestId:string}).requestId===(event.payload as {requestId:string}).requestId){stats.latest=event;stats.at=this.clock();}}
+    if (['session_state','agent_start','agent_settled','complete','error','entry_appended','entry_link','context_changed','thinking_level_changed','compaction_start','compaction_end'].includes(event.type)) applicationChanges.publish({topic:'session',key:sessionId});
     for (const c of [...this.connections.values()]) if (c.sessionId === sessionId) {
       try { c.send({ event: "message", data: event }); } catch { c.close(); }
     }
@@ -74,6 +80,8 @@ export class SessionEvents {
       else run.started = true;
     }
     if (!run && (native || link || event.type === "session_state")) { run = { id: randomUUID(), sequence: 0, started: false }; this.runs.set(sessionId, run); }
-    this.publish(sessionId, { sessionId, runId: run?.id ?? null, sequence: run ? ++run.sequence : null, type: native ? event.piType : event.type, entryId: link ? event.entryId : null, temporaryId: native || link ? event.temporaryId : null, payload: native ? event.payload : event });
+    const appended = native && event.piType === "entry_appended" ? (event.payload as { entry?: { id?: unknown } } | null)?.entry : null;
+    const appendedId = typeof appended?.id === "string" && appended.id.length > 0 ? appended.id : null;
+    this.publish(sessionId, { sessionId, runId: run?.id ?? null, sequence: run ? ++run.sequence : null, type: native ? event.piType : event.type, entryId: link ? event.entryId : appendedId, temporaryId: appendedId ? null : native || link ? event.temporaryId : null, payload: native ? event.payload : event });
   }
 }

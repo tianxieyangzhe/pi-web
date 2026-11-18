@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
+import { subscribeApplicationResource } from '../api/application-events';
+import type { WorkspaceRecord } from '../../src/domain/workspace';
 import { api } from "../api/client";
 import type { Agent, Mcp, Project } from "../domain/models";
 
@@ -6,6 +8,7 @@ export function useWorkspaceState() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [mcps, setMcps] = useState<Mcp[]>([]);
+  const [workspaces, setWorkspaces] = useState<WorkspaceRecord[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
 
@@ -17,7 +20,9 @@ export function useWorkspaceState() {
     } catch (cause) { setError(cause instanceof Error ? cause.message : "无法加载工作区"); }
     finally { setLoading(false); }
   }, []);
-  useEffect(() => { void reload(); }, [reload]);
+  useEffect(() => subscribeApplicationResource<{projects:Project[];agents:Agent[];mcps:Mcp[];workspaces:WorkspaceRecord[]}>('catalog', value => {
+    setProjects(value.projects);setAgents(value.agents);setMcps(value.mcps);setWorkspaces(value.workspaces);setLoading(false);setError('');
+  }, message => {setError(message);setLoading(false);}), []);
 
   async function saveResource(kind: "project" | "agent" | "mcp", id: string | null, body: Record<string, unknown>) {
     try {
@@ -35,5 +40,5 @@ export function useWorkspaceState() {
       await reload();
     } catch (cause) { setError(cause instanceof Error ? cause.message : "无法删除资源"); }
   }
-  return { projects, agents, mcps, reload, saveResource, deleteResource, error, setError, loading };
+  return { projects, agents, mcps, workspaces, reload, saveResource, deleteResource, error, setError, loading };
 }

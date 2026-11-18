@@ -16,6 +16,12 @@ ROUTE-CLEAN-001：删除退役记忆/模板固定404路由、旧记忆改名脚�
 
 CHANGE-001：application/session-file-changes只读投影所属Pi树中的原生edit差异，复用既有根请求journal边界；Project/Workspace用例通过既有runtime.readTree读取。不新增Pi Session、工具、快照存储或目录扫描，不调用模型生成差异，不依赖Git。移除文件采集端口、存储与执行包装。沿用已评估的AuxiliaryDialog、Button和原生pre显示差异；官方Code Block（https://elements.ai-sdk.dev/components/code-block）与Tool不提供所需根轮次/多次edit投影语义，通用组件支持时复核。
 
+PUSH-002：共享推送解析器增加所属Session的messages与context-files资源，复用原application用例及Pi全树读取；参考文件变更用独立进程内通知，不随每条Pi节点读取。use-session-tree接收快照并按entryId消除临时节点，不在每个事件后发起成对GET。Pi身份/历史归属不变。
+
+## PUSH-001｜页面共享推送
+
+application/application-changes维护进程内变更通知；Repository仅在成功提交后通知，SessionEvents在活动变化/原生落盘/终态通知，项目规则任务保存进度后通知。bootstrap/application-events装配只读快照解析；shared/protocol/application-event-response传输一条多资源SSE，web/api/application-events按页面共享连接并分发。导航快照只读SQL归属与SessionEvents当前活动，不读transcript或创建Pi句柄；目录/会话列表/规则直接复用既有DTO。无新增持久事实或Pi调用。
+
 ## 1. 会话与 Pi 归属
 
 每个独立项目 Session 对应独立 Pi AgentSession/SessionManager，cwd 为所属 Project.rootPath，按精确 nativeRef 恢复并复用句柄；Workspace 的专属 cwd 和归属见 06。用户消息、完整 Session Tree、全部分支、活动指针、模型变化与压缩结果只归 Pi，不维护第二份持久对话或应用摘要上下文。
@@ -191,6 +197,8 @@ CTX-001：仅参考项目文件改为Session持续上下文；上传、粘贴保
 
 
 ASSIST-013：无上传材料沿用unified-assistant-service→agent-service→infrastructure/pi/agent-generation的独立无工具Pi生成链路。agent-generation保留Pi errorMessage/SDK Error.message并包装既有DomainError；协议与页面只投影该原因，不复制模型配置或原始错误日志。输入、候选与错误不拥有业务Pi transcript，不新增Runtime或持久Session。
+
+ASSIST-014：助手删除由application/catalog-service调用database/agent-repository在同一SQL事务解除旧Session绑定并删除目录索引；旧触发器兼容写入见02。application/session-assistant-service将已删除目录的有效选择派生为null，原始选择文件保留；Pi Session及transcript归属不变，不调用Pi删除或中止。
 
 ## ASSIST-011｜配置装配
 统一助手系统提示词与作用范围独立于项目规则文件；模型与API见02/03，工作区专属见06。application装配作用范围和project rules，infrastructure/agents保存规则版本与state，infrastructure/pi仅按配置指纹刷新已缓存的系统提示词与XML。临时项目规则生成仍使用现有逐项目有读取工具的Pi会话；助手润色无工具。助手编辑器不生成AGENTS.md。新增项目规则设置区复用既有原生按钮、select、details与设置面板，不引入新可见组件体系；已评估AI Elements Prompt Input/Code Block，前者非设置表单，后者不能表达现有state开关及生成动作，沿用Feature Wrapper，在统一设置组件库可用时复核。

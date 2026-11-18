@@ -57,7 +57,7 @@ export function createCatalogService({
   projects: projectRepository,
   mcps: mcpRepository,
   agents: agentRepository,
-  normalizeProjectRoot, assertProjectMutable, validateAssistant, assistantInUse, resolveAssistantSource
+  normalizeProjectRoot, assertProjectMutable, validateAssistant, resolveAssistantSource
 }: CatalogDependencies) {
   return {
     listProjects: () => projectRepository.list().map(value=>({...value,writeETag:roleETag(value)})),
@@ -177,16 +177,12 @@ export function createCatalogService({
     updateAgent(id: string, body: Record<string, unknown>): Agent {
       return saveRole(id, body);
     },
-    deleteAgent(id: string, expected?:string): {deleted:boolean;archived:boolean} {
+    deleteAgent(id: string, expected?:string): {deleted:true} {
       const current = agentRepository.get(id);
       if (!current) throw new DomainError("NOT_FOUND", "角色不存在", 404, true);
       match(current,expected);
-      if (agentRepository.isInUse(id) || assistantInUse?.(id)) {
-        agentRepository.update(id, { status: "archived" }, roleETag(current));
-        return {deleted:false,archived:true};
-      }
-      if (!agentRepository.delete(id)) throw new DomainError("NOT_FOUND", "角色不存在", 404, true);
-      return {deleted:true,archived:false};
+      if (!agentRepository.delete(id,expected)) throw new DomainError("NOT_FOUND", "角色不存在", 404, true);
+      return {deleted:true};
     }
   };
   function presentAgent(value:Agent) {const {id,name,description,kind,revision,contentSha256,status,createdAt,updatedAt}=value;return {id,name,description,kind,revision,contentSha256,status,createdAt,updatedAt,writeETag:roleETag(value),markdown:value.contentSha256?value.markdown??null:null,definition:value.contentSha256?value.definition:null,legacy:!value.contentSha256};}

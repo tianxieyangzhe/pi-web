@@ -1,3 +1,4 @@
+import {applicationChanges} from './application-changes';
 import {createHash,randomUUID} from 'node:crypto';
 import {DomainError} from '@/domain/errors';
 import type {ProjectRuleIdentity,ProjectRulesStore} from './ports/project-rules';
@@ -8,7 +9,7 @@ export function createProjectRulesService(d:{store:ProjectRulesStore;generations
  const active=new Map<string,{task:StoredProjectRuleGeneration;controller:AbortController}>();
  const identityKey=(id:ProjectRuleIdentity)=>JSON.stringify(id.scope==='project'?['project',id.projectId]:['workspace',id.workspaceId,id.projectId]);
  const publicTask=({requestKey,baseETag,inputRevision,resultSha256,...task}:StoredProjectRuleGeneration):ProjectRuleGeneration=>({...task,mode:task.mode??'generate'});
- const save=(id:ProjectRuleIdentity,task:StoredProjectRuleGeneration)=>{task.updatedAt=new Date().toISOString();d.generations.save(id,task);};
+ const save=(id:ProjectRuleIdentity,task:StoredProjectRuleGeneration)=>{task.updatedAt=new Date().toISOString();d.generations.save(id,task);applicationChanges.publish({topic:'rules',key:identityKey(id)});};
  function reconcile(id:ProjectRuleIdentity){
   const tasks=d.generations.list(id),running=active.get(identityKey(id));
   for(const task of tasks){
@@ -59,7 +60,7 @@ export function createProjectRulesService(d:{store:ProjectRulesStore;generations
  }
  return {
   read(id:ProjectRuleIdentity){d.resolve(id);return view(id,reconcile(id)[0]);},
-  update(id:ProjectRuleIdentity,body:Record<string,unknown>,etag:string){d.resolve(id);if(Object.keys(body).some(k=>k!=='enabled')||typeof body.enabled!=='boolean')throw new DomainError('INVALID_INPUT','请提供启用开关',400,true);const tasks=reconcile(id);d.store.write(id,etag,{enabled:body.enabled});return view(id,tasks[0]);},
+  update(id:ProjectRuleIdentity,body:Record<string,unknown>,etag:string){d.resolve(id);if(Object.keys(body).some(k=>k!=='enabled')||typeof body.enabled!=='boolean')throw new DomainError('INVALID_INPUT','请提供启用开关',400,true);const tasks=reconcile(id);d.store.write(id,etag,{enabled:body.enabled});applicationChanges.publish({topic:'rules',key:identityKey(id)});return view(id,tasks[0]);},
   generate,
   start(id:ProjectRuleIdentity,body:Record<string,unknown>,etag:string,requestKey:string):ProjectRulesStatus {
    d.resolve(id);const params=parameters(body);
@@ -73,7 +74,7 @@ export function createProjectRulesService(d:{store:ProjectRulesStore;generations
    if(params.skillId!==null)d.prepare.skill(params.skillId);
    const now=new Date(Math.max(Date.now(),tasks[0]?Date.parse(tasks[0].createdAt)+1:0)).toISOString();
    const task:StoredProjectRuleGeneration={id:randomUUID(),status:'queued',...params,requestKey,baseETag:etag,inputRevision:rules.revision,createdAt:now,updatedAt:now,startedAt:null,completedAt:null,progress:null,resultRevision:null,resultSha256:null,error:null};
-   d.generations.save(id,task);const controller=new AbortController();active.set(identityKey(id),{task,controller});
+   d.generations.save(id,task);applicationChanges.publish({topic:'rules',key:identityKey(id)});const controller=new AbortController();active.set(identityKey(id),{task,controller});
    setImmediate(()=>{void run(id,task,controller).catch(()=>{/* Durable state is reconciled on the next read. */});});
    return view(id,task);
   },
