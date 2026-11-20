@@ -10,6 +10,7 @@ function MathFormula({ formula }: { formula: Formula }) {
   try {
     const html = katex.renderToString(formula.tex, {
       displayMode: formula.display,
+      fleqn: formula.display,
       throwOnError: true,
       trust: false,
       strict: "error",
@@ -18,7 +19,7 @@ function MathFormula({ formula }: { formula: Formula }) {
       macros: {},
     });
     // Only KaTeX-generated markup is inserted; message HTML remains inert.
-    return <span className={formula.display ? "block min-w-0 max-w-full overflow-x-auto overflow-y-hidden" : undefined} dangerouslySetInnerHTML={{ __html: html }} />;
+    return <span className={formula.display ? "block min-w-0 max-w-full overflow-x-auto overflow-y-hidden [&_.katex-display]:m-0 [&_.katex-display]:text-left [&_.katex-display>.katex]:pl-0" : undefined} dangerouslySetInnerHTML={{ __html: html }} />;
   } catch {
     return original;
   }

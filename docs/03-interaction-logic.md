@@ -429,3 +429,8 @@ ASSIST-012：POST/PATCH助手与prepare接受02的scope=global/source=null，不
 
 
 RULEGEN-001替代ASSIST-011的项目规则POST流式连接生命周期。R仍为两类项目的agent-rules路径：GET返回原ProjectRuleView加generation(最新任务的公开状态或null)，读取时核对无执行句柄的未结束任务，按02确认已发布结果或标记interrupted。POST {mode?:generate|revise,requirements?:string,skillId?:string|null}，mode缺省generate；revise为按非空requirements润色已存在的AGENTS.md，revision=0或正文缺失返回PROJECT_RULES_REQUIRED/409，空润色意见或非法mode返回INVALID_INPUT/400。要求If-Match及Idempotency-Key(1～128可打印ASCII)，先校验项目、正文ETag、输入与所选技能，再持久queued任务，返回202及完整当前状态，不等模型、不依赖Request.signal。省略/空技能均为模型直接调查，选定技能无效返回原技能错误。相同项目同key同参数（含mode，历史缺省generate）/baseETag返回原任务及当前规则，不启动第二次；同key异参数返回IDEMPOTENCY_CONFLICT。已有活动任务返回PROJECT_RULE_GENERATION_BUSY 409。工作在服务端串行处理该项目，写入读取进度；generate按技能与项目事实重新生成，不使用页面润色意见。revise在执行前核对baseETag并读取服务端当前完整规则，构造内部currentDraft，通过既有prepare(mode=revise,target=projects,feedback=requirements)与真实项目cwd临时Pi读取能力修订，不把客户端正文作为事实，不修改其他项目。未受意见影响的内容应保留；两模式均输出完整规则并沿用原不可变发布、开关保持、取消和失败语义。提交前再次检查归属、项目目录与原ETag，目录变化或ETag过期返回WRITE_CONFLICT，成功发布后状态succeeded与resultRevision，失败记录安全错误且保持旧规则。PATCH {generationId,action:"cancel"}取消该项目对应任务，状态cancelling直至Pi终止后cancelled；已终结时幂等返回当前视图，未知id返回NOT_FOUND。PUT开关保持原契约，可并发更新并导致在途生成发布WRITE_CONFLICT。公开任务DTO不返回requestKey/baseETag、原生路径或句柄，返回id、status、requirements、skillId、时间、progress、resultRevision与error。页面关闭只取消查询；仅显式PATCH取消工作。GET只在活动任务期间每1.5秒查询，终态停止查询；重新进入页面读取持久状态。
+
+
+## 图片工作台
+
+图片工作台专属API 契约见 [《图片工作台设计》](image-workbench-design.md#4-api-契约)。

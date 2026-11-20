@@ -8,6 +8,7 @@ dist/
 release/
 /release-new/
 .data/
+/images/
 /agents/*
 !/agents/README.md
 *.sqlite

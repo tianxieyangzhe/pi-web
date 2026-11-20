@@ -6,6 +6,7 @@ import { DomainError } from '@/domain/errors';
 import { applicationConfigRoot } from '../application-config-root';
 export { applicationConfigRoot } from '../application-config-root';
 export type ConfigurationSource = 'local' | 'global' | 'native';
+export function isImageProtocolApi(api:string){return api==='openai-images-v1'||api==='google-generate-content-v1';}
 function configurationError(): never {
   throw new DomainError('MODEL_CONFIGURATION_ERROR', 'Pi 模型或默认设置配置无效，请检查启动目录中的配置文件', 503, true);
 }
@@ -52,7 +53,7 @@ export async function loadModelConfiguration(root = applicationConfigRoot, agent
   const permittedModels = Array.isArray(patterns) && patterns.length
     ? (await resolveModelScopeWithDiagnostics(patterns, catalogRuntime)).scopedModels.map(item => item.model)
     : runtime.getModels();
-  return { runtime, defaults, models:permittedModels, configuration: { models: models.source, settings: settings.source } };
+  return { runtime, defaults, models:permittedModels.filter(model=>!isImageProtocolApi(model.api)), imageModels:permittedModels.filter(model=>isImageProtocolApi(model.api)), configuration: { models: models.source, settings: settings.source } };
 }
 export async function resolveConfiguredModel(configuration: Awaited<ReturnType<typeof loadModelConfiguration>>, selected?: { provider: string; modelId: string } | null) {
   const identity = selected ?? configuration.defaults;

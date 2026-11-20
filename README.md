@@ -32,6 +32,10 @@ cp examples/pi/models.json models.json
 cp examples/pi/settings.json settings.json
 ```
 
+图片工作台也复用同一份 `models.json`：将 [图片配置示例](models.images.example.json) 中的供应商条目合并到 `providers`；`api` 使用 `openai-images-v1` 或 `google-generate-content-v1`，模型 `id` 填部署的实际型号，认证和请求头沿用 Pi 配置。不再读取独立图片配置文件。
+
+`node scripts/upgrade-image-schema.cjs` 默认只读输出升级计划。升级条件、备份及已完成的操作记录见 [图片工作台数据库升级](docs/image-workbench-design.md#34-历史数据与显式升级img-026)。
+
 编辑示例中的供应商、`baseUrl`、API 协议、模型 ID、上下文容量及输出上限。`settings.json` 的 `defaultProvider`、`defaultModel` 应与模型配置对应；`enabledModels` 可限制可选模型，省略或空数组表示不限制。
 
 认证使用运行用户的 `~/.pi/agent/auth.json`，或在模型配置中引用环境变量。示例引用 `PI_EXAMPLE_API_KEY`，在启动前设置：
@@ -98,7 +102,7 @@ npm run typecheck
 node --test tests/standalone-release.test.cjs
 ```
 
-详细设计见 [架构](docs/01-architecture.md)、[模型](docs/02-data-model.md)、[API](docs/03-interaction-logic.md)、[页面](docs/04-ui-layout.md)、[需求](docs/05-requirements.md)及[工作区](docs/06-workspace.md)。
+详细设计见 [架构](docs/01-architecture.md)、[模型](docs/02-data-model.md)、[API](docs/03-interaction-logic.md)、[页面](docs/04-ui-layout.md)、[需求](docs/05-requirements.md)、[工作区](docs/06-workspace.md)和[图片工作台](docs/image-workbench-design.md)。
 
 ## 2. 构建不包含 node_modules
 
@@ -181,8 +185,7 @@ npm install -g pm2
 
 ```bash
 cd /opt/ai-workspace
-NODE_ENV=production INIT_CWD=/opt/ai-workspace HOSTNAME=0.0.0.0 PORT=3000 \
-  pm2 start server.js --name ai-workspace --cwd /opt/ai-workspace --time
+NODE_ENV=production INIT_CWD=/home/pi-web HOSTNAME=0.0.0.0 PORT=3000  pm2 start server.js --name pi-web --cwd /home/pi-web --time
 ```
 
 浏览器访问 `http://服务器IP:3000`，服务器安全组及防火墙需允许对应访问。`INIT_CWD` 与 `--cwd` 指向同一个固定发布目录；Pi 配置、认证和文件访问均使用该运行用户的环境。模型引用的 API Key 环境变量须在启动前设置。

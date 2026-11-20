@@ -208,3 +208,8 @@ ASSIST-012：沿用助手编辑器、Response及引用选择器，不新增组�
 
 
 RULEGEN-001：application/project-rules-service负责项目规则生成任务、并发及幂等，infrastructure/agents/project-rule-generations保存任务证据。每个项目仅一个活动任务，后台使用独立AbortController和临时Pi会话；不绑定Request.signal或页面生命周期。技能为null时同样在真实项目cwd使用read/grep/find/ls自主调查。规则润色沿用同一后台任务，application从服务端规则构造currentDraft并调用既有项目prepare revise能力，非助手无工具润色；模式与历史兼容见02/03。复用现有ProjectRulesSettings与SettingsPage，以Tailwind两列显示配置及只读正文，不新增组件体系。
+
+
+## 图片工作台
+
+图片工作台专属架构与 Pi 归属见 [《图片工作台设计》](image-workbench-design.md#2-架构与-pi-归属)。

@@ -304,3 +304,8 @@ RULEGEN-001：项目规则生成任务是独立于正式规则版本的持久事
 ## RUN-001｜单轮运行统计
 
 RUN-002：取消新增统计持久快照。最新轮Token仅从Pi原生assistant usage派生，轮次范围复用现有请求journal的原生entryIds前后边界；不持久保存Token或耗时、不创建统计文件或表。项目读取最新message操作的baseline/after，Workspace根workspace_request及result附带entryIds边界（steer归原请求）；缺少可信边界返回latestRunUsage=null，不以最后user猜测轮次。终态缺失或失败、用量缺失标complete=false。耗时与实时统计仅保留globalThis进程共享快照（Session ID为键，服务实例重建及页面切换不清除），重启后耗时不可用；关闭/结束保留内存，删除清除。既有统计文件不自动读取、迁移或删除。Session累计Token是另一派生值，按Pi getSessionStats全树口径，读取已有全部原生entries（包含非活动分支及压缩前历史），汇总assistant、带usage的toolResult、usage、带usage的compaction/branch_summary中的input/output/cacheRead/cacheWrite，不额外累计reasoning，也不把summary中的tokensBefore视作用量。累计不改变历史轮次展示；无记录为0，缺失/非法助手用量标不完整，无可用记录时为null。不另存累计值或创建摘要。来源为该次Runtime.send期间的Pi assistant message_end.usage；仅累加本次调用，不扫描或差减历史。工具循环与steer消费属于原轮次，thinking已计入output不重复累加。缺失/非法用量或无有效响应标记不完整；费用不在本次范围。服务端以单调时钟从接受根请求至结束计算durationMs。统计不额外写SQL、配置文件、journal或Pi transcript（请求边界复用既有执行journal），不更改Session/nativeRef归属；原生消息usage照常保留。
+
+
+## 图片工作台
+
+图片工作台专属数据模型见 [《图片工作台设计》](image-workbench-design.md#3-数据模型)。

@@ -1,0 +1,17 @@
+{
+  "providers": {
+    "image-service": {
+      "baseUrl": "https://api.openai.com/v1",
+      "api": "openai-images-v1",
+      "apiKey": "$OPENAI_API_KEY",
+      "models": [
+        {
+          "id": "YOUR_DEPLOYED_IMAGE_MODEL_ID",
+          "name": "图片模型",
+          "input": ["text", "image"],
+          "samplingParams": { "quality": "auto", "size": "1024x1024", "n": 1 }
+        }
+      ]
+    }
+  }
+}

@@ -15,10 +15,10 @@ function Disclosure({ title, children, open = false, onOpenChange }: { title: st
 function emptyAssistant(message:Record<string,unknown>) {
   return message.role==='assistant'&&message.errorMessage==null&&contentBlocks(message.content).every(block=>block.type==='text'&&typeof block.text==='string'&&!block.text.trim());
 }
-function MessageContent({ message }: { message: Record<string, unknown> }) {
+function MessageContent({ message, textOnly = false }: { message: Record<string, unknown>; textOnly?: boolean }) {
   if(emptyAssistant(message))return <Disclosure title="该回复节点没有正文"><Raw value={message}/></Disclosure>;
   return <div className="grid min-w-0 gap-1 text-sm leading-6 text-zinc-800 [overflow-wrap:anywhere]">
-    {contentBlocks(message.content).map((block, index) => {
+    {contentBlocks(message.content).filter(block => !textOnly || block.type === "text").map((block, index) => {
       if (block.type === "text") return <Response key={index} className="gap-2! leading-6">{block.text ?? ""}</Response>;
       if (block.type === "thinking") return <Disclosure key={index} title="Thinking">
         <div className="whitespace-pre-wrap text-[10px] leading-4">{typeof block.thinking === "string" && block.thinking.trim() ? block.thinking : "该节点未包含可显示的思考正文。"}</div>
@@ -57,10 +57,40 @@ function WaitingIndicator({running,metrics,tokenUsage,latestRunUsage}:{running:b
     {tokenUsage&&<span className="tabular-nums">· 会话累计 {tokenUsage.totalTokens==null?"不可用":`${tokenUsage.totalTokens.toLocaleString()} tokens`}{tokenUsage.complete?"":"（仅供参考）"}</span>}
   </p>;
 }
-export function Conversation({ tree, temporary, steeringQueue = [], pendingText, running, runMetrics, afterTurns }: { runMetrics?:SessionRunMetrics|null; tree: SessionTree; steeringQueue?:string[]; temporary: TemporaryNode[]; pendingText: string; running: boolean; afterTurns?: Map<string, ReactNode> }) {
+export function Conversation({ tree, temporary, steeringQueue = [], pendingText, running, runMetrics, afterTurns, imageDiscussion }: { imageDiscussion?: boolean; runMetrics?:SessionRunMetrics|null; tree: SessionTree; steeringQueue?:string[]; temporary: TemporaryNode[]; pendingText: string; running: boolean; afterTurns?: Map<string, ReactNode> }) {
   const [expandedTools,setExpandedTools]=useState<Set<string>>(()=>new Set());
   const [expandedGroups,setExpandedGroups]=useState<Set<string>>(()=>new Set());
   const entries = new Map(tree.entries.map(({ entry }) => [entry.id, entry]));
+  const finalImageReplies = new Set<string>();
+  const imageIntents = new Map<string, string>();
+  if (imageDiscussion) for (const { entry } of tree.entries) {
+    if (entry.type !== "custom" || entry.customType !== "image-command-completed") continue;
+    const data = entry.data as { assistantEntryId?: string; structuredPlan?: boolean } | undefined;
+    if (data?.structuredPlan && data.assistantEntryId) {
+      const reply = entries.get(data.assistantEntryId);
+      const message = reply?.message as Record<string, unknown> | undefined;
+      try {
+        const result = JSON.parse(contentBlocks(message?.content).filter(block => block.type === "text").map(block => block.text ?? "").join(""));
+        const replyText = result.action === "discuss" || result.action === "execute" ? result.reply : result.intent;
+        if (typeof replyText === "string" && replyText.trim()) {
+          finalImageReplies.add(data.assistantEntryId);
+          imageIntents.set(data.assistantEntryId, replyText);
+        }
+      } catch { /* Invalid planning text remains available in the original node. */ }
+      continue;
+    }
+    let reply = entries.get(data?.assistantEntryId ?? entry.parentId ?? "");
+    while (reply) {
+      const message = reply.message as { role?: string; stopReason?: string } | undefined;
+      if (message?.role === "assistant") {
+        if (message.stopReason === "stop") finalImageReplies.add(reply.id);
+        break;
+      }
+      if (data?.assistantEntryId || message?.role === "user" || reply.customType === "image-command") break;
+      reply = entries.get(reply.parentId ?? "");
+    }
+  }
+
   const retryEvents = temporary.flatMap(item => item.events.filter(event => event.type === 'auto_retry_start' || event.type === 'auto_retry_end'));
   const latestRetry = retryEvents.at(-1);
   const currentRetryEvents = latestRetry ? retryEvents.filter(event => event.runId === latestRetry.runId) : [];
@@ -96,25 +126,34 @@ export function Conversation({ tree, temporary, steeringQueue = [], pendingText,
   for(const {entry} of projection.items) {
       const message = entry.message as Record<string, unknown> | undefined;
       const role = String(message?.role ?? entry.type), user = role === "user", tool = role === "toolResult";
+      const textOnly = !!imageDiscussion && user;
+      const hasText = contentBlocks(message?.content).some(block => block.type === "text" && typeof block.text === "string" && block.text.trim());
       const content=<div key={entry.id} data-entry-id={entry.id} className="grid min-w-0 gap-1">
-        <article className={`grid min-w-0 gap-1 ${user ? "ml-auto w-3/4 rounded-lg bg-sky-100 px-3 py-2 text-left" : "p-0"}`}>
-          {message ? tool ? toolDisclosure(message,`entry:${entry.id}`,true) : <MessageContent message={message} /> : isReferenceEntry(entry) ? <ReferenceEntry entry={entry} /> : <Disclosure title={`原生节点 · ${entry.type}`}><Raw value={entry} /></Disclosure>}
-          {projection.attachments.get(entry.id)?.map(item => <ReferenceEntry key={item.entry.id} entry={item.entry} />)}
-        </article>
+        {(!textOnly || hasText) && <article className={`grid min-w-0 gap-1 ${user ? "ml-auto w-3/4 rounded-lg bg-sky-100 px-3 py-2 text-left" : "p-0"}`}>
+          {imageIntents.has(entry.id) ? <><Response>{imageIntents.get(entry.id) ?? ""}</Response><Disclosure title="完整模型回复"><MessageContent message={message!} /></Disclosure></> : message ? tool ? toolDisclosure(message,`entry:${entry.id}`,true) : <MessageContent message={message} textOnly={textOnly} /> : isReferenceEntry(entry) ? <ReferenceEntry entry={entry} /> : <Disclosure title={`原生节点 · ${entry.type}`}><Raw value={entry} /></Disclosure>}
+          {!textOnly && projection.attachments.get(entry.id)?.map(item => <ReferenceEntry key={item.entry.id} entry={item.entry} />)}
+        </article>}
+        {textOnly && <Disclosure title="完整用户原始记录"><Raw value={entry} />{projection.attachments.get(entry.id)?.map(item => <Raw key={item.entry.id} value={item.entry} />)}</Disclosure>}
         {afterTurns?.get(entry.id)}
       </div>;
-      rows.push({key:entry.id,content,...activity(message,entry.id),entryId:entry.id,parentId:entry.parentId});
+      const collapsed = imageDiscussion && !user && !finalImageReplies.has(entry.id);
+      rows.push({key:entry.id,content:collapsed ? <Disclosure title={tool ? "工具过程" : role === "assistant" ? "模型过程" : `过程 · ${role}`}><Raw value={entry} /></Disclosure> : content,...activity(message,entry.id),entryId:entry.id,parentId:entry.parentId});
     }
     if(pendingText)rows.push({key:'pending-input',calls:new Map(),returned:new Set(),failed:false,content:<article className="ml-auto grid w-3/4 min-w-0 gap-1 rounded-lg bg-sky-100 px-3 py-2 text-left"><span className="text-[11px] text-zinc-500">你 · 等待原生输入事件确认</span><div className="whitespace-pre-wrap text-sm leading-6 [overflow-wrap:anywhere]">{pendingText}</div></article>});
     for(const item of visibleTemporary) {
       const message = temporaryMessage(item);
       if(message&&emptyAssistant(message)&&!item.events.some(event=>event.type==='message_end'))continue;
-      if (message?.role === "custom" && message.customType === "user_reference_files") {rows.push({key:item.key,calls:new Map(),returned:new Set(),failed:false,content:<Disclosure key={item.key} title="本轮附件 · 同步中"><MessageContent message={message} /><Disclosure title="完整实时事件"><Raw value={item.events} /></Disclosure></Disclosure>});continue;}
+      if (message?.role === "custom" && message.customType === "user_reference_files") {rows.push({key:item.key,calls:new Map(),returned:new Set(),failed:false,content:<Disclosure key={item.key} title="本轮附件 · 同步中">{!imageDiscussion && <MessageContent message={message} />}<Disclosure title="完整实时事件"><Raw value={item.events} /></Disclosure></Disclosure>});continue;}
       const toolEvents = item.events.filter(event => event.type.startsWith("tool_execution_"));
       const tool = toolEvents.length ? Object.assign({}, ...toolEvents.map(event => event.payload)) as Record<string, unknown> : null;
       if(!message&&tool&&typeof tool.toolCallId==='string'&&resultToolIds.has(tool.toolCallId))continue;
       const fallbackKey=item.entryId?`entry:${item.entryId}`:`temporary:${item.key}`;
-      const content=<article className={`grid min-w-0 gap-1 ${message?.role==='user'?'ml-auto w-3/4 rounded-lg bg-sky-100 px-3 py-2 text-left':''}`} key={item.key}>{message ? message.role==='toolResult'?toolDisclosure(message,fallbackKey,true):<MessageContent message={message} /> : tool ? toolDisclosure(tool,fallbackKey,toolEvents.at(-1)?.type==='tool_execution_end',item.events) : <Disclosure title="实时事件"><Raw value={item.events} /></Disclosure>}</article>;
+      const textOnly = !!imageDiscussion && message?.role === "user";
+      const hasText = contentBlocks(message?.content).some(block => block.type === "text" && typeof block.text === "string" && block.text.trim());
+      const content=<div key={item.key} className="grid min-w-0 gap-1">
+        {(!textOnly || hasText) && <article className={`grid min-w-0 gap-1 ${message?.role==='user'?'ml-auto w-3/4 rounded-lg bg-sky-100 px-3 py-2 text-left':''}`}>{message ? message.role==='toolResult'?toolDisclosure(message,fallbackKey,true):<MessageContent message={message} textOnly={textOnly} /> : tool ? toolDisclosure(tool,fallbackKey,toolEvents.at(-1)?.type==='tool_execution_end',item.events) : <Disclosure title="实时事件"><Raw value={item.events} /></Disclosure>}</article>}
+        {textOnly && <Disclosure title="完整用户原始记录"><Raw value={item.events} /></Disclosure>}
+      </div>;
       const details=activity(message,fallbackKey);
       if(!message&&tool&&typeof tool.toolCallId==='string'){details.calls.set(tool.toolCallId,String(tool.toolName??'tool'));if(toolEvents.at(-1)?.type==='tool_execution_end')details.returned.add(tool.toolCallId);details.failed=!!tool.isError;}
       rows.push({key:item.key,content,...details,entryId:item.entryId??undefined,runId:item.events.find(event=>event.runId)?.runId});
@@ -141,6 +180,6 @@ export function Conversation({ tree, temporary, steeringQueue = [], pendingText,
       {(retryPayload?.finalError??retryPayload?.errorMessage)&&<Raw value={retryPayload?.finalError??retryPayload?.errorMessage}/>}
       <Raw value={currentRetryEvents}/>
     </Disclosure>}
-    <WaitingIndicator running={running} metrics={runMetrics} tokenUsage={tree.tokenUsage} latestRunUsage={tree.latestRunUsage}/>
+    {!imageDiscussion && <WaitingIndicator running={running} metrics={runMetrics} tokenUsage={tree.tokenUsage} latestRunUsage={tree.latestRunUsage}/>}
   </section>;
 }

@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { DomainError } from "@/domain/errors";
 import {matchesTargetSchema} from './schema-compatibility';
-import { targetSchema } from "./schema.server";
+import { targetSchema, imageTargetSchema, previousImageTargetSchema } from "./schema.server";
 const building = process.env.NEXT_PHASE === "phase-production-build";
 const defaultPath = path.resolve(process.cwd(), ".data", "ai-workspace-v5.sqlite");
 const configuredPath = process.env.AI_WORKSPACE_DB_PATH;
@@ -13,7 +13,7 @@ const exists = !building && fs.existsSync(databasePath);
 let compatible = !exists;
 if (exists) {
   const inspection = new Database(databasePath, { readonly: true, fileMustExist: true });
-  compatible=matchesTargetSchema(inspection,targetSchema);
+  compatible=matchesTargetSchema(inspection,targetSchema)||matchesTargetSchema(inspection,imageTargetSchema)||matchesTargetSchema(inspection,previousImageTargetSchema);
   inspection.close();
 }
 if (!building && !exists) fs.mkdirSync(path.dirname(databasePath), { recursive: true });
@@ -26,6 +26,7 @@ database.pragma("busy_timeout = 5000");
 database.pragma("foreign_keys = ON");
 if (compatible) {
   const hasTables = database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all().length > 0;
-  if (!hasTables) database.exec(targetSchema);
+  if (!hasTables) database.exec(imageTargetSchema);
 }
+export const imageSchemaCompatible=compatible&&matchesTargetSchema(database,imageTargetSchema);
 export function getDatabasePath() { return databasePath; }

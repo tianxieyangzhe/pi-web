@@ -7,3 +7,6 @@ export const roleSchema=read("role-schema.sql");
 export const coreSchema=read("core-schema.sql");
 export const workspaceSchema=read("workspace-schema.sql");
 export const targetSchema=coreSchema+roleSchema+workspaceSchema;
+export const imageSchema=read("image-schema.sql");
+export const imageTargetSchema=targetSchema+imageSchema;
+export const previousImageTargetSchema=targetSchema+read("image-schema-v1.sql");

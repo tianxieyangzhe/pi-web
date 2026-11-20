@@ -8,7 +8,8 @@ import { useProjectSessionNavigation } from "./use-project-session-navigation";
 
 type ResourceKind = "agent" | "mcp";
 
-export function ProjectNavigation({ activity, deletingSessionId, onDeleteSession, projects, selection, navigation, creatingSessionProjectId, onNewProject, onNewProjectSession, workspaceNavigation, onCreateSession, onSessionSelect, onEditProject, onOpenResource }: {
+export function ProjectNavigation({ activity, deletingSessionId, onDeleteSession, projects, selection, navigation, creatingSessionProjectId, onNewProject, onNewProjectSession, workspaceNavigation, onCreateSession, onSessionSelect, onEditProject, onOpenResource, onImages }: {
+  onImages?: () => void;
   activity: Record<string, string[] | null>;
   deletingSessionId: string | null;
   onDeleteSession: (projectId: string, sessionId: string, label: string) => void;
@@ -27,8 +28,10 @@ export function ProjectNavigation({ activity, deletingSessionId, onDeleteSession
   return (
       <aside className="sidebar" id="project-navigation">
         <div className="sidebar__actions">
-          <Button variant="primary" onClick={() => onNewProjectSession()}><Plus size={14} />新建项目会话</Button>
-
+          <div className="flex flex-col gap-2">
+            <Button variant="primary" className="w-full!" onClick={() => onNewProjectSession()}><Plus size={14} />新建项目会话</Button>
+            <Button variant="primary" className="w-full!" onClick={onImages}>图片工作台</Button>
+          </div>
         </div>
         <nav className="sidebar__nav" aria-label="项目导航">
           {workspaceNavigation}
